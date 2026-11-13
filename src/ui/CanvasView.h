@@ -36,6 +36,10 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
 
+    /** Ends an arrow-key nudge gesture once the arrows are let go. The editor also passes on
+        key changes from wherever the focus is, as it does the arrows themselves. */
+    bool keyStateChanged (bool isKeyDown) override;
+
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
     void fileDragEnter (const juce::StringArray&, int, int) override;
     void fileDragExit (const juce::StringArray&) override;

@@ -25,6 +25,8 @@ namespace
     constexpr float fillStart = 0.04f;    // "Fill length"
     constexpr float fillEnd = 0.96f;
 
+    constexpr juce::uint32 wheelGestureMs = 1000;   // wheel steps closer together are one undo step
+
     const juce::StringArray imageModeNames { "Auto", "Original", "Negative", "Outline" };
 
     juce::String percent (double value) { return juce::String (juce::roundToInt (value)) + "%"; }
@@ -60,6 +62,23 @@ namespace
             if (onFocusGained != nullptr)
                 onFocusGained();
         }
+    };
+
+    /** A bar that edits the selected object. Each mouse-wheel step reaches the slider's listeners
+        as a drag of its own; this tells them apart from real drags. */
+    class ObjectSlider final : public juce::Slider
+    {
+    public:
+        void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+        {
+            const juce::ScopedValueSetter<bool> scope (wheelMoving, true);
+            juce::Slider::mouseWheelMove (e, wheel);
+        }
+
+        bool isWheelMoving() const noexcept { return wheelMoving; }
+
+    private:
+        bool wheelMoving = false;
     };
 
     /** "Delete": quiet until hovered, then the danger colour. */
@@ -119,9 +138,9 @@ struct Inspector::Impl
           modeControl (imageModeNames)
     {
         // ---- nothing selected ----
-        addTextButton.setTooltip ("Add a text object in the mid band");
+        addTextButton.setTooltip ("Add a text object (in the mid band, or another band if that is taken)");
         addTextButton.onClick = [this] { actions::addText (processor, state); };
-        addImageButton.setTooltip ("Add a picture (PNG, JPEG or GIF)");
+        addImageButton.setTooltip ("Add a picture (" + actions::pictureFormatNames() + ")");
         addImageButton.onClick = [this] { actions::chooseImage (processor, state, owner, false); };
 
         setUpSlider (sizeSlider, 2.0, 64.0, 1.0, [] (double v) { return juce::String (juce::roundToInt (v)) + " px"; });
@@ -244,11 +263,33 @@ struct Inspector::Impl
         slider.updateText();
     }
 
-    /** A slider editing the selected object: a drag (or a click) is one undo step. */
-    void setUpObjectSlider (juce::Slider& slider, std::function<void (ArtObject&, double)> apply)
+    /** A slider editing the selected object: a drag (or a click) is one undo step, and so is a
+        run of mouse-wheel steps on the same bar and object without a pause (a trackpad swipe
+        sends dozens). Any other edit in between starts a new step, as its own key ends the
+        coalescing. */
+    void setUpObjectSlider (ObjectSlider& slider, std::function<void (ArtObject&, double)> apply)
     {
-        slider.onDragStart = [this] { sliderKey = "inspector-slider-" + juce::String (++editCounter); };
-        slider.onDragEnd = [this] { processor.endCoalescing(); sliderKey.clear(); };
+        slider.onDragStart = [this, &slider]
+        {
+            const auto now = juce::Time::getMillisecondCounter();
+            const auto wheel = slider.isWheelMoving();
+            const auto sameWheelGesture = wheel && wheelKey.isNotEmpty() && wheelSlider == &slider
+                                       && wheelObject == state.getSelected() && now - lastWheelTime < wheelGestureMs;
+
+            sliderKey = sameWheelGesture ? wheelKey : "inspector-slider-" + juce::String (++editCounter);
+            wheelKey = wheel ? sliderKey : juce::String();
+            wheelSlider = &slider;
+            wheelObject = state.getSelected();
+            lastWheelTime = now;
+        };
+        slider.onDragEnd = [this, &slider]
+        {
+            // A wheel gesture stays open for the next step; a drag ends here.
+            if (! slider.isWheelMoving())
+                processor.endCoalescing();
+
+            sliderKey.clear();
+        };
         slider.onValueChange = [this, &slider, apply]
         {
             if (updating)
@@ -781,6 +822,12 @@ struct Inspector::Impl
     juce::String lastWrittenText;
     juce::String sliderKey;
 
+    // The open mouse-wheel gesture (see setUpObjectSlider): its undo key, bar, object and time.
+    juce::String wheelKey;
+    const juce::Slider* wheelSlider = nullptr;
+    juce::Uuid wheelObject = juce::Uuid::null();
+    juce::uint32 lastWheelTime = 0;
+
     // Thumbnail cache: rebuilt only when the picture, its mode or its clean-up change.
     const void* thumbnailPixels = nullptr;
     juce::Image thumbnailOriginal, thumbnailSmall, thumbnail;
@@ -798,7 +845,7 @@ struct Inspector::Impl
     juce::ComboBox fontBox;
     SegmentedControl styleControl, bandControl, modeControl;
     juce::TextButton fillButton, replaceButton;
-    juce::Slider intensitySlider, cleanupSlider;
+    ObjectSlider intensitySlider, cleanupSlider;
     InspectorDeleteButton deleteButton;
 };
 
@@ -824,6 +871,10 @@ Inspector::~Inspector()
 {
     impl->processor.removeChangeListener (this);
     impl->state.removeChangeListener (this);
+
+    // A wheel gesture (or typing) left open must not join an edit made in the next editor,
+    // whose keys are counted from 1 again.
+    impl->processor.endCoalescing();
 
     if (impl->installedFocusCallback)
         impl->state.focusTextField = nullptr;

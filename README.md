@@ -13,8 +13,8 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
 3. **Match the settings.** Open FreqArt's **Settings** (the gear) and set **Scale**, **Low**, **High** and **Slope** to what your analyser uses. The defaults (Log, 20 Hz, 20 kHz) match the MiniMeters setup above; if your analyser tilts its display (MiniMeters has a Slope setting), give FreqArt the same Slope.
 4. **Press play in your DAW.** With the default trigger (Transport), FreqArt plays while the DAW plays. The drawing scrolls through the spectrogram; FreqArt's own **Live** view (the Canvas | Live switch at the top of the window) shows the same thing.
 5. **Make it yours.**
-   - **+ Text** adds a text box in the mid band across the whole length, ready for typing. Pick a font and Solid or Outline letters in the inspector on the right.
-   - **+ Image** adds a picture (PNG, JPEG or GIF), or drop an image file straight onto the canvas: it lands in the band under the cursor. **Mode** decides what in the picture becomes sound; **Auto** usually gets it right (on a white background it draws the dark parts).
+   - **+ Text** adds a text box in the mid band across the whole length (or, if something is already there, in a free band), ready for typing. Pick a font and Solid or Outline letters in the inspector on the right.
+   - **+ Image** adds a picture (PNG, JPEG, GIF, HEIC, WebP, TIFF or BMP), placed like new text, or drop an image file straight onto the canvas: it lands in the band under the cursor. A file that cannot be read is reported at the bottom of the canvas. **Mode** decides what in the picture becomes sound; **Auto** usually gets it right (on a white background it draws the dark parts).
    - **Brush** and **Erase** paint on the canvas, with Size, Soft and Strength in the toolbar.
 6. **Place it with the bands.** Select an object and choose a **Band** in the inspector: **Low** (40–250 Hz), **Mid** (300 Hz–3 kHz), **High** (3.5–16 kHz) or **Full** (the whole visible range). Or drag it to move it, and drag its handles to resize it. **Fill length** stretches it across the drawing.
 7. **Set the density.** **Density** is the number of sine lines across the height of the canvas. Few lines give a scan-line look; many lines merge into solid shapes.
@@ -25,7 +25,7 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
     - **Tempo**: **Host** follows the DAW's tempo; **Manual** uses the **BPM** you type (also used when a host gives no tempo).
     - **Trigger**: **Transport** follows the DAW's timeline and loops every length from bar 1 (a 4-bar drawing starts again on bars 5, 9, 13 and so on), and plays only while the DAW plays. **MIDI** plays the drawing once from the start on every note-on (any key; a new note restarts it; note-offs are ignored), sample-accurately. **Loop** plays all the time, looping.
 11. **Preview.** The round play button plays the drawing on a loop from its start, whatever the trigger, even while the DAW is stopped.
-12. **Bounce WAV.** **Bounce WAV** renders one pass of the drawing to a WAV file in the background, with your Level. Drag the **FreqArt.wav** chip that appears into your DAW, or click **Save...** to keep a copy where you want it (the bounced file itself lives in a temporary folder).
+12. **Bounce WAV.** **Bounce WAV** renders one pass of the drawing to a WAV file in the background, with your Level. Drag the **FreqArt.wav** chip that appears into your DAW, or click **Save...** to keep a copy where you want it. Every bounce is a new file in a temporary folder, so a later bounce never replaces audio already in your project; FreqArt clears these files away after a day, so use **Save...** for anything you want to keep.
 
 The **?** button shows these steps inside the plug-in.
 
@@ -45,11 +45,11 @@ The **?** button shows these steps inside the plug-in.
 
 | Control | What it does |
 | --- | --- |
-| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats along the bottom. **Live** shows a scrolling spectrogram of FreqArt's own output (about 6 seconds), on the same scale. |
-| **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, or one session of typing in a text box, is one step. |
+| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats along the bottom. **Live** shows a scrolling spectrogram of FreqArt's own output, on the same scale, wide enough for a whole pass of the drawing (a quarter more than one pass, from 4 to 20 seconds). |
+| **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, a drag, a scroll over a bar, holding down an arrow key, or one session of typing in a text box is one step. |
 | **?** | The how-to, inside the window. |
 | **Gear** | Settings: match your analyser (Scale, Low, High, Slope), window size, and Reset drawing. |
-| **Select** | Click an object to select it. Drag inside it to move it, drag a handle to resize it. Delete or Backspace removes it; the arrow keys nudge it (Shift: 10 times as far). Click empty canvas to deselect. |
+| **Select** | Click an object to select it (a click inside the selected object keeps it, even where another lies over it). Drag inside it to move it, drag a handle to resize it. Delete or Backspace removes it; the arrow keys nudge it (Shift: 10 times as far). Click empty canvas to deselect. |
 | **Brush / Erase** | Paint or erase. **Size** 2–64 px (on screen), **Soft** 0–100 % (a hard edge to fully feathered), **Strength** 0–100 % (how loud the brush paints). |
 | **+ Text / + Image** | Add a text box or a picture. Pictures can also be dropped onto the canvas. |
 | **Clear** | Removes all objects and paint (one undo step). |
@@ -173,7 +173,7 @@ sudo apt-get install libasound2-dev libx11-dev libxext-dev libxrandr-dev \
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, MIDI one-shots, free loop, preview, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, MIDI, level and clipper bounds); and the WAV export. It compiles the processor and the editor too, so it also catches build problems anywhere in the plug-in.
+or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, MIDI one-shots, free loop, preview, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, MIDI, level and clipper bounds); the WAV export; and the editor, driven with synthetic mouse, wheel and key events (bounce files, undo steps, selecting and placing objects, the live view's span, pictures that cannot be read). The editor tests need a display: on Linux run it under `xvfb-run -a`.
 
 ### Snapshot tool
 

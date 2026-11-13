@@ -1,5 +1,6 @@
 #include "ShellToolbar.h"
 
+#include "Actions.h"
 #include "ShellHeader.h"
 
 namespace freqart::ui::shell
@@ -30,8 +31,8 @@ Toolbar::Toolbar (EditorState& s)
     selectTool.setTooltip ("Select, move and resize text and pictures  (V)");
     brushTool.setTooltip ("Brush: paint loudness onto the canvas  (B)");
     eraseTool.setTooltip ("Erase painted strokes  (E)");
-    addTextButton.setTooltip ("Add a text object in the mid band");
-    addImageButton.setTooltip ("Add a picture (PNG, JPEG or GIF). You can also drop one onto the canvas.");
+    addTextButton.setTooltip ("Add a text object (in the mid band, or another band if that is taken)");
+    addImageButton.setTooltip ("Add a picture (" + actions::pictureFormatNames() + "). You can also drop one onto the canvas.");
     clearButton.setTooltip ("Remove everything from the drawing (" + shortcutText ("Cmd+Z") + " brings it back)");
 
     selectTool.setComponentID ("tool-select");

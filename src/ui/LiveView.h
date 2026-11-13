@@ -24,8 +24,13 @@ public:
     void visibilityChanged() override;
     void parentHierarchyChanged() override;
 
+    /** How many seconds the view shows: one pass of the drawing and a quarter more, in whole
+        seconds from 4 to 20 (it follows the length and the tempo). */
+    double getVisibleSeconds() const;
+
     /** For the snapshot tool: fills the history with columns analysed from `seconds` of the
-        current plan rendered offline (so a snapshot shows something without a running host). */
+        current plan rendered offline at its real speed, one pass ending now (so a snapshot shows
+        what a user sees, without a running host). */
     void fillFromPlanForSnapshot (double seconds);
 
 private:
