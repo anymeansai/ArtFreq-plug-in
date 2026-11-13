@@ -158,6 +158,17 @@ already looked fine, it stayed as good), so it is **Smooth**, the default for ne
   phases keep the passes from adding up in a repeating pattern. What remains is a fine rising
   shimmer (out of step from height to height), not a pulse of the whole band. 20 Hz and 200 Hz/s
   had the lowest worst case of the settings tried (25 Hz or 130 Hz/s pulse at up to 5 dB).
+- **Its bottom.** The fade-in starts from silence wherever a sine can first be heard: never below
+  10 Hz (nothing is played lower: with the analyser's low end at 10 Hz the glide starts at -2.5
+  Hz), and more than one chunk's glide (1 Hz at 48 kHz) above the bottom of the glide, as a sine
+  that passes the top during a chunk wraps round unheard and is next played that far up. It runs
+  over 15 Hz from there, so for a low end under 17.5 Hz the lowest grid lines fade in too. (A sine
+  coming on at a level of its own, up to a sixth of the bottom's at a 10 Hz low end and 7 % after
+  a wrap, clicked every 0.1 s, put energy far above the drawing and rumble below 5 Hz.) A sine
+  fading in that low still does so over about one cycle, which leaves a little content below 10
+  Hz: about -35 dB against the whole for a drawing from the bottom to 200 Hz at the default low
+  end (lines leave none). It is inaudible, and below what analysers show; a longer fade would
+  darken the bottom of the canvas.
 - **Its loudness.** The replaced band of the canvas becomes a grid of plan lines 5 Hz apart (the
   maximum of the canvas over each cell): finer than the sines, so edges stay where they were
   drawn. Each sine plays the grid interpolated at the height it has reached, between grid lines
@@ -165,7 +176,17 @@ already looked fine, it stayed as good), so it is **Smooth**, the default for ne
   `combActive` says where the comb can sound). At the edges of a run of drawn grid lines (in one
   column, five or more) the outermost plays at half its level and the next at 0.93: a sine then
   enters a shape over 75 ms, not 25, and splashes less energy below it and into holes (measured:
-  1.3 dB less leakage in the lows, fidelity +0.01, fill unchanged; thin strokes keep their level).
+  1.3 dB less leakage in the lows, fidelity +0.01, fill unchanged; runs of four lines keep their
+  level).
+- **Thin strokes.** A run of drawn grid lines narrower than the sines' spacing (fewer than four, a
+  one-row stroke, an outline, thin lettering) would be lit only while a sine is inside it: the
+  whole stroke would blink ten times a second (15 - 28 dB on an analyser of 4096 points, 4 - 5 dB
+  at 8192, a train of blips to the ear), while the canvas showed it steady. So, column by column,
+  such a run is silenced in the grid and played instead by the replaced line nearest its middle,
+  at the run's loudest value: steady, where Stripes would play it, and drawn as Stripes draws it.
+  The replaced lines stay in the plan for this, after the grid (`combThinLines`; with the lines
+  above, exactly a Stripes plan's lines), silent elsewhere. The comb's narrowest runs (four lines)
+  shimmer as any shape does: about 3 dB at 4096 points, 1 dB at 8192.
 - **Its brightness.** A line's energy stays in one analyser bin; the comb's is spread along its
   glide, about 3 dB darker per doubling of the FFT size. It is played 3.5 dB louder (combGain
   1.5), as bright as the lines above at 8192 (3 dB brighter at 4096, 3 - 7 dB darker at 32768).
@@ -253,7 +274,8 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   as visible scan lines and high density looks solid. With Smooth lows the comb's band is drawn
   filled: each 5 Hz cell of its grid over its whole height, at amplitude / combGain (the
   brightness an analyser of 8192 points shows; the first line above takes over where the band
-  ends, so there is no seam). Background = colour map at silence.
+  ends, so there is no seam), and thin strokes as the lines that play them, as Stripes draws
+  them. Background = colour map at silence.
   Faint frequency grid lines (from `gridFrequencies`) and bar/beat lines.
 - Hz labels on the left axis; bar/beat labels along the bottom (e.g. "1", "2", "3", "4" for
   4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
@@ -414,9 +436,11 @@ a scan-line look.
 `FreqArtTests` (no host): scale maths; document round trip; image modes (auto-invert on a white
 background, transparency, outline); text rendering coverage; compositor placement; plan
 (frequencies, spacing, normalisation, contrast, slope); Smooth lows, the rising comb (the lines it
-replaces, its loudness grid and softened edges, thin strokes left alone, a long-FFT analyser seeing
-the band filled, its power staying in the drawn band, leakage, determinism, crossfades, speed, the
-canvas drawing the band filled and as bright as the lines); exchange (versions, garbage); engine
+replaces, its loudness grid and softened edges, thin strokes played steady on the replaced lines
+and drawn as Stripes draws them, the fade-in at the bottom without clicks, splashes or extra rumble
+at low ends of 10, 20 and 30 Hz, a long-FFT analyser seeing the band filled, its power staying in
+the drawn band, leakage, determinism, crossfades, speed, the canvas drawing the band filled and as
+bright as the lines); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
 speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass from a
 start bar: its start and end, starting the DAW inside it, relocations before, after and into it,

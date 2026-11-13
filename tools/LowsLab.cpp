@@ -652,12 +652,26 @@ Render renderDrawing (const Canvas& canvas, const PlanSettings& settings)
     const auto& plan = *result.plan;
 
     // The sines that play: the lines, and the comb's gliding sines rather than its loudness grid
-    // (its sines are spread evenly over the glide, so a range holds its share of them).
-    cost.lines = plan.numLines - plan.combLines + plan.combSines;
-
-    for (size_t l = static_cast<size_t> (plan.combLines); l < plan.frequencies.size(); ++l)
+    // (its sines are spread evenly over the glide, so a range holds its share of them). The lows
+    // the comb replaced count only if they play a thin stroke somewhere.
+    const auto sounds = [&plan] (int line)
     {
-        const auto hz = plan.frequencies[l];
+        for (int c = 0; c < plan.numColumns; ++c)
+            if (plan.amplitude (c, line) > 0.0f)
+                return true;
+
+        return false;
+    };
+
+    cost.lines = plan.combSines;
+
+    for (int l = plan.combLines; l < plan.numLines; ++l)
+    {
+        if (l < plan.combLines + plan.combThinLines && ! sounds (l))
+            continue;
+
+        const auto hz = plan.frequencies[idx (l)];
+        ++cost.lines;
         cost.linesLow += hz >= labLowHz && hz < labSplitHz ? 1 : 0;
         cost.linesMid += hz >= labSplitHz && hz < labHighHz ? 1 : 0;
     }

@@ -12,7 +12,7 @@ namespace freqart
 namespace
 {
 
-constexpr double lowestLineHz = 10.0;   // below this nothing is audible or visible: dropped
+constexpr auto lowestLineHz = static_cast<double> (lowestPlayedHz);   // below this nothing is audible or visible: dropped
 constexpr float silenceThreshold = 0.001f;
 constexpr int minDensity = 16, maxDensity = 1024;
 
@@ -93,6 +93,39 @@ uint64_t hashFrequencies (const std::vector<float>& frequencies, int combLines) 
         mix (0xC0B0C0B0u ^ static_cast<uint32_t> (combLines));
 
     return hash != 0 ? hash : 1;  // 0 is left to mean "no layout"
+}
+
+/** Thin strokes (see ArtPlan.h), in one column's values (line l's at values[l * stride]; the
+    grid's `cells` lines first, the replaced lines right after them): each run of drawn grid lines
+    shorter than thinCells is silenced, and its loudest value goes to the replaced line nearest
+    its middle, cells + thinAt[first + last]. Drawn means sounding: above the silence threshold. */
+void moveThinStrokes (float* values, size_t stride, int cells, int thinCells, const int* thinAt) noexcept
+{
+    const auto at = [values, stride] (int line) -> float& { return values[static_cast<size_t> (line) * stride]; };
+
+    for (int k = 0; k < cells;)
+    {
+        if (! (at (k) > silenceThreshold))
+        {
+            ++k;
+            continue;
+        }
+
+        const auto start = k;
+        auto loudest = 0.0f;
+
+        while (k < cells && at (k) > silenceThreshold)
+            loudest = std::max (loudest, at (k++));
+
+        if (k - start >= thinCells)
+            continue;
+
+        for (int j = start; j < k; ++j)
+            at (j) = 0.0f;
+
+        auto& line = at (cells + thinAt[start + k - 1]);
+        line = std::max (line, loudest);
+    }
 }
 
 /** Softens the comb's grid (one column) at the edges of each run of drawn grid lines, see
@@ -236,14 +269,21 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
     std::vector<FinalLine> finalLines;
     finalLines.reserve (layout.size() + 512);
 
+    // Thin strokes (see ArtPlan.h): in each column, a run of drawn grid lines of fewer than
+    // thinCells cells is played by the replaced line nearest its middle, thinAt[first + last].
+    auto thinCells = 0;
+    std::vector<int> thinAt;
+
     if (combReplaces > 0)
     {
-        // The grid covers the replaced lines' spans exactly, so the lines above keep theirs.
-        const auto bottomHz = scale.toHz (spanBottom.front());
+        // The grid covers the replaced lines' spans exactly, so the lines above keep theirs (its
+        // lowest cell also plays any rows below lowestPlayedHz, where the comb's sines are silent).
+        const auto bottomHz = std::max (scale.toHz (spanBottom.front()), lowestLineHz);
         const auto topHz = scale.toHz (spanTop[combReplaces - 1]);
-        // No plan has more than maxDensity lines (the engine plays no more): with the lines kept
-        // above it, a fine grid could pass that on unusual scales and ranges; it is coarsened then.
-        const auto room = maxDensity - static_cast<int> (layout.size() - combReplaces);
+        // No plan has more than maxDensity lines (the engine plays no more): with all the lines
+        // (the replaced ones stay, for thin strokes), a fine grid could pass that on unusual
+        // scales and ranges; it is coarsened then.
+        const auto room = maxDensity - static_cast<int> (layout.size());
         const auto cells = std::clamp (static_cast<int> (std::lround ((topHz - bottomHz) / static_cast<double> (combGridSpacingHz))), 2, std::max (2, room));
         const auto cellHz = (topHz - bottomHz) / cells;
         const auto edgeHz = static_cast<double> (combEdgeFadeHz);
@@ -268,10 +308,35 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
             const auto first = rowAtNorm (low, false);
             finalLines.push_back ({ hz, scale.toNorm (hz), first, std::max (first, rowAtNorm (high, true)), combGain, weight });
         }
+
+        // The replaced line nearest the middle of grid lines first..last: the one whose span
+        // holds it.
+        plan->combThinLines = static_cast<int> (combReplaces);
+        thinCells = std::max (1, static_cast<int> (std::lround (static_cast<double> (combSpacingHz) / cellHz)));
+        thinAt.resize (static_cast<size_t> (2 * cells - 1));
+        size_t nearest = 0;
+
+        for (size_t sum = 0; sum < thinAt.size(); ++sum)
+        {
+            const auto middle = scale.toNorm (bottomHz + (0.5 * static_cast<double> (sum) + 0.5) * cellHz);
+
+            while (nearest + 1 < combReplaces && spanTop[nearest] <= middle)
+                ++nearest;
+
+            thinAt[sum] = static_cast<int> (nearest);
+        }
     }
 
-    for (size_t l = combReplaces; l < layout.size(); ++l)
+    // The lines. With a comb, the replaced ones stay too, but take no rows of their own (first
+    // row above last): they play thin strokes only, given to them column by column below.
+    for (size_t l = 0; l < layout.size(); ++l)
     {
+        if (l < combReplaces)
+        {
+            finalLines.push_back ({ layout[l].hz, layout[l].norm, 0, -1, 1.0f, 1.0 });
+            continue;
+        }
+
         const auto first = rowAtNorm (spanBottom[l], false);
         finalLines.push_back ({ layout[l].hz, layout[l].norm, first, std::max (first, rowAtNorm (spanTop[l], true)), 1.0f, 1.0 });
     }
@@ -347,6 +412,9 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
         for (int i = 0; i < width; ++i)
         {
             auto* column = amplitudes.data() + static_cast<size_t> (c0 + i) * lines;
+
+            if (plan->combLines > 0)
+                moveThinStrokes (stripValues.data() + i, static_cast<size_t> (strip), plan->combLines, thinCells, thinAt.data());
 
             for (size_t l = 0; l < lines; ++l)
                 column[l] = loudness (stripValues[l * strip + static_cast<size_t> (i)]) * slopeGain[l];

@@ -996,19 +996,32 @@ int ArtEngine::gatherComb (const ArtPlan& plan, float weightStart, float weightE
     };
 
     // The amplitude at a frequency: interpolated between the grid lines around it, fading to
-    // silence over combEdgeHz beyond the ends of the grid.
+    // silence over combEdgeHz beyond the top of the grid. At the bottom it fades in over
+    // combEdgeHz too, from silence, which must hold wherever a sine can first be heard:
+    // - a sine that passes the top during a chunk wraps round unheard, and is next played up to
+    //   one chunk's glide (1 Hz at 48 kHz) above the bottom of the glide;
+    // - the glide may start below 0 Hz (an analyser low end under 12.5 Hz), where sines are not
+    //   played at all;
+    // - nothing is played below lowestPlayedHz.
+    // A sine coming on at a level of its own there would click, every 0.1 s. Where that puts the
+    // fade-in above the bottom of the grid (always for an analyser low end under 17.5 Hz), the
+    // lowest grid lines fade in too: a quicker fade-in, a fraction of a cycle down there, would
+    // leave content below 5 Hz.
     const auto gridLines = plan.combLines;
     const auto gridLow = static_cast<double> (plan.combGridLowHz);
     const auto gridHz = static_cast<double> (plan.combGridHz);
     const auto gridHigh = gridLow + (gridLines - 1) * gridHz;
     const auto edgeHz = std::max (1.0e-3, static_cast<double> (plan.combEdgeHz));
+    const auto chunkGlideHz = static_cast<double> (plan.combSlope) * chunkSize / sampleRate;
+    const auto fadeInLow = std::max (std::max (gridLow - edgeHz, 0.0) + chunkGlideHz, static_cast<double> (lowestPlayedHz));
+    const auto fadeInHigh = fadeInLow + edgeHz;  // at or above gridLow
 
-    const auto amplitudeAt = [=] (const View& v, float between, double hz)
+    const auto gridAt = [=] (const View& v, float between, double hz)
     {
         const auto lerp = [between] (float here, float next) { return here + (next - here) * between; };
 
         if (hz < gridLow)
-            return hz > gridLow - edgeHz ? lerp (v.here[0], v.next[0]) * static_cast<float> (1.0 - (gridLow - hz) / edgeHz) : 0.0f;
+            return lerp (v.here[0], v.next[0]);
 
         if (hz >= gridHigh)
         {
@@ -1023,6 +1036,15 @@ int ArtEngine::gatherComb (const ArtPlan& plan, float weightStart, float weightE
         const auto here = v.here[line] + (v.here[line + 1] - v.here[line]) * f;
         const auto next = v.next[line] + (v.next[line + 1] - v.next[line]) * f;
         return here + (next - here) * between;
+    };
+
+    const auto amplitudeAt = [=] (const View& v, float between, double hz)
+    {
+        if (! (hz > fadeInLow))
+            return 0.0f;
+
+        const auto a = gridAt (v, between, hz);
+        return hz < fadeInHigh ? a * static_cast<float> ((hz - fadeInLow) / edgeHz) : a;
     };
 
     const auto first = viewOf (plan);
@@ -1083,6 +1105,8 @@ int ArtEngine::gatherComb (const ArtPlan& plan, float weightStart, float weightE
                 a1 += secondEnd * amplitudeAt (other, other.end, hz + glideHz);
             }
 
+            // (A sine at or below 0 Hz is silent for the whole chunk: the fade-in starts more
+            // than one chunk's glide above 0 Hz.)
             if (! (a0 > 0.0f || a1 > 0.0f) || ! (hz > 0.0 && hz < limit))
                 continue;
 

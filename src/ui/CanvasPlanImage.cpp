@@ -190,11 +190,14 @@ void CanvasPlanImage::render (const ArtPlan* plan, const FrequencyScale& scale, 
     // maxLineThickness at its frequency (scan lines at low density). The rising comb's grid lines
     // (Smooth lows) each own their cell of the comb's band and are always drawn over all of it:
     // the comb's sines pass every height, so the analyser shows the band filled, never stripes.
+    // The lines after the grid (the replaced lows, which play thin strokes, then the lines above
+    // the comb) are laid out as without a comb: each one's neighbours are among them.
     const auto s = scale.sanitised();
     const auto h = static_cast<double> (height);
     const auto maxThickness = static_cast<double> (maxLineThickness * pixelsPerLogical);
     const auto normOf = [&] (int line) { return s.toNorm (static_cast<double> (plan->frequencies[static_cast<size_t> (line)])); };
     const auto combLines = juce::jlimit (0, numLines, plan->combLines);
+    const auto firstAbove = juce::jlimit (combLines, numLines, combLines + plan->combThinLines);  // the first line above the comb
     const auto halfCell = 0.5 * static_cast<double> (plan->combGridHz);
 
     struct Extent
@@ -223,14 +226,15 @@ void CanvasPlanImage::render (const ArtPlan* plan, const FrequencyScale& scale, 
         }
         else
         {
-            const auto below = line > 0 ? normOf (line - 1) : (numLines > 1 ? 2.0 * norm - normOf (line + 1) : norm - 0.5);
-            const auto above = line + 1 < numLines ? normOf (line + 1) : (numLines > 1 ? 2.0 * norm - normOf (line - 1) : norm + 0.5);
+            const auto several = numLines - combLines > 1;
+            const auto below = line > combLines ? normOf (line - 1) : (several ? 2.0 * norm - normOf (line + 1) : norm - 0.5);
+            const auto above = line + 1 < numLines ? normOf (line + 1) : (several ? 2.0 * norm - normOf (line - 1) : norm + 0.5);
             low = (below + norm) * 0.5;
             high = (norm + above) * 0.5;
 
-            // The first line above the comb takes over where the comb's band ends (halfway to the
-            // comb's top grid line would leave a dark seam between them).
-            if (line == combLines && combLines > 0)
+            // The first line above the comb takes over where the comb's band ends (halfway to a
+            // line further down would leave a dark seam or an overlap).
+            if (line == firstAbove && combLines > 0)
                 low = s.toNorm (static_cast<double> (plan->frequencies[static_cast<size_t> (combLines - 1)]) + halfCell);
         }
 
