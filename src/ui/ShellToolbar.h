@@ -19,6 +19,10 @@ public:
     explicit Toolbar (EditorState& state);
     ~Toolbar() override;
 
+    /** The tools and brush settings have nothing to act on in the live view: they are disabled
+        there, while adding and clearing stay available. */
+    void setDrawingToolsEnabled (bool shouldBeEnabled);
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -39,6 +43,7 @@ private:
     EditorState& state;
     juce::Rectangle<int> toolGroup;   // the raised box behind the three tools
     int brushDividerX = 0, clearDividerX = 0;
+    bool toolsEnabled = true;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Toolbar)
 };

@@ -31,15 +31,36 @@ namespace
         return result;
     }
 
-    juce::Font segmentFont (int height, bool selected)
+    juce::Font segmentFont (float size, bool selected)
     {
-        return fonts::ui (height >= 26 ? theme::controlSize : 12.0f,
-                          selected ? fonts::UiWeight::semiBold : fonts::UiWeight::medium);
+        return fonts::ui (size, selected ? fonts::UiWeight::semiBold : fonts::UiWeight::medium);
     }
 
     float stringWidth (const juce::Font& font, const juce::String& text)
     {
         return juce::GlyphArrangement::getStringWidth (font, text);
+    }
+
+    constexpr float minSegmentPadding = 12.0f;   // text to segment edge, both sides together
+
+    /** The type size for a row of segments: the control size, stepping down (to 11 px) when long
+        labels would otherwise touch their neighbours. */
+    float segmentTextSize (const juce::StringArray& options, float width, int height)
+    {
+        const auto preferred = height >= 26 ? theme::controlSize : 12.0f;
+
+        for (auto size = preferred; size > 11.0f; size -= 1.0f)
+        {
+            auto total = 0.0f;
+
+            for (const auto& option : options)
+                total += stringWidth (segmentFont (size, true), option) + minSegmentPadding;
+
+            if (total <= width)
+                return size;
+        }
+
+        return 11.0f;
     }
 } // namespace
 
@@ -97,7 +118,7 @@ namespace
         if (count == 0)
             return rects;
 
-        const auto font = segmentFont (height, true);
+        const auto font = segmentFont (segmentTextSize (options, area.getWidth(), height), true);
         std::vector<float> widths;
         auto total = 0.0f;
 
@@ -145,6 +166,7 @@ void SegmentedControl::paint (juce::Graphics& g)
     g.drawRoundedRectangle (outer.reduced (0.5f), theme::controlCorner, 1.0f);
 
     const auto rects = segmentRects (options, outer.reduced (2.0f), getHeight());
+    const auto textSize = segmentTextSize (options, outer.getWidth() - 4.0f, getHeight());
     const auto innerCorner = theme::controlCorner - 2.0f;
 
     for (size_t i = 0; i < rects.size(); ++i)
@@ -182,7 +204,7 @@ void SegmentedControl::paint (juce::Graphics& g)
             }
         }
 
-        g.setFont (segmentFont (getHeight(), isSelected));
+        g.setFont (segmentFont (textSize, isSelected));
         g.setColour (! enabled ? theme::textFaint : isSelected || isHovered ? theme::text : theme::textDim);
         g.drawText (options[index], r, juce::Justification::centred, true);
     }

@@ -354,7 +354,7 @@ namespace
     const std::vector<std::pair<juce::String, Paragraph>>& helpSteps()
     {
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
-            { "1", { "Put FreqArt on an instrument track.", "It makes the sound itself; MIDI notes only start it." } },
+            { "1", { "Put FreqArt on an instrument track.", "It makes the sound itself; MIDI notes can trigger it." } },
             { "2", { "Open a spectrogram on its output.", "MiniMeters, or any analyser with a scrolling spectrogram." } },
             { "3", { "Match your analyser.", "In Settings (the gear), choose the same scale, range and slope as your "
                                              "analyser. MiniMeters: Log, 20 Hz to 20 kHz." } },

@@ -185,9 +185,22 @@ void FreqArtLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int 
         else
             filled.setTop (sliderPos);
 
-        g.setColour ((enabled ? theme::accent : theme::textFaint).withAlpha (0.3f));
-        g.fillRoundedRectangle (filled, theme::controlCorner);
-        g.setColour (hot ? theme::textFaint : theme::line);
+        const auto colour = enabled ? theme::accent : theme::textFaint;
+
+        if (! filled.isEmpty())
+        {
+            // The fill is clipped to the bar's rounded shape, so a small value shows as a sliver
+            // rather than a squashed pill. The number on top is drawn in full text colour.
+            juce::Graphics::ScopedSaveState saved (g);
+            juce::Path shape;
+            shape.addRoundedRectangle (bounds, theme::controlCorner);
+            g.reduceClipRegion (shape);
+
+            g.setColour (colour.withAlpha (hot ? 0.42f : 0.34f));
+            g.fillRect (filled);
+        }
+
+        g.setColour (slider.hasKeyboardFocus (true) ? theme::accent : hot ? theme::textFaint : theme::line);
         g.drawRoundedRectangle (bounds.reduced (0.5f), theme::controlCorner, 1.0f);
         return;
     }
@@ -262,6 +275,12 @@ juce::Label* FreqArtLookAndFeel::createSliderTextBox (juce::Slider& slider)
     label->setFont (fonts::mono (12.0f));
     label->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label->setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
+
+    // A bar's number sits on the bar itself: full text colour, so it reads over the fill (a
+    // disabled label dims itself).
+    if (slider.isBar())
+        label->setColour (juce::Label::textColourId, theme::text);
+
     return label;
 }
 

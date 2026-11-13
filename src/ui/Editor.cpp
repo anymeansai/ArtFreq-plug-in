@@ -88,8 +88,17 @@ namespace
             header.settingsButton.onClick = [this] { setSettingsOpen (! settings.isVisible()); };
 
             // Toolbar
-            toolbar.addTextButton.onClick = [this] { ui::actions::addText (processor, state); };
-            toolbar.addImageButton.onClick = [this] { ui::actions::chooseImage (processor, state, *this, false); };
+            // Adding something from the live view goes back to the canvas, where it can be seen.
+            toolbar.addTextButton.onClick = [this]
+            {
+                setLiveView (false);
+                ui::actions::addText (processor, state);
+            };
+            toolbar.addImageButton.onClick = [this]
+            {
+                setLiveView (false);
+                ui::actions::chooseImage (processor, state, *this, false);
+            };
             toolbar.clearButton.onClick = [this] { ui::actions::clearDrawing (processor, state); };
 
             state.focusTextField = [this] { inspector.focusTextField(); };
@@ -206,19 +215,19 @@ namespace
                 return false;   // anything else with Cmd is for the host
             }
 
-            if (isPanelOpen() || liveView.isVisible() || mods.isAltDown() || mods.isCtrlDown())
+            if (isPanelOpen() || mods.isAltDown() || mods.isCtrlDown())
                 return false;
 
-            if (! mods.isShiftDown())
+            // Choosing a tool from the live view goes back to the canvas.
+            if (! mods.isShiftDown() && (letter == 'V' || letter == 'B' || letter == 'E'))
             {
-                switch (letter)
-                {
-                    case 'V': state.setTool (ui::Tool::select); return true;
-                    case 'B': state.setTool (ui::Tool::brush); return true;
-                    case 'E': state.setTool (ui::Tool::erase); return true;
-                    default: break;
-                }
+                setLiveView (false);
+                state.setTool (letter == 'V' ? ui::Tool::select : letter == 'B' ? ui::Tool::brush : ui::Tool::erase);
+                return true;
             }
+
+            if (liveView.isVisible())
+                return false;
 
             // Delete and the arrows belong to the canvas; it handles them while it has the focus.
             // From anywhere else in the window, hand them over.
@@ -253,7 +262,7 @@ namespace
             liveView.setVisible (live);
 
             // The drawing tools have nothing to act on in the live view.
-            toolbar.setEnabled (! live);
+            toolbar.setDrawingToolsEnabled (! live);
         }
 
         bool isLiveViewShown() const noexcept   { return liveView.isVisible(); }
@@ -276,7 +285,7 @@ namespace
             header.settingsButton.setToggleState (open, juce::dontSendNotification);
             updateScrim();
 
-            if (open)
+            if (open && isShowing())
                 settings.grabKeyboardFocus();
         }
 
@@ -292,7 +301,7 @@ namespace
             header.helpButton.setToggleState (open, juce::dontSendNotification);
             updateScrim();
 
-            if (open)
+            if (open && isShowing())
                 help.grabKeyboardFocus();
         }
 
@@ -408,7 +417,7 @@ struct FreqArtEditor::Impl final : private juce::KeyListener
         // Setting the look-and-feel after the content has been added tells every child about
         // it, which is when the sliders create their value boxes.
         editor.addAndMakeVisible (content);
-        editor.setLookAndFeel (&lookAndFeel);
+        editor.setLookAndFeel (lookAndFeel.get());
         ui::FreqArtLookAndFeel::setPopupParent (content);
 
         content.onWindowScaleChosen = [this] (float scale) { setWindowScale (scale); };
@@ -422,8 +431,10 @@ struct FreqArtEditor::Impl final : private juce::KeyListener
     {
         editor.removeKeyListener (this);
 
-        // A combo box menu still open belongs to this window.
-        juce::PopupMenu::dismissAllActiveMenus();
+        // A combo box menu still open belongs to this window. It is deleted a moment later by the
+        // message loop and uses the look-and-feel until then, so that stays alive a moment too.
+        if (juce::PopupMenu::dismissAllActiveMenus())
+            juce::MessageManager::callAsync ([keepAlive = lookAndFeel] { juce::ignoreUnused (keepAlive); });
 
         // Detach the interface before letting go of the look-and-feel.
         editor.removeChildComponent (&content);
@@ -475,7 +486,7 @@ struct FreqArtEditor::Impl final : private juce::KeyListener
 
     FreqArtEditor& editor;
     FreqArtProcessor& processor;
-    ui::FreqArtLookAndFeel lookAndFeel;   // declared before the content: outlives it
+    std::shared_ptr<ui::FreqArtLookAndFeel> lookAndFeel = std::make_shared<ui::FreqArtLookAndFeel>();   // outlives the content
     Content content;
     float currentScale = 1.0f;
     bool rememberSize = false;   // off while the constructor sets the window up

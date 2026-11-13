@@ -77,6 +77,20 @@ Toolbar::~Toolbar()
     state.removeChangeListener (this);
 }
 
+void Toolbar::setDrawingToolsEnabled (bool shouldBeEnabled)
+{
+    if (toolsEnabled == shouldBeEnabled)
+        return;
+
+    toolsEnabled = shouldBeEnabled;
+
+    for (auto* c : std::initializer_list<juce::Component*> { &selectTool, &brushTool, &eraseTool,
+                                                            &brushSize, &brushSoftness, &brushStrength })
+        c->setEnabled (shouldBeEnabled);
+
+    repaint (toolGroup.expanded (1));
+}
+
 void Toolbar::paint (juce::Graphics& g)
 {
     g.fillAll (theme::panel);
@@ -85,7 +99,7 @@ void Toolbar::paint (juce::Graphics& g)
     // The tools share one raised box; the buttons inside are concentric with it.
     const auto group = toolGroup.toFloat();
     const auto corner = theme::controlCorner + static_cast<float> (groupInset);
-    g.setColour (theme::raised.withMultipliedAlpha (isEnabled() ? 1.0f : 0.6f));
+    g.setColour (theme::raised.withMultipliedAlpha (toolsEnabled && isEnabled() ? 1.0f : 0.6f));
     g.fillRoundedRectangle (group, corner);
     g.setColour (theme::line);
     g.drawRoundedRectangle (group.reduced (0.5f), corner, 1.0f);

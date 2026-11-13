@@ -261,7 +261,7 @@ NumberField::NumberField (juce::RangedAudioParameter& p, Options o)
 
 NumberField::~NumberField()
 {
-    if (dragging)
+    if (dragging && dragMoved)
         attachment.endGesture();
 
     if (editor != nullptr)
@@ -340,7 +340,6 @@ void NumberField::mouseDown (const juce::MouseEvent& e)
     dragMoved = false;
     dragValue = value;
     lastDragPosition = e.position;
-    attachment.beginGesture();
     repaint();
 }
 
@@ -352,8 +351,16 @@ void NumberField::mouseDrag (const juce::MouseEvent& e)
     const auto travel = static_cast<double> ((lastDragPosition.y - e.position.y) + (e.position.x - lastDragPosition.x));
     lastDragPosition = e.position;
 
-    if (std::abs (travel) > 0.0)
+    if (std::abs (travel) <= 0.0)
+        return;
+
+    // The gesture starts with the first movement: a click that only opens the editor is not
+    // an automation touch.
+    if (! dragMoved)
+    {
         dragMoved = true;
+        attachment.beginGesture();
+    }
 
     const auto fine = isFineAdjust (e.mods) ? options.fineFactor : 1.0;
     const auto range = parameter.getNormalisableRange();
@@ -379,7 +386,10 @@ void NumberField::mouseUp (const juce::MouseEvent& e)
         return;
 
     dragging = false;
-    attachment.endGesture();
+
+    if (dragMoved)
+        attachment.endGesture();
+
     repaint();
 
     if (options.editOnSingleClick && ! dragMoved && e.getNumberOfClicks() == 1 && ! e.mouseWasDraggedSinceMouseDown())
@@ -423,7 +433,9 @@ void NumberField::showEditor()
     resized();
     repaint();
 
-    editor->grabKeyboardFocus();
+    if (isShowing())
+        editor->grabKeyboardFocus();
+
     editor->selectAll();
 }
 

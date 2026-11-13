@@ -19,22 +19,33 @@
 //   freqart-menu.png             the Length menu open
 //   freqart-tooltip.png          a tooltip (Density's)
 //   freqart-edit.png             typing a value into the Level knob
+//   freqart-dragging.png         the picture being dragged (its frequency range shown)
+//   freqart-painting.png         a brush stroke just painted, the brush cursor over it
+//   freqart-empty.png            after Clear: the empty canvas and its hint
+//   freqart-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
 //   freqart-75.png               window at 75 %, one image pixel per logical pixel
 //   freqart-150.png              window at 150 %, one image pixel per logical pixel
 //
 // All but the last two are rendered at <pixel-scale> image pixels per logical pixel (default 2, as
 // on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
-// WAV file of the right length) and that the window size is remembered. It exits with 1 if a
-// file cannot be written or a check fails.
+// WAV file of the right length), that the window size is remembered, and drives the editor with
+// synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar),
+// checking what each does to the drawing and that undo takes it back. It exits with 1 if a file
+// cannot be written or a check fails. At the end it puts the window on the (virtual) desktop to
+// check the live view's own timer: the analyser on while shown, scrolling, off when hidden.
 //
 // On Linux run it under a virtual display:  xvfb-run -a FreqArtSnapshot out
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
+#include "core/Compositor.h"
 #include "core/FrequencyScale.h"
+#include "ui/Actions.h"
+#include "ui/CanvasView.h"
 #include "ui/Editor.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
+#include "ui/ShellToolbar.h"
 #include "ui/Widgets.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -42,15 +53,20 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <cmath>
+#include <functional>
 #include <iostream>
+#include <limits>
 
 namespace
 {
 
 bool failed = false;
+int checksRun = 0;
 
 void check (bool condition, const juce::String& what)
 {
+    ++checksRun;
+
     if (! condition)
     {
         std::cerr << "CHECK FAILED: " << what << std::endl;
@@ -187,6 +203,427 @@ void playFor (freqart::FreqArtProcessor& processor, double seconds)
         buffer.clear();
         processor.processBlock (buffer, midi);
     }
+}
+
+//==============================================================================
+// Synthetic mouse input, delivered straight to a component (no window is needed).
+
+juce::MouseEvent mouseEventAt (juce::Component& c, juce::Point<float> position, juce::Point<float> downPosition,
+                               juce::ModifierKeys mods, int clicks = 1, bool dragged = false)
+{
+    const auto now = juce::Time::getCurrentTime();
+    return { juce::Desktop::getInstance().getMainMouseSource(), position, mods, juce::MouseInputSource::defaultPressure,
+             0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, downPosition, now, clicks, dragged };
+}
+
+void clickOn (juce::Component& c, juce::Point<float> at)
+{
+    c.mouseDown (mouseEventAt (c, at, at, juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+    c.mouseUp (mouseEventAt (c, at, at, {}));
+}
+
+/** Presses at `from`, moves to `to` in steps (as a real drag arrives) and lets go, unless
+    `release` is false. */
+void dragOn (juce::Component& c, juce::Point<float> from, juce::Point<float> to, juce::ModifierKeys mods = {},
+             bool release = true)
+{
+    const auto held = mods.withFlags (juce::ModifierKeys::leftButtonModifier);
+    c.mouseDown (mouseEventAt (c, from, from, held));
+
+    constexpr int steps = 12;
+
+    for (int i = 1; i <= steps; ++i)
+        c.mouseDrag (mouseEventAt (c, from + (to - from) * (static_cast<float> (i) / steps), from, held, 1, true));
+
+    if (release)
+        c.mouseUp (mouseEventAt (c, to, from, mods, 1, true));
+}
+
+/** Where an object is on the canvas, in the canvas's coordinates. */
+juce::Rectangle<float> onCanvas (freqart::ui::CanvasView& canvas, const freqart::ArtObject& object,
+                                 const freqart::FrequencyScale& scale)
+{
+    const auto a = canvas.getDrawingArea();
+    const auto n = freqart::objectRectNorm (object, scale);
+    return { a.getX() + n.getX() * a.getWidth(), a.getY() + n.getY() * a.getHeight(),
+             n.getWidth() * a.getWidth(), n.getHeight() * a.getHeight() };
+}
+
+/** The paint layer's value under a point of the canvas. */
+int paintAt (const freqart::ArtDocument& document, freqart::ui::CanvasView& canvas, juce::Point<float> p)
+{
+    const auto a = canvas.getDrawingArea();
+    const auto x = juce::jlimit (0, freqart::ArtDocument::paintWidth - 1,
+                                 static_cast<int> ((p.x - a.getX()) / a.getWidth() * freqart::ArtDocument::paintWidth));
+    const auto y = juce::jlimit (0, freqart::ArtDocument::paintHeight - 1,
+                                 static_cast<int> ((p.y - a.getY()) / a.getHeight() * freqart::ArtDocument::paintHeight));
+
+    if (document.paint.empty())
+        return 0;
+
+    return document.paint[static_cast<size_t> (y * freqart::ArtDocument::paintWidth + x)];
+}
+
+bool samePlacement (const freqart::ArtObject& a, const freqart::ArtObject& b)
+{
+    return juce::exactlyEqual (a.startTime, b.startTime) && juce::exactlyEqual (a.endTime, b.endTime)
+        && juce::exactlyEqual (a.lowHz, b.lowHz) && juce::exactlyEqual (a.highHz, b.highHz);
+}
+
+/** True if two documents hold the same drawing (objects in order, their settings, the paint). */
+bool sameDrawing (const freqart::ArtDocument& a, const freqart::ArtDocument& b)
+{
+    if (a.objects.size() != b.objects.size() || a.hasPaint() != b.hasPaint() || (a.hasPaint() && a.paint != b.paint))
+        return false;
+
+    for (size_t i = 0; i < a.objects.size(); ++i)
+    {
+        const auto& x = a.objects[i];
+        const auto& y = b.objects[i];
+
+        if (x.id != y.id || ! samePlacement (x, y) || x.text != y.text || ! juce::exactlyEqual (x.intensity, y.intensity)
+            || x.fontIndex != y.fontIndex || x.textStyle != y.textStyle || x.imageMode != y.imageMode)
+            return false;
+    }
+
+    return true;
+}
+
+/** Uses the editor as a person would, with synthetic mouse and key events, and checks what each
+    gesture does to the drawing. Everything is undone again, so the drawing ends as it began. */
+void checkInteractions (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor, juce::Component& content,
+                        const juce::Uuid& textId, const juce::Uuid& imageId,
+                        const std::function<void (const juce::String&, bool)>& save)
+{
+    using namespace freqart;
+
+    auto* canvas = find<ui::CanvasView> (editor, "canvas");
+    auto* toolbar = find<ui::shell::Toolbar> (editor, "toolbar");
+
+    if (canvas == nullptr || toolbar == nullptr)
+        return;
+
+    const auto start = processor.getDocument();
+    const auto scale = processor.getScale();
+    const auto a = canvas->getDrawingArea();
+    const auto w = a.getWidth();
+
+    const auto key = [&] (const juce::KeyPress& k) { content.keyPressed (k); pump (20); };
+    const auto undo = [&] { key (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)); };
+    const auto redo = [&] { key (juce::KeyPress ('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)); };
+    const auto shown = [&] (const juce::String& id)
+    {
+        auto* c = findComponentWithId (editor, id);
+        return c != nullptr && c->isVisible();
+    };
+    const auto object = [&] (const juce::Uuid& id)
+    {
+        const auto* o = processor.getDocument().find (id);
+        return o != nullptr ? *o : ArtObject();
+    };
+
+    const auto text0 = object (textId);
+    const auto textRect = onCanvas (*canvas, text0, scale);
+
+    // ---- selecting ------------------------------------------------------------------------------
+    editor.selectObject (juce::Uuid::null());
+    pump (20);
+    clickOn (*canvas, textRect.getCentre());
+    pump (20);
+    check (shown ("inspector-text") && shown ("inspector-band"), "clicking the text selects it (the inspector shows it)");
+
+    clickOn (*canvas, { a.getRight() - 6.0f, a.getY() + 6.0f });
+    pump (20);
+    check (! shown ("inspector-band"), "clicking empty canvas deselects");
+
+    // ---- moving -------------------------------------------------------------------------------
+    dragOn (*canvas, textRect.getCentre(), textRect.getCentre() + juce::Point<float> (60.0f, 0.0f));
+    {
+        const auto t = object (textId);
+        check (std::abs ((t.startTime - text0.startTime) - 60.0f / w) < 1.0e-4f
+               && std::abs ((t.endTime - text0.endTime) - 60.0f / w) < 1.0e-4f, "dragging the text moves it in time");
+        check (juce::exactlyEqual (t.lowHz, text0.lowHz) && juce::exactlyEqual (t.highHz, text0.highHz),
+               "a sideways drag keeps the frequencies exactly");
+    }
+    undo();
+    check (samePlacement (object (textId), text0), "a drag is one undo step");
+
+    dragOn (*canvas, textRect.getCentre(), textRect.getCentre() + juce::Point<float> (70.0f, 24.0f), juce::ModifierKeys::shiftModifier);
+    check (object (textId).startTime > text0.startTime && juce::exactlyEqual (object (textId).lowHz, text0.lowHz),
+           "Shift keeps a drag on one axis");
+    undo();
+
+    dragOn (*canvas, textRect.getCentre(), textRect.getCentre() + juce::Point<float> (0.0f, 40.0f));
+    {
+        const auto r = onCanvas (*canvas, object (textId), scale);
+        check (std::abs (r.getY() - (textRect.getY() + 40.0f)) < 0.5f && std::abs (r.getHeight() - textRect.getHeight()) < 0.5f
+               && juce::exactlyEqual (object (textId).startTime, text0.startTime), "a vertical drag moves it down the scale");
+    }
+    undo();
+
+    // ---- resizing -----------------------------------------------------------------------------
+    editor.selectObject (textId);
+    pump (20);
+    {
+        const auto handle = juce::Point<float> (textRect.getRight(), textRect.getCentreY());
+        dragOn (*canvas, handle, handle + juce::Point<float> (-80.0f, 15.0f));
+        const auto t = object (textId);
+        check (std::abs ((t.endTime - text0.endTime) + 80.0f / w) < 1.0e-4f && juce::exactlyEqual (t.startTime, text0.startTime)
+               && juce::exactlyEqual (t.lowHz, text0.lowHz) && juce::exactlyEqual (t.highHz, text0.highHz),
+               "the right-hand handle moves the end only");
+        undo();
+        check (samePlacement (object (textId), text0), "a resize is one undo step");
+    }
+
+    // ---- nudging (keys sent to the window, as from any focused control) ----------------------------
+    editor.selectObject (textId);
+    key (juce::KeyPress (juce::KeyPress::rightKey));
+    key (juce::KeyPress (juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier, 0));
+    check (std::abs ((object (textId).startTime - text0.startTime) - 11.0f / w) < 1.0e-4f, "arrows nudge 1 px, Shift+arrow 10 px");
+    undo();
+    check (samePlacement (object (textId), text0), "quick nudges are one undo step");
+
+    // ---- a drag in progress shows the frequency range -------------------------------------------
+    {
+        const auto image0 = object (imageId);
+        const auto from = onCanvas (*canvas, image0, scale).getCentre();
+        const auto to = from + juce::Point<float> (-40.0f, -60.0f);
+        dragOn (*canvas, from, to, {}, false);
+        save ("dragging", true);
+        canvas->mouseUp (mouseEventAt (*canvas, to, from, {}, 1, true));
+        check (object (imageId).startTime < image0.startTime && object (imageId).highHz > image0.highHz, "dragging the picture moves it");
+        undo();
+        check (samePlacement (object (imageId), image0), "... and undo puts it back");
+    }
+
+    // ---- the inspector ----------------------------------------------------------------------------
+    editor.selectObject (textId);
+    pump (20);
+
+    if (auto* band = find<ui::SegmentedControl> (editor, "inspector-band"))
+    {
+        check (band->getSelectedIndex() == static_cast<int> (Band::high), "the inspector shows the text on the High band");
+        clickOn (*band, { static_cast<float> (band->getWidth()) / 8.0f, static_cast<float> (band->getHeight()) * 0.5f });
+        pump (20);
+        const auto t = object (textId);
+        const auto low = bandRange (Band::low, processor.getScale());
+        check (std::abs (t.lowHz - low.low) < 0.01 && std::abs (t.highHz - low.high) < 0.01
+               && juce::exactlyEqual (t.startTime, text0.startTime), "Band: Low moves the text into the lows");
+        check (band->getSelectedIndex() == static_cast<int> (Band::low), "... and shows Low as chosen");
+        undo();
+        check (samePlacement (object (textId), text0) && band->getSelectedIndex() == static_cast<int> (Band::high),
+               "undo moves it back (and the inspector follows)");
+    }
+
+    if (auto* intensity = find<juce::Slider> (editor, "inspector-intensity"))
+    {
+        intensity->setValue (40.0, juce::sendNotificationSync);
+        check (std::abs (object (textId).intensity - 0.4f) < 1.0e-4f, "the Intensity bar sets the intensity");
+        undo();
+        check (std::abs (intensity->getValue() - 100.0) < 1.0e-6 && juce::exactlyEqual (object (textId).intensity, text0.intensity),
+               "undo puts the intensity and its bar back");
+    }
+
+    if (auto* field = find<juce::TextEditor> (editor, "inspector-text"))
+    {
+        check (field->getText() == text0.text, "the text field shows the text");
+        field->moveCaretToEnd();
+        field->insertTextAtCaret (" WORLD");
+        pump (30);
+        field->insertTextAtCaret ("!");
+        pump (30);
+        check (object (textId).text == text0.text + " WORLD!", "typing changes the text on the canvas");
+        undo();
+        check (object (textId).text == text0.text && field->getText() == text0.text, "typing is one undo step, and the field follows undo");
+    }
+
+    if (auto* fill = find<juce::Button> (editor, "inspector-fill"))
+    {
+        fill->onClick();
+        check (juce::approximatelyEqual (object (textId).startTime, 0.04f) && juce::approximatelyEqual (object (textId).endTime, 0.96f)
+               && juce::exactlyEqual (object (textId).lowHz, text0.lowHz), "Fill length stretches the text across the length");
+        undo();
+    }
+
+    if (auto* font = find<juce::ComboBox> (editor, "inspector-font"))
+    {
+        font->setSelectedId (3, juce::sendNotificationSync);
+        check (object (textId).fontIndex == 2, "the Font menu changes the text's font");
+        undo();
+        check (object (textId).fontIndex == text0.fontIndex && font->getSelectedId() == text0.fontIndex + 1, "... and undo changes it back");
+    }
+
+    if (auto* style = find<ui::SegmentedControl> (editor, "inspector-style"))
+    {
+        clickOn (*style, { static_cast<float> (style->getWidth()) * 0.75f, static_cast<float> (style->getHeight()) * 0.5f });
+        check (object (textId).textStyle == TextStyle::outline, "Style: Outline draws the text as outlines");
+        undo();
+    }
+
+    editor.selectObject (imageId);
+    pump (20);
+
+    if (auto* modeControl = find<ui::SegmentedControl> (editor, "inspector-mode"))
+    {
+        check (shown ("inspector-mode") && ! shown ("inspector-text"), "selecting the picture shows the picture's settings");
+        clickOn (*modeControl, { static_cast<float> (modeControl->getWidth()) * 0.875f, static_cast<float> (modeControl->getHeight()) * 0.5f });
+        check (object (imageId).imageMode == ImageMode::outline, "Mode: Outline draws the picture's edges");
+        undo();
+        check (object (imageId).imageMode == ImageMode::automatic, "... and undo goes back to Auto");
+    }
+
+    // ---- dropping a picture file on the canvas -----------------------------------------------------
+    {
+        const auto file = juce::File::createTempFile (".png");
+        writePng (makeTestPicture(), file);
+        const juce::StringArray files { file.getFullPathName() };
+        const auto count = processor.getDocument().objects.size();
+        const auto at = juce::Point<int> (juce::roundToInt (a.getX() + w * 0.3f), juce::roundToInt (a.getY() + a.getHeight() * 0.85f));
+
+        check (canvas->isInterestedInFileDrag (files), "the canvas takes picture files");
+        canvas->fileDragEnter (files, at.x, at.y);
+        canvas->filesDropped (files, at.x, at.y);
+        pump (20);
+
+        const auto& objects = processor.getDocument().objects;
+        check (objects.size() == count + 1 && objects.back().type == ArtObject::Type::image
+               && ui::actions::bandOf (objects.back(), scale) == static_cast<int> (Band::low) && shown ("inspector-mode"),
+               "a dropped picture lands in the band under the mouse, selected");
+        undo();
+        check (processor.getDocument().objects.size() == count, "... and undo removes it");
+        file.deleteFile();
+    }
+
+    // ---- painting and erasing -------------------------------------------------------------------
+    editor.selectObject (juce::Uuid::null());
+    key (juce::KeyPress ('b', {}, 'b'));
+    toolbar->brushSize.getSlider().setValue (24.0, juce::sendNotificationSync);
+    toolbar->brushSoftness.getSlider().setValue (0.0, juce::sendNotificationSync);
+    toolbar->brushStrength.getSlider().setValue (100.0, juce::sendNotificationSync);
+    {
+        // Low down on the right, where the drawing has nothing.
+        const auto from = juce::Point<float> (a.getX() + w * 0.60f, a.getBottom() - a.getHeight() * 0.05f);
+        const auto to = from + juce::Point<float> (w * 0.25f, -a.getHeight() * 0.03f);
+        const auto middle = (from + to) * 0.5f;
+        check (paintAt (start, *canvas, middle) == 0, "(the stroke's place starts empty)");
+
+        dragOn (*canvas, from, to);
+        check (paintAt (processor.getDocument(), *canvas, middle) == 255, "a Brush stroke paints along its path");
+        check (paintAt (processor.getDocument(), *canvas, middle + juce::Point<float> (0.0f, -9.0f)) == 255
+               && paintAt (processor.getDocument(), *canvas, middle + juce::Point<float> (0.0f, -16.0f)) == 0,
+               "... as wide as the brush on screen (24 px)");
+
+        // Drawn at once: the message loop would notice that the real mouse is elsewhere.
+        processor.rebuildPlanIfNeeded();
+        pump (60);
+        canvas->mouseMove (mouseEventAt (*canvas, to, to, {}));
+        save ("painting", false);
+        canvas->mouseExit (mouseEventAt (*canvas, { -10.0f, -10.0f }, to, {}));
+
+        // Erase at half strength over the same path halves what is there.
+        key (juce::KeyPress ('e', {}, 'e'));
+        toolbar->brushStrength.getSlider().setValue (50.0, juce::sendNotificationSync);
+        dragOn (*canvas, from, to);
+        const auto halved = paintAt (processor.getDocument(), *canvas, middle);
+        check (halved > 110 && halved < 145, "Erase at 50 % strength halves the paint (" + juce::String (halved) + ")");
+
+        undo();
+        check (paintAt (processor.getDocument(), *canvas, middle) == 255, "an erase stroke is one undo step");
+        undo();
+        check (sameDrawing (processor.getDocument(), start), "a brush stroke is one undo step");
+        redo();
+        check (paintAt (processor.getDocument(), *canvas, middle) == 255, "redo paints it again");
+        undo();
+
+        toolbar->brushStrength.getSlider().setValue (100.0, juce::sendNotificationSync);
+        toolbar->brushSoftness.getSlider().setValue (50.0, juce::sendNotificationSync);
+        toolbar->brushSize.getSlider().setValue (16.0, juce::sendNotificationSync);
+        key (juce::KeyPress ('v', {}, 'v'));
+    }
+
+    // ---- the toolbar and the header -------------------------------------------------------------
+    if (auto* addText = find<juce::Button> (editor, "add-text"))
+    {
+        const auto count = processor.getDocument().objects.size();
+        addText->onClick();
+        pump (20);
+        check (processor.getDocument().objects.size() == count + 1 && shown ("inspector-text"),
+               "Add text adds a text object and selects it");
+        key (juce::KeyPress (juce::KeyPress::deleteKey));
+        check (processor.getDocument().objects.size() == count, "... which Delete removes");
+        undo();
+        undo();
+    }
+
+    if (auto* clear = find<juce::Button> (editor, "clear"))
+    {
+        clear->onClick();
+        pump (30);
+        check (processor.getDocument().isEmpty() && ! clear->isEnabled(), "Clear empties the drawing and greys itself out");
+        save ("empty", true);
+
+        if (auto* undoButton = find<juce::Button> (editor, "undo"))
+        {
+            undoButton->onClick();
+            pump (30);
+        }
+
+        check (sameDrawing (processor.getDocument(), start) && clear->isEnabled(), "the Undo button brings the drawing back");
+    }
+
+    // ---- the header's view switch, the footer's Preview -------------------------------------------
+    if (auto* view = find<ui::SegmentedControl> (editor, "view-switch"))
+    {
+        clickOn (*view, { static_cast<float> (view->getWidth()) * 0.75f, static_cast<float> (view->getHeight()) * 0.5f });
+        check (shown ("live-view") && ! shown ("canvas") && ! toolbar->brushTool.isEnabled() && toolbar->addTextButton.isEnabled(),
+               "Live shows the live view (drawing tools off, adding still on)");
+        clickOn (*view, { static_cast<float> (view->getWidth()) * 0.25f, static_cast<float> (view->getHeight()) * 0.5f });
+        check (shown ("canvas") && ! shown ("live-view") && toolbar->brushTool.isEnabled(), "Canvas goes back to the canvas");
+    }
+
+    if (auto* preview = find<juce::Button> (editor, "preview"))
+    {
+        clickOn (*preview, preview->getLocalBounds().getCentre().toFloat());
+        pump (20);
+        check (processor.isPreviewing(), "the Preview button starts the preview");
+        clickOn (*preview, preview->getLocalBounds().getCentre().toFloat());
+        pump (20);
+        check (! processor.isPreviewing(), "... and stops it");
+    }
+
+    // ---- the analyser scale (Settings) and the length --------------------------------------------
+    if (auto* scaleControl = find<ui::SegmentedControl> (editor, "scale"))
+    {
+        clickOn (*scaleControl, { static_cast<float> (scaleControl->getWidth()) * 0.5f, static_cast<float> (scaleControl->getHeight()) * 0.5f });
+        setParameter (processor, params::id::length, 2.0f);  // 1 bar
+        pump (40);
+        check (processor.getScale().type == ScaleType::linear, "Settings: Linear switches the analyser scale");
+        save ("linear", true);
+
+        clickOn (*scaleControl, { 4.0f, static_cast<float> (scaleControl->getHeight()) * 0.5f });
+        setParameter (processor, params::id::length, static_cast<float> (params::defaultLengthIndex));
+        pump (40);
+        check (processor.getScale().type == ScaleType::log, "... and Log switches it back");
+    }
+
+    check (sameDrawing (processor.getDocument(), start), "after all that, undo has taken the drawing back to where it began");
+    editor.selectObject (juce::Uuid::null());
+    pump (30);
+}
+
+int countDifferentPixels (const juce::Image& a, const juce::Image& b)
+{
+    if (a.getBounds() != b.getBounds())
+        return std::numeric_limits<int>::max();
+
+    auto count = 0;
+
+    for (int y = 0; y < a.getHeight(); ++y)
+        for (int x = 0; x < a.getWidth(); ++x)
+            if (a.getPixelAt (x, y) != b.getPixelAt (x, y))
+                ++count;
+
+    return count;
 }
 
 bool checkWav (const juce::File& file, double expectedSeconds)
@@ -336,6 +773,10 @@ int main (int argc, char* argv[])
         editor->selectObject (juce::Uuid::null());
         pump (60);
 
+        // ---- using the editor with the mouse ------------------------------------------------------
+        checkInteractions (*editor, processor, *content, textId, imageId,
+                           [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
+
         // ---- the look of standard controls: a menu, a tooltip, typing a value --------------------------
         if (auto* length = find<juce::ComboBox> (*editor, "length"))
         {
@@ -362,6 +803,8 @@ int main (int argc, char* argv[])
             {
                 if (auto* valueBox = dynamic_cast<juce::Label*> (child))
                 {
+                    // (Off screen, JUCE asserts in debug builds that the field cannot take the
+                    // keyboard focus; the field opens all the same.)
                     valueBox->showEditor();
                     check (valueBox->getCurrentTextEditor() != nullptr, "a knob's value can be typed");
                     save ("edit", pixelScale);
@@ -438,6 +881,47 @@ int main (int argc, char* argv[])
 
         setWindowScale (*editor, 1.25f);
         pump (30);
+
+        // ---- the live view in a real (virtual) window: its own timer turns the analyser on,
+        // scrolls what the processor plays, and scrolls silence once the host stops calling.
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pump (200);
+
+        if (auto* live = find<ui::LiveView> (*editor, "live-view"); live != nullptr && editor->isShowing())
+        {
+            editor->showLiveView (true);
+            pump (100);
+            check (processor.getAnalyzer().isActive(), "the live view, on screen, turns the analyser on");
+
+            processor.setPreview (true);
+
+            for (int i = 0; i < 20; ++i)
+            {
+                playFor (processor, 0.05);
+                pump (50);
+            }
+
+            processor.setPreview (false);
+            playFor (processor, 0.1);
+            pump (600);  // past the point where the view stops waiting for the host
+
+            const auto before = live->createComponentSnapshot (live->getLocalBounds());
+            pump (400);
+            const auto after = live->createComponentSnapshot (live->getLocalBounds());
+            check (countDifferentPixels (before, after) > 1000, "with the host silent, the live view keeps scrolling");
+
+            editor->showLiveView (false);
+            pump (100);
+            check (! processor.getAnalyzer().isActive(), "hiding the live view turns the analyser off");
+        }
+        else
+        {
+            std::cout << "(no desktop: the live view's own timer was not checked)" << std::endl;
+        }
+
+        editor->removeFromDesktop();
+        pump (30);
     }
 
     // A new editor (the window closed and opened again) comes back at the remembered size.
@@ -453,6 +937,8 @@ int main (int argc, char* argv[])
 
     if (failed)
         std::cerr << "Some checks failed" << std::endl;
+    else
+        std::cout << checksRun << " checks passed" << std::endl;
 
     return failed ? 1 : 0;
 }
