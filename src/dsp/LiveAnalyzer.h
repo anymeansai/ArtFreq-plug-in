@@ -47,10 +47,14 @@ private:
     std::atomic<double> sampleRate { 48000.0 };
     juce::AbstractFifo fifo { fifoSize };
     std::vector<float> fifoData;
-    std::vector<float> history;      // last fftSize samples
+    std::vector<float> history;      // last fftSize samples, a ring
+    int historyPosition = 0;         // the oldest sample in `history` (and where the next goes)
     int samplesSinceColumn = 0;
     juce::dsp::FFT fft { fftOrder };
     std::vector<float> window, work, magnitudes;
+    float magnitudeScale = 1.0f;     // turns an FFT magnitude into a sine's peak amplitude
+
+    void computeColumn();
 };
 
 } // namespace freqart

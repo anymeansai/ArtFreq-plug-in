@@ -34,7 +34,10 @@ public:
     /** The most recently published plan (null before the first). */
     std::shared_ptr<const ArtPlan> latest() const;
 
-    /** Releases plans the audio thread can no longer reach. Call regularly (e.g. from a timer). */
+    /** Releases plans the audio thread can no longer reach. Call regularly (e.g. from a timer).
+        Besides plans older than both reported versions, that includes plans that were replaced
+        by a newer one before the audio thread picked them up (it never saw them), so plans do
+        not pile up while the audio thread is not running. The latest plan is always kept. */
     void collectGarbage();
 
     /** Number of plans currently kept alive (for tests). */
@@ -53,10 +56,15 @@ public:
     void reportInUse (uint64_t currentVersion, uint64_t fadingVersion) noexcept;
 
 private:
-    std::vector<std::shared_ptr<ArtPlan>> alive;  // message thread only
+    struct Kept
+    {
+        std::shared_ptr<ArtPlan> plan;
+        bool skipped = false;  // replaced in `pending` before the audio thread picked it up
+    };
+
+    std::vector<Kept> alive;                      // message thread only, oldest first
     std::atomic<ArtPlan*> pending { nullptr };
-    std::atomic<uint64_t> inUseCurrent { 0 };
-    std::atomic<uint64_t> inUseFading { 0 };
+    std::atomic<uint64_t> oldestInUse { 0 };      // the older of the two reported versions (0: none yet)
     std::atomic<bool> audioHasReported { false };
     uint64_t nextVersion = 1;
 };

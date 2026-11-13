@@ -95,7 +95,9 @@ public:
     /** Paints (or erases) along a stroke: dabs every max (1, min (rx, ry) / 4) pixels from
         `from` to `to`. Each dab sets a pixel to max (pixel, strength * profile) when painting,
         or to pixel * (1 - profile) when erasing, where profile is 1 inside the hard core
-        (radius * (1 - softness)) and falls smoothly (smoothstep) to 0 at the radius. */
+        (radius * (1 - softness)) and falls smoothly (smoothstep) to 0 at the radius. Within one
+        call the dabs are combined first (strongest profile per pixel), so overlapping dabs do
+        not compound an erase. Pixel (x, y) is measured at its centre (x + 0.5, y + 0.5). */
     void paintStroke (const BrushStroke& stroke);
 
     void clearPaint();

@@ -51,8 +51,12 @@ public:
         clean-up), so re-rendering after moving an object or painting is cheap. */
     void render (const ArtDocument& document, const FrequencyScale& scale, Canvas& out);
 
-    /** Drops cached work for images no longer used by `document`. */
+    /** Drops cached work for images no longer used by `document`. render() does this itself
+        after every pass, so the cache never holds more than the pictures last drawn. */
     void trimCache (const ArtDocument& document);
+
+    /** How many processed pictures are cached (for tests and diagnostics). */
+    size_t getNumCachedImages() const noexcept { return cache.size(); }
 
 private:
     struct CacheKey
@@ -74,6 +78,7 @@ private:
         ProcessedImage processed;
     };
 
+    static CacheKey keyFor (const ArtObject& object);
     const ProcessedImage& processed (const ArtObject& object);
 
     std::map<CacheKey, CacheEntry> cache;

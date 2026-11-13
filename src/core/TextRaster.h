@@ -10,7 +10,8 @@ namespace freqart
 enum class TextStyle
 {
     solid = 0,    // filled letters
-    outline = 1   // only the letters' outlines, stroked at 7 % of the area's height (min 1.5 px)
+    outline = 1   // only the letters' outlines: the outer half of a stroke 7 % of the area's height
+                  // wide (min 3 px, so at least 1.5 px shows), the insides of the letters silent
 };
 
 /** The outline of the text in the given art font, at an arbitrary size, origin at the top left

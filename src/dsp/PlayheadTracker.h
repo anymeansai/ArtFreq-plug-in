@@ -76,21 +76,24 @@ public:
     double getTempo() const noexcept { return lastTempo; }
 
 private:
+    class Writer;
+
+    void processTransport (const HostTiming& timing, double tempo, bool usingHostTempo, double length,
+                           double rate, Writer& out) noexcept;
+    void processMidi (const juce::MidiBuffer& midi, double rate, Writer& out) noexcept;
+    void runOn (double rate, bool forceJump, Writer& out) noexcept;
+
     double sampleRate = 48000.0;
     bool preview = false;
     bool previewStartPending = false;
-    bool previewing = false;
 
-    bool wasPlaying = false;
     double expectedNextPosition = 0.0;  // where the previous block ended, 0..1
-    bool hasExpected = false;
+    bool hasExpected = false;           // false after reset: nothing to follow on from
 
     bool oneShotActive = false;         // midiNote mode
     double oneShotPosition = 0.0;
 
-    double freePosition = 0.0;          // freeLoop and preview
     double lastTempo = 120.0;
-    TriggerMode lastMode = TriggerMode::transport;
 };
 
 /** Converts a JUCE position to HostTiming. */
