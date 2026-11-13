@@ -28,6 +28,8 @@
 //   freqart-layers-hidden.png    the hidden object selected from the list (its outline on the canvas)
 //   freqart-layers-drag.png      a row being dragged to another place in the list
 //   freqart-layers-menu.png      an object's right-click menu on the canvas
+//   freqart-lows-brush.png       Lows (Smooth) at the foot of the panel, under the brush settings
+//   freqart-lows-stripes.png     the rich drawing with Lows on Stripes (the layers PNGs are Smooth)
 //   freqart-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
 //   freqart-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
 //   freqart-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
@@ -45,7 +47,7 @@
 // a new file takes its place), that the window size is remembered, and drives the editor with
 // synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar,
 // the footer's Trigger, Repeat, start bar and Preview, the layer list, picking overlapping
-// objects), checking what each does to the drawing or the settings and that undo takes it back.
+// objects, Lows), checking what each does to the drawing or the settings and that undo takes it back.
 // It exits with 1 if a file cannot be written or a check fails. At the end it puts the window on
 // the (virtual) desktop to check the live view's own timer: the analyser on while shown,
 // scrolling, off when hidden.
@@ -1039,6 +1041,95 @@ int countDifferentPixels (const juce::Image& a, const juce::Image& b)
     return count;
 }
 
+/** Lows (Smooth | Stripes) at the foot of the layer list: where it sits (with the keys and with
+    the brush settings), what it does to the plan and the canvas, and that it makes way for an
+    object's settings. */
+void checkLows (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor, juce::Component& content,
+                const juce::Uuid& imageId, const std::function<void (const juce::String&, bool)>& save)
+{
+    using namespace freqart;
+
+    auto* lows = find<ui::SegmentedControl> (editor, "lows");
+    auto* canvas = find<ui::CanvasView> (editor, "canvas");
+    auto* inspector = lows != nullptr ? lows->getParentComponent() : nullptr;
+
+    if (lows == nullptr || canvas == nullptr || inspector == nullptr)
+        return;
+
+    const auto value = [&] { return processor.getParameters().getRawParameterValue (params::id::lowEnd)->load(); };
+    const auto planHasComb = [&]
+    {
+        processor.rebuildPlanIfNeeded();
+        const auto plan = processor.getCurrentPlan();
+        return plan != nullptr && plan->combLines > 0;
+    };
+    const auto at = [lows] (float across) { return juce::Point<float> (static_cast<float> (lows->getWidth()) * across,
+                                                                       static_cast<float> (lows->getHeight()) * 0.5f); };
+
+    // At the foot of the panel, inside its margins, below everything else shown there.
+    const auto laidOut = [&]
+    {
+        auto ok = lows->isVisible() && lows->getBottom() == inspector->getHeight() - 16 && lows->getRight() == inspector->getWidth() - 16
+               && lows->getWidth() >= 150 && lows->getHeight() == 28;
+
+        for (auto* child : inspector->getChildren())
+            if (child != lows && child->isVisible())
+                ok = ok && child->getBottom() <= lows->getY() - 12;
+
+        return ok;
+    };
+
+    editor.selectObject (juce::Uuid::null());
+    pump (40);
+
+    check (lows->getOptions() == juce::StringArray { "Smooth", "Stripes" } && lows->getSelectedIndex() == 0
+           && juce::exactlyEqual (value(), 0.0f) && planHasComb(),
+           "Lows, under the layer list, is on Smooth in a new instance: the plan has the rising comb");
+
+    if (auto* tip = dynamic_cast<juce::TooltipClient*> (lows))
+        check (tip->getTooltip().contains ("Smooth") && tip->getTooltip().contains ("Stripes"), "Lows explains both in its tooltip");
+    else
+        check (false, "Lows has a tooltip");
+
+    check (laidOut(), "Lows sits at the foot of the layer list, clear of the list and its hint");
+
+    content.keyPressed (juce::KeyPress ('b', juce::ModifierKeys(), 'b'));
+    pump (30);
+    check (laidOut() && findComponentWithId (*inspector, "inspector-strength") != nullptr
+               && findComponentWithId (*inspector, "inspector-strength")->isVisible(),
+           "... and clear of the brush settings");
+    save ("lows-brush", true);
+    content.keyPressed (juce::KeyPress ('v', juce::ModifierKeys(), 'v'));
+    pump (30);
+
+    // Stripes: lines, which the canvas shows as scan lines in the lows.
+    const auto smoothCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
+    clickOn (*lows, at (0.75f));
+    pump (60);
+    check (juce::exactlyEqual (value(), 1.0f) && lows->getSelectedIndex() == 1 && ! planHasComb(),
+           "clicking Stripes plays the lows as separate lines");
+    pump (60);
+    const auto stripesCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
+    check (countDifferentPixels (smoothCanvas, stripesCanvas) > 2000, "... and the canvas shows them as stripes");
+    save ("lows-stripes", true);
+
+    // An object's settings take the panel; Lows comes back with the list.
+    editor.selectObject (imageId);
+    pump (30);
+    check (! lows->isVisible(), "selecting an object shows its settings in Lows' place");
+    editor.selectObject (juce::Uuid::null());
+    pump (30);
+    check (laidOut() && lows->getSelectedIndex() == 1, "... and Lows is back, as it was, with the list");
+
+    // The parameter, changed elsewhere (a host, a loaded state), moves the control too.
+    setParameter (processor, params::id::lowEnd, 0.0f);
+    pump (60);
+    check (lows->getSelectedIndex() == 0 && planHasComb(), "Lows follows the parameter back to Smooth");
+    pump (60);
+    check (countDifferentPixels (smoothCanvas, canvas->createComponentSnapshot (canvas->getLocalBounds())) == 0,
+           "... and the canvas shows the filled band again");
+}
+
 bool checkWav (const juce::File& file, double expectedSeconds)
 {
     juce::AudioFormatManager formats;
@@ -1192,6 +1283,8 @@ int main (int argc, char* argv[])
         checkFooter (*editor, processor, [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
         checkLayers (*editor, processor, textId, imageId,
                      [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
+        checkLows (*editor, processor, *content, imageId,
+                   [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
 
         // ---- the look of standard controls: a menu, a tooltip, typing a value --------------------------
         if (auto* length = find<juce::ComboBox> (*editor, "length"))

@@ -60,6 +60,7 @@ juce::StringArray triggerNames()     { return { "Transport", "MIDI note" }; }
 juce::StringArray tempoSourceNames() { return { "Host", "Manual" }; }
 juce::StringArray scaleNames()       { return { "Log", "Linear", "Mel" }; }
 juce::StringArray slopeNames()       { return { "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct" }; }
+juce::StringArray lowEndNames()      { return { "Smooth", "Stripes" }; }
 
 double lengthInQuarterNotes (int lengthIndex, double quarterNotesPerBar) noexcept
 {
@@ -102,6 +103,11 @@ TriggerMode triggerForIndex (int triggerIndex) noexcept
     return triggerIndex == 1 ? TriggerMode::midiNote : TriggerMode::transport;
 }
 
+LowEnd lowEndForIndex (int lowEndIndex) noexcept
+{
+    return lowEndIndex == stripesLowEndIndex ? LowEnd::stripes : LowEnd::smooth;
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 {
     using Float = juce::AudioParameterFloat;
@@ -141,6 +147,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
             .withLabel ("dB")
             .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
             .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
+
+    // How the lows below about 2 kHz are played: the rising comb (shapes stay filled) or separate
+    // lines (stripes on a long FFT). Added after 0.2 (version hint 3): setStateInformation loads
+    // states without it as Stripes, the only look before. It reshapes the plan, so like Density
+    // it is not an automation target.
+    layout.add (std::make_unique<Choice> (
+        juce::ParameterID { id::lowEnd, 3 }, "Lows", lowEndNames(), smoothLowEndIndex,
+        ChoiceAttributes().withAutomatable (false)));
 
     // ---- timing --------------------------------------------------------------------------
     layout.add (std::make_unique<Choice> (

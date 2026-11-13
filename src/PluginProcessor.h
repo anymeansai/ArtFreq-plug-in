@@ -207,6 +207,7 @@ private:
     std::atomic<float>* bpmParam = nullptr;
     std::atomic<float>* densityParam = nullptr;
     std::atomic<float>* contrastParam = nullptr;
+    std::atomic<float>* lowEndParam = nullptr;
     std::atomic<float>* scaleParam = nullptr;
     std::atomic<float>* rangeLowParam = nullptr;
     std::atomic<float>* rangeHighParam = nullptr;

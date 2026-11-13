@@ -404,6 +404,8 @@ namespace
         static const std::vector<Paragraph> list {
             { "The highs show the sharpest detail.", "Small text reads best in the High band." },
             { "The lowest octaves are coarse in every analyser.", "Keep shapes there big and bold." },
+            { "Lows", "(at the foot of the Layers list): Smooth keeps shapes below about 2 kHz filled at "
+                      "every FFT size; Stripes plays separate lines there, which long FFTs show as stripes." },
             { "Density shapes the look.", "Raise it for solid shapes; lower it for a scan-line look." },
             { "Contrast", "sets how far the quiet parts of a picture sit below the loudest." },
         };

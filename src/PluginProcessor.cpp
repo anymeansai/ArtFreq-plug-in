@@ -17,8 +17,9 @@ constexpr juce::uint32 saveQuietMs = 300;  // serialise the document once edits 
 constexpr int minChunkCapacity = 4096;
 
 // Parameters that change the plan (the others are read by the audio thread directly).
-const char* const planParameterIds[] { params::id::density, params::id::contrast, params::id::scale,
-                                       params::id::rangeLow, params::id::rangeHigh, params::id::slope };
+const char* const planParameterIds[] { params::id::density, params::id::contrast, params::id::lowEnd,
+                                       params::id::scale, params::id::rangeLow, params::id::rangeHigh,
+                                       params::id::slope };
 
 bool sameSettings (const PlanSettings& a, const PlanSettings& b) noexcept
 {
@@ -28,7 +29,7 @@ bool sameSettings (const PlanSettings& a, const PlanSettings& b) noexcept
         && juce::exactlyEqual (a.slopeDbPerOctave, b.slopeDbPerOctave)
         && juce::exactlyEqual (a.minLineSpacingHz, b.minLineSpacingHz)
         && juce::exactlyEqual (a.maxFrequencyHz, b.maxFrequencyHz)
-        && a.lowMethod == b.lowMethod;
+        && a.lowEnd == b.lowEnd;
 }
 
 uint64_t versionOf (const ArtPlan* plan) noexcept
@@ -65,6 +66,7 @@ FreqArtProcessor::FreqArtProcessor()
     bpmParam         = parameters.getRawParameterValue (params::id::bpm);
     densityParam     = parameters.getRawParameterValue (params::id::density);
     contrastParam    = parameters.getRawParameterValue (params::id::contrast);
+    lowEndParam      = parameters.getRawParameterValue (params::id::lowEnd);
     scaleParam       = parameters.getRawParameterValue (params::id::scale);
     rangeLowParam    = parameters.getRawParameterValue (params::id::rangeLow);
     rangeHighParam   = parameters.getRawParameterValue (params::id::rangeHigh);
@@ -73,8 +75,8 @@ FreqArtProcessor::FreqArtProcessor()
     jassert (levelParam != nullptr && lengthParam != nullptr && triggerParam != nullptr
              && repeatParam != nullptr && startBarParam != nullptr && tempoSourceParam != nullptr
              && bpmParam != nullptr && densityParam != nullptr && contrastParam != nullptr
-             && scaleParam != nullptr && rangeLowParam != nullptr && rangeHighParam != nullptr
-             && slopeParam != nullptr);
+             && lowEndParam != nullptr && scaleParam != nullptr && rangeLowParam != nullptr
+             && rangeHighParam != nullptr && slopeParam != nullptr);
 
     for (const auto* id : planParameterIds)
         parameters.addParameterListener (id, this);
@@ -399,6 +401,7 @@ PlanSettings FreqArtProcessor::getPlanSettings() const
     settings.density = juce::jlimit (16, 1024, juce::roundToInt (densityParam->load()));
     settings.contrastDb = contrastParam->load();
     settings.slopeDbPerOctave = params::slopeForIndex (juce::roundToInt (slopeParam->load()));
+    settings.lowEnd = params::lowEndForIndex (juce::roundToInt (lowEndParam->load()));
     // Lines above the top of the hearing range only cost CPU; the engine also keeps every line
     // below Nyquist.
     settings.maxFrequencyHz = 22000.0f;
@@ -657,8 +660,23 @@ void FreqArtProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameter
         }
     }
 
-    // A parameter the state does not have (saved before it existed) loads at its default:
-    // replaceState would otherwise leave it at whatever this instance had.
+    // Lows came after 0.2: a state without it was made with the stripes, the only look there was,
+    // and loads with them, so an old project sounds and looks as it did (new instances start
+    // Smooth).
+    if (auto lowEnd = child (params::id::lowEnd); ! (lowEnd.isValid() && lowEnd.hasProperty (valueProperty)))
+    {
+        if (! lowEnd.isValid())
+        {
+            lowEnd = juce::ValueTree (paramType);
+            lowEnd.setProperty (idProperty, params::id::lowEnd, nullptr);
+            loadedParameters.appendChild (lowEnd, nullptr);
+        }
+
+        lowEnd.setProperty (valueProperty, params::stripesLowEndIndex, nullptr);
+    }
+
+    // Any other parameter the state does not have (saved before it existed) loads at its
+    // default: replaceState would otherwise leave it at whatever this instance had.
     for (auto* parameter : juce::AudioProcessor::getParameters())
     {
         auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter);

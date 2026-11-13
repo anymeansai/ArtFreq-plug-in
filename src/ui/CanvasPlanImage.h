@@ -2,8 +2,9 @@
 
 // The picture of a plan as an analyser would show it: each sine line at its height, coloured by
 // its loudness (dB relative to the plan's loudest point, over a 60 dB window) with the
-// spectrogram colour map. Kept separate from the canvas component so it can be tested and
-// timed on its own.
+// spectrogram colour map; with Smooth lows, the rising comb's band filled (as bright as an
+// analyser of 8192 points shows it). Kept separate from the canvas component so it can be tested
+// and timed on its own.
 
 #include "core/ArtPlan.h"
 

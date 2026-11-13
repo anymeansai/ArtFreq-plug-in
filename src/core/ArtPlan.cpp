@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 
 namespace freqart
 {
@@ -94,6 +95,40 @@ uint64_t hashFrequencies (const std::vector<float>& frequencies, int combLines) 
     return hash != 0 ? hash : 1;  // 0 is left to mean "no layout"
 }
 
+/** Softens the comb's grid (one column) at the edges of each run of drawn grid lines, see
+    combEdgeTaper. Only edges inside the grid count: below its first line and above its last the
+    glide's own fades take over. */
+void softenCombEdges (float* grid, int cells) noexcept
+{
+    constexpr auto taperCells = static_cast<int> (std::size (combEdgeTaper));
+
+    for (int k = 0; k < cells;)
+    {
+        if (! (grid[k] > 0.0f))
+        {
+            ++k;
+            continue;
+        }
+
+        const auto start = k;
+
+        while (k < cells && grid[k] > 0.0f)
+            ++k;
+
+        if (k - start < combEdgeTaperMinCells)
+            continue;
+
+        for (int d = 0; d < taperCells; ++d)
+        {
+            if (start > 0)
+                grid[start + d] *= combEdgeTaper[d];
+
+            if (k < cells)
+                grid[k - 1 - d] *= combEdgeTaper[d];
+        }
+    }
+}
+
 } // namespace
 
 std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& settings)
@@ -174,14 +209,14 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
                                             : 0.5 * (layout[l].norm + layout[l + 1].norm);
     }
 
-    // ---- The rising comb (lowMethod 3) -------------------------------------------------------
+    // ---- Smooth lows: the rising comb ----------------------------------------------------------
     // It takes over the crowded lows: the lines from the bottom up to the last one that stands
     // closer than twice the minimum spacing to the one below (a line with room on both sides is
     // the density's own scan line, and stays), and below the comb's limit. At least two lines,
     // else there is nothing to smooth.
     size_t combReplaces = 0;
 
-    if (settings.lowMethod == 3 && minSpacing > 0.0)
+    if (settings.lowEnd == LowEnd::smooth && minSpacing > 0.0)
     {
         while (combReplaces + 1 < layout.size() && crowded[combReplaces + 1] != 0
                && layout[combReplaces + 1].hz < static_cast<double> (combTopLimitHz))
@@ -312,14 +347,16 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
         for (int i = 0; i < width; ++i)
         {
             auto* column = amplitudes.data() + static_cast<size_t> (c0 + i) * lines;
+
+            for (size_t l = 0; l < lines; ++l)
+                column[l] = loudness (stripValues[l * strip + static_cast<size_t> (i)]) * slopeGain[l];
+
+            softenCombEdges (column, plan->combLines);
+
             double power = 0.0;
 
             for (size_t l = 0; l < lines; ++l)
-            {
-                const auto a = loudness (stripValues[l * strip + static_cast<size_t> (i)]) * slopeGain[l];
-                column[l] = a;
-                power += static_cast<double> (a) * static_cast<double> (a) * powerWeight[l];
-            }
+                power += static_cast<double> (column[l]) * static_cast<double> (column[l]) * powerWeight[l];
 
             loudestPower = std::max (loudestPower, power);
         }

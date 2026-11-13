@@ -1,7 +1,7 @@
 // The lows lab: how FreqArt's lows and low mids (about 30 Hz - 2 kHz) look in a real
 // spectrogram, measured, so that competing ways of drawing them can be compared by numbers.
 //
-//   FreqArtLab <output-dir> [--method N] [--cases sun,text,ramp,photo] [--densities 256,1024]
+//   FreqArtLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]
 //              [--ffts 4096,8192,16384,32768] [--contrast 40] [--image <picture>]
 //              [--baseline <metrics.json>] [--wav]
 //
@@ -16,8 +16,8 @@
 //        ramp   a block over 30 Hz - 2 kHz, loudest at the bottom and fading upwards (raw fill)
 //        photo  a portrait over 40 Hz - 2 kHz (Document + Compositor, Auto mode): the picture
 //               given with --image, else one synthesised here (the repository holds no photo)
-//   2. builds each drawing's plan (buildPlan, with PlanSettings::lowMethod = the method under
-//      test) at each density and plays it with the real ArtEngine at 48 kHz: one 8 s pass (the
+//   2. builds each drawing's plan (buildPlan, with PlanSettings::lowEnd = the Lows under test) at
+//      each density and plays it with the real ArtEngine at 48 kHz: one 8 s pass (the
 //      default 4 bars at 120 BPM), looped, with half a second either side so that every
 //      analysis window is full of sound, as in a DAW playing the loop;
 //   3. analyses the sound like an analyser does: an STFT for each FFT size, with Hann and
@@ -40,11 +40,12 @@
 //                                              nearest bin, each labelled with fill and fidelity
 //        <case>-d<density>.wav                 with --wav: the bounce, as Export writes it
 //
-// The low-end method under test comes from --method N (or --mode N), else from the
-// FREQART_LOW_METHOD environment variable, else 0 (today's lines). The lab passes it into
-// PlanSettings::lowMethod and changes nothing else, so prototypes plug in without changes here.
-// --baseline adds the change against an earlier run's metrics.json to metrics.txt. Everything
-// but the timings is deterministic.
+// The Lows under test come from --lows stripes|smooth, else from the FREQART_LOWS environment
+// variable, else Stripes (the lines FreqArt 0.1 played, the baseline the others are measured
+// against). --method 0 and --method 3, as the prototypes were numbered, mean Stripes and Smooth.
+// The lab passes it into PlanSettings::lowEnd and changes nothing else. --baseline adds the
+// change against an earlier run's metrics.json to metrics.txt. Everything but the timings is
+// deterministic.
 
 #include "core/ArtPlan.h"
 #include "core/Compositor.h"
@@ -179,10 +180,15 @@ int sheetLastRow()   { return static_cast<int> (std::ceil (rowPosition (labLowHz
 // Options
 // ================================================================================================
 
+juce::String lowsName (LowEnd lows)
+{
+    return lows == LowEnd::smooth ? "smooth" : "stripes";
+}
+
 struct Options
 {
     juce::File outputDir;
-    int method = 0;
+    LowEnd lows = LowEnd::stripes;
     juce::StringArray cases { "sun", "text", "ramp", "photo" };
     std::vector<int> densities { 256, 1024 };
     std::vector<int> fftSizes { 4096, 8192, 16384, 32768 };
@@ -195,11 +201,11 @@ struct Options
 
 void printUsage()
 {
-    std::cout << "FreqArtLab <output-dir> [--method N] [--cases sun,text,ramp,photo] [--densities 256,1024]\n"
+    std::cout << "FreqArtLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]\n"
                  "           [--ffts 4096,8192,16384,32768] [--contrast 40] [--image <picture>]\n"
                  "           [--baseline <metrics.json>] [--wav]\n\n"
-                 "  --method N   the low-end method (PlanSettings::lowMethod); default: the\n"
-                 "               FREQART_LOW_METHOD environment variable, else 0 (lines)\n"
+                 "  --lows       the Lows under test (PlanSettings::lowEnd); default: the FREQART_LOWS\n"
+                 "               environment variable, else stripes (--method 0 / 3 also work)\n"
                  "  --baseline   an earlier run's metrics.json: metrics.txt shows the change\n"
                  "  --wav        also write each drawing's bounce\n";
 }
@@ -217,12 +223,30 @@ std::vector<int> parseIntList (const juce::String& text)
     return values;
 }
 
+/** "smooth" or "stripes" (or the prototypes' numbers, 3 and 0). */
+bool parseLows (const juce::String& text, LowEnd& lows)
+{
+    const auto t = text.trim().toLowerCase();
+
+    if (t == "smooth" || t == "3")
+        lows = LowEnd::smooth;
+    else if (t == "stripes" || t == "0")
+        lows = LowEnd::stripes;
+    else
+        return false;
+
+    return true;
+}
+
 bool parseOptions (int argc, char* argv[], Options& options, juce::String& error)
 {
-    const auto fromEnvironment = juce::SystemStats::getEnvironmentVariable ("FREQART_LOW_METHOD", {}).trim();
+    const auto fromEnvironment = juce::SystemStats::getEnvironmentVariable ("FREQART_LOWS", {}).trim();
 
-    if (fromEnvironment.isNotEmpty())
-        options.method = fromEnvironment.getIntValue();
+    if (fromEnvironment.isNotEmpty() && ! parseLows (fromEnvironment, options.lows))
+    {
+        error = "FREQART_LOWS must be smooth or stripes";
+        return false;
+    }
 
     juce::StringArray arguments;
     for (int i = 1; i < argc; ++i)
@@ -249,9 +273,13 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
         {
             options.writeWav = true;
         }
-        else if (argument == "--method" || argument == "--mode")
+        else if (argument == "--lows" || argument == "--method" || argument == "--mode")
         {
-            options.method = value.getIntValue();
+            if (! parseLows (value, options.lows))
+            {
+                error = argument + " must be smooth or stripes (3 or 0)";
+                return false;
+            }
         }
         else if (argument == "--cases")
         {
@@ -583,21 +611,21 @@ int padSamples()  { return static_cast<int> (std::lround (padSeconds * sampleRat
 int passSamples() { return static_cast<int> (std::lround (passSeconds * sampleRate)); }
 
 /** The settings FreqArtProcessor::getPlanSettings makes at the default analyser settings, with
-    the density, contrast and low-end method under test. */
-PlanSettings planSettingsFor (int density, float contrastDb, int method)
+    the density, contrast and Lows under test. */
+PlanSettings planSettingsFor (int density, float contrastDb, LowEnd lows)
 {
     PlanSettings settings;
     settings.density = density;
     settings.contrastDb = contrastDb;
     settings.maxFrequencyHz = 22000.0f;
-    settings.lowMethod = method;
+    settings.lowEnd = lows;
     return settings;
 }
 
 /** What it costs to make the sound, and how hot it is. */
 struct Cost
 {
-    int lines = 0, linesLow = 0, linesMid = 0;  // in the plan; in 30 - 250 Hz; in 250 Hz - 2 kHz
+    int lines = 0, linesLow = 0, linesMid = 0;  // sines played; in 30 - 250 Hz; in 250 Hz - 2 kHz
     double planMs = 0.0;                        // buildPlan
     double renderMsPerSecond = 0.0;             // ArtEngine::render, per second of sound
     double peakDb = 0.0, rmsDb = 0.0;           // over the pass, at the plan's level (before Level)
@@ -622,12 +650,31 @@ Render renderDrawing (const Canvas& canvas, const PlanSettings& settings)
     cost.planMs = juce::Time::getMillisecondCounterHiRes() - planStart;
 
     const auto& plan = *result.plan;
-    cost.lines = plan.numLines;
 
-    for (const auto hz : plan.frequencies)
+    // The sines that play: the lines, and the comb's gliding sines rather than its loudness grid
+    // (its sines are spread evenly over the glide, so a range holds its share of them).
+    cost.lines = plan.numLines - plan.combLines + plan.combSines;
+
+    for (size_t l = static_cast<size_t> (plan.combLines); l < plan.frequencies.size(); ++l)
     {
+        const auto hz = plan.frequencies[l];
         cost.linesLow += hz >= labLowHz && hz < labSplitHz ? 1 : 0;
         cost.linesMid += hz >= labSplitHz && hz < labHighHz ? 1 : 0;
+    }
+
+    if (plan.combLines > 0)
+    {
+        const auto bottom = static_cast<double> (plan.combGridLowHz - plan.combEdgeHz);
+        const auto top = static_cast<double> (plan.combGridLowHz) + (plan.combLines - 1) * static_cast<double> (plan.combGridHz)
+                       + static_cast<double> (plan.combEdgeHz);
+        const auto share = [&] (double low, double high)
+        {
+            const auto overlap = std::max (0.0, std::min (high, top) - std::max (low, bottom));
+            return static_cast<int> (std::lround (plan.combSines * overlap / (top - bottom)));
+        };
+
+        cost.linesLow += share (labLowHz, labSplitHz);
+        cost.linesMid += share (labSplitHz, labHighHz);
     }
 
     const auto pad = padSamples();
@@ -1261,12 +1308,20 @@ juce::Image canvasImage (const Canvas& canvas, float contrastDb, int firstRow, i
 }
 
 /** The plan's lines at their heights, each display row showing the loudest line inside it (dark
-    where no line falls): where the sound's energy is put, before any analyser smears it. */
+    where no line falls): where the sound's energy is put, before any analyser smears it. The
+    rising comb (Smooth) puts energy at every height of its band: there each row shows the grid
+    cell it falls in, at the brightness the comb is played for (amplitude / combGain), as the
+    canvas does. */
 juce::Image planImage (const ArtPlan& plan, int firstRow, int numRows, int width)
 {
     juce::Image image (juce::Image::RGB, width, numRows, false);
     juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
-    const auto loudest = plan.amplitudes.empty() ? 0.0f : *std::max_element (plan.amplitudes.begin(), plan.amplitudes.end());
+    const auto shown = [&plan] (int column, int line) { return plan.amplitude (column, line) / (line < plan.combLines ? combGain : 1.0f); };
+    auto loudest = 0.0f;
+
+    for (int c = 0; c < plan.numColumns; ++c)
+        for (int l = 0; l < plan.numLines; ++l)
+            loudest = std::max (loudest, shown (c, l));
 
     for (int y = 0; y < numRows; ++y)
     {
@@ -1275,11 +1330,20 @@ juce::Image planImage (const ArtPlan& plan, int firstRow, int numRows, int width
         const auto high = 1.0 - static_cast<double> (row) / displayRows;
         std::vector<int> lines;
 
-        for (int l = 0; l < plan.numLines; ++l)
+        for (int l = plan.combLines; l < plan.numLines; ++l)
         {
             const auto norm = static_cast<double> (plan.lineNorm[idx (l)]);
             if (norm >= low && norm < high)
                 lines.push_back (l);
+        }
+
+        if (plan.combLines > 0)
+        {
+            const auto cell = std::lround ((hzAtNorm (0.5 * (low + high)) - static_cast<double> (plan.combGridLowHz))
+                                           / static_cast<double> (plan.combGridHz));
+
+            if (cell >= 0 && cell < plan.combLines)
+                lines.push_back (static_cast<int> (cell));
         }
 
         for (int x = 0; x < width; ++x)
@@ -1288,7 +1352,7 @@ juce::Image planImage (const ArtPlan& plan, int firstRow, int numRows, int width
             auto amplitude = 0.0f;
 
             for (const auto l : lines)
-                amplitude = std::max (amplitude, plan.amplitude (column, l));
+                amplitude = std::max (amplitude, shown (column, l));
 
             const auto t = amplitude > 0.0f && loudest > 0.0f
                              ? 1.0f + juce::Decibels::gainToDecibels (amplitude / loudest) / visibleRangeDb : 0.0f;
@@ -1416,7 +1480,7 @@ juce::var toJson (const Options& options, const std::vector<TestDrawing>& drawin
 {
     auto* root = new juce::DynamicObject();
     root->setProperty ("tool", "FreqArtLab");
-    root->setProperty ("method", options.method);
+    root->setProperty ("lows", lowsName (options.lows));
     root->setProperty ("sampleRate", sampleRate);
     root->setProperty ("passSeconds", passSeconds);
     root->setProperty ("contrastDb", options.contrastDb);
@@ -1621,7 +1685,7 @@ juce::String makeReport (const Options& options, const std::vector<TestDrawing>&
                          const std::vector<CostResult>& costs, const std::vector<Result>& results)
 {
     juce::String text;
-    text << "FreqArt lows lab, method " << options.method << "\n"
+    text << "FreqArt lows lab, lows " << lowsName (options.lows) << "\n"
          << "48 kHz, one 8 s pass (4 bars at 120 BPM, looped), contrast " << juce::String (options.contrastDb, 0)
          << " dB; display 600 rows, log 20 Hz - 20 kHz; measured over 30 Hz - 2 kHz:\n"
          << "low = 30 - 250 Hz, mid = 250 Hz - 2 kHz. Drawings:\n";
@@ -1704,8 +1768,11 @@ juce::String makeReport (const Options& options, const std::vector<TestDrawing>&
                                   entry.getProperty ("fft", {}), entry.getProperty ("window", {}).toString(),
                                   entry.getProperty ("mapping", {}).toString())] = entry;
 
-        text << "\nCHANGE AGAINST " << options.baseline.getFullPathName() << " (method "
-             << baseline.getProperty ("method", "?").toString() << "), Hann, linear interpolation, mean over FFT sizes;\n"
+        // (Runs from before Lows had a name give their prototype method number: 0 = stripes.)
+        const auto baselineLows = baseline.hasProperty ("lows") ? baseline.getProperty ("lows", {}).toString()
+                                                                : "method " + baseline.getProperty ("method", "?").toString();
+        text << "\nCHANGE AGAINST " << options.baseline.getFullPathName() << " (" << baselineLows
+             << "), Hann, linear interpolation, mean over FFT sizes;\n"
              << "higher is better for fidelity and fill, lower for gap, flicker, mod and leak\n"
              << tableHeader ("drawing dens   ");
 
@@ -1801,7 +1868,7 @@ int main (int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "FreqArtLab: method " << options.method << " -> " << options.outputDir.getFullPathName() << std::endl;
+    std::cout << "FreqArtLab: lows " << lowsName (options.lows) << " -> " << options.outputDir.getFullPathName() << std::endl;
 
     std::vector<TestDrawing> drawings;
     std::vector<CostResult> costs;
@@ -1831,11 +1898,11 @@ int main (int argc, char* argv[])
 
         for (const auto density : options.densities)
         {
-            const auto settings = planSettingsFor (density, options.contrastDb, options.method);
+            const auto settings = planSettingsFor (density, options.contrastDb, options.lows);
             const auto render = renderDrawing (drawing.canvas, settings);
             costs.push_back ({ name, density, render.cost });
 
-            std::cout << "  " << name << ", " << density << " lines: " << render.plan->numLines << " lines played, render "
+            std::cout << "  " << name << ", " << density << " lines: " << render.cost.lines << " sines played, render "
                       << juce::String (render.cost.renderMsPerSecond, 1) << " ms per second" << std::endl;
 
             if (options.writeWav)
@@ -1934,7 +2001,7 @@ int main (int argc, char* argv[])
                     sheet.push_back (analysed[{ variant, n }]);
             }
 
-            written = writePng (makeSheet (name + ", density " + juce::String (density) + ", method " + juce::String (options.method)
+            written = writePng (makeSheet (name + ", density " + juce::String (density) + ", lows " + lowsName (options.lows)
                                                + "  (30 Hz - 2 kHz; notes: low | mid)",
                                            sheet, sheetColumns, firstRow),
                                 options.outputDir.getChildFile (fileName (name, density, "-sheet.png")))

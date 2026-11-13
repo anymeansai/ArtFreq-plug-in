@@ -206,8 +206,8 @@ FREQART_TEST (processorStateRoundTrip)
 
 FREQART_TEST (processorLoadsStatesFromBeforeRepeat)
 {
-    // A state as FreqArt 0.1 saved it: no Repeat, no start bar, and a trigger of 0, 1 or 2
-    // ("Free loop", saved as its index or, by some hosts' presets, as its name).
+    // A state as FreqArt 0.1 saved it: no Repeat, no start bar, no Lows, and a trigger of 0, 1
+    // or 2 ("Free loop", saved as its index or, by some hosts' presets, as its name).
     const auto oldState = [] (const juce::String& triggerValue)
     {
         auto processor = makeProcessor();
@@ -220,7 +220,7 @@ FREQART_TEST (processorLoadsStatesFromBeforeRepeat)
 
         if (parametersXml != nullptr)
         {
-            for (auto* id : { params::id::repeat, params::id::startBar })
+            for (auto* id : { params::id::repeat, params::id::startBar, params::id::lowEnd })
                 if (auto* param = parametersXml->getChildByAttribute ("id", id))
                     parametersXml->removeChildElement (param, true);
 
@@ -255,6 +255,7 @@ FREQART_TEST (processorLoadsStatesFromBeforeRepeat)
         CHECK_NEAR (getParameter (*processor, params::id::trigger), trigger, 1.0e-4);
         CHECK_NEAR (getParameter (*processor, params::id::repeat), repeat, 1.0e-4);
         CHECK_NEAR (getParameter (*processor, params::id::startBar), 1.0f, 1.0e-4);
+        CHECK_NEAR (getParameter (*processor, params::id::lowEnd), static_cast<float> (params::stripesLowEndIndex), 1.0e-4);
     }
 
     // A free loop state, saved again, is an ordinary Transport + Repeat state.
@@ -264,6 +265,100 @@ FREQART_TEST (processorLoadsStatesFromBeforeRepeat)
     const auto reloaded = load (resaved);
     CHECK_NEAR (getParameter (*reloaded, params::id::trigger), 0.0f, 1.0e-4);
     CHECK_NEAR (getParameter (*reloaded, params::id::repeat), 1.0f, 1.0e-4);
+}
+
+FREQART_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
+{
+    // New instances play Smooth lows (the rising comb). Lows is a setting of the plan, so, like
+    // Density, not an automation target.
+    auto fresh = makeProcessor();
+    auto* lows = fresh->getParameters().getParameter (params::id::lowEnd);
+    CHECK_NEAR (getParameter (*fresh, params::id::lowEnd), static_cast<float> (params::smoothLowEndIndex), 1.0e-4);
+    CHECK (lows->getCurrentValueAsText() == "Smooth" && lows->getNumSteps() == 2);
+    CHECK (! lows->isAutomatable());
+    CHECK (fresh->getPlanSettings().lowEnd == LowEnd::smooth);
+    CHECK (fresh->getCurrentPlan() != nullptr && fresh->getCurrentPlan()->combLines > 0);
+
+    // A state saved before Lows existed (0.1, 0.2) was made with the stripes: it loads with them,
+    // also into an instance on Smooth, so an old project looks and sounds as it did.
+    juce::MemoryBlock state;
+    fresh->getStateInformation (state);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), static_cast<int> (state.getSize()));
+    auto* parametersXml = xml != nullptr ? xml->getChildByName ("FreqArtParameters") : nullptr;
+    CHECK (parametersXml != nullptr && parametersXml->getChildByAttribute ("id", params::id::lowEnd) != nullptr);
+
+    if (parametersXml != nullptr)
+        parametersXml->removeChildElement (parametersXml->getChildByAttribute ("id", params::id::lowEnd), true);
+
+    juce::MemoryBlock old;
+
+    if (xml != nullptr)
+        juce::AudioProcessor::copyXmlToBinary (*xml, old);
+
+    const auto load = [] (const juce::MemoryBlock& block)
+    {
+        auto processor = makeProcessor();
+        processor->setStateInformation (block.getData(), static_cast<int> (block.getSize()));
+        return processor;
+    };
+
+    const auto loaded = load (old);
+    CHECK_NEAR (getParameter (*loaded, params::id::lowEnd), static_cast<float> (params::stripesLowEndIndex), 1.0e-4);
+    CHECK (loaded->getCurrentPlan() != nullptr && loaded->getCurrentPlan()->combLines == 0);
+
+    // Saved again (now with Lows in it) it stays Stripes; a Smooth state stays Smooth.
+    juce::MemoryBlock resaved;
+    loaded->getStateInformation (resaved);
+    CHECK_NEAR (getParameter (*load (resaved), params::id::lowEnd), static_cast<float> (params::stripesLowEndIndex), 1.0e-4);
+
+    const auto smoothAgain = load (state);
+    CHECK_NEAR (getParameter (*smoothAgain, params::id::lowEnd), static_cast<float> (params::smoothLowEndIndex), 1.0e-4);
+    CHECK (smoothAgain->getCurrentPlan() != nullptr && smoothAgain->getCurrentPlan()->combLines > 0);
+}
+
+FREQART_TEST (processorSwitchingLowsWhilePlayingDoesNotClick)
+{
+    // Lows changes the plan's layout (the comb's sines or the lines), so the engine crossfades
+    // from one to the other: no click either way, also when switched back before the crossfade
+    // has ended.
+    auto processor = makeProcessor();
+    auto document = textDocument ("LOW", Band::low);
+    document.objects.push_back (textDocument ("MID", Band::mid).objects.front());
+    processor->setDocument (document);
+    processor->rebuildPlanIfNeeded();
+    processor->setPreview (true);
+
+    const auto settle = [&] (int index)
+    {
+        setParameter (*processor, params::id::lowEnd, static_cast<float> (index));
+        processor->rebuildPlanIfNeeded();
+        return processor->getCurrentPlan()->combLines > 0;
+    };
+
+    // The largest sample-to-sample step of each, playing steadily.
+    const auto smoothSteady = render (*processor, 24000);
+    CHECK (settle (params::stripesLowEndIndex) == false);
+    const auto stripesSteady = render (*processor, 24000);
+    const auto steadyStep = std::max (largestStep (smoothSteady, 4800, smoothSteady.size()),
+                                      largestStep (stripesSteady, 4800, stripesSteady.size()));
+
+    std::vector<float> switching;
+    const auto play = [&] (int samples)
+    {
+        const auto block = render (*processor, samples);
+        switching.insert (switching.end(), block.begin(), block.end());
+    };
+
+    for (int i = 0; i < 6; ++i)
+    {
+        CHECK (settle (i % 2 == 0 ? params::smoothLowEndIndex : params::stripesLowEndIndex) == (i % 2 == 0));
+        play (i < 4 ? 6000 : 256);   // the last ones: back within a crossfade
+    }
+
+    play (6000);
+    std::printf ("    largest step: steady %.4f, switching Lows %.4f\n", steadyStep, largestStep (switching, 0, switching.size()));
+    CHECK_LESS (largestStep (switching, 0, switching.size()), 1.5f * steadyStep);
+    CHECK_GREATER (rms (switching), 0.02);
 }
 
 FREQART_TEST (processorGarbageState)

@@ -25,10 +25,11 @@ any analyser with a scrolling spectrogram) on the output and the drawing scrolls
    25 Hz are merged, and every canvas row plays on its nearest line. Each line's amplitude per
    column comes from the canvas, mapped to decibels with the *contrast* (dB range),
    compensated for the analyser's slope, and normalised so the loudest moment sits at -12 dBFS
-   RMS before the output level.
-5. **The engine** (`dsp/ArtEngine.h`) plays the plan on the audio thread: one sine per line,
-   amplitudes interpolated across columns, click-free fades on start/stop/retrigger/bypass,
-   crossfades when the plan changes.
+   RMS before the output level. With *Lows* on Smooth (the default) the crowded lows are played
+   by the rising comb instead of lines (see [Smooth lows](#smooth-lows)).
+5. **The engine** (`dsp/ArtEngine.h`) plays the plan on the audio thread: one sine per line
+   (and the comb's gliding sines), amplitudes interpolated across columns, click-free fades on
+   start/stop/retrigger/bypass, crossfades when the plan changes.
 6. **The tracker** (`dsp/PlayheadTracker.h`) decides the position in the drawing (see
    [Trigger](#trigger)): follow the DAW transport (once, from a bar of the song, or with Repeat
    looping every length on the host's bar lines; tempo changes and ramps bend the position, only
@@ -58,6 +59,7 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | level | Level | -60..0 dB | -6 dB | yes |
 | density | Density | 16..1024 lines | 256 | no |
 | contrast | Contrast | 12..72 dB | 40 dB | no |
+| lowEnd | Lows | Smooth, Stripes | Smooth (Stripes for states from before it) | no |
 | length | Length | 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars, 16 bars, 32 bars | 4 bars | yes |
 | trigger | Trigger | Transport, MIDI note | Transport | yes |
 | repeat | Repeat | Off, On | Off | yes |
@@ -69,7 +71,7 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | rangeHigh | Analyser high | 2000..24000 Hz | 20000 Hz | no |
 | slope | Analyser slope | 0, 3, 4.5, 6 dB/oct | 0 dB/oct | no |
 
-Density and Contrast reshape the plan, which the message thread rebuilds on its timer (by
+Density, Contrast and Lows reshape the plan, which the message thread rebuilds on its timer (by
 wall-clock time, not in step with the audio): automated, they would land late, and somewhere
 different on every faster-than-real-time bounce. So, like the analyser settings, they are not
 automation targets.
@@ -80,6 +82,11 @@ had; FreqArt 0.1's third trigger, "Free loop" (index 2, or its name), loads as T
 Repeat on, the nearest thing left (a plain clamp to the two choices would make it MIDI note).
 Host automation lanes recorded on the old three-choice Trigger cannot be rewritten: there,
 Free loop now reads as MIDI note.
+
+Lows was added after 0.2 (version hint 3). A saved tree without it was made with the stripes,
+the only look there was, and loads with Stripes rather than the default Smooth, so an old project
+looks and sounds as it did (`prepareLoadedParameters`, before the defaults for other missing
+parameters are filled in).
 
 State = APVTS tree + document tree + editor size, saved as XML in binary (`copyXmlToBinary`).
 Neither the drawing nor the editor size is a parameter, so edits, undo/redo and resizes tell the
@@ -125,6 +132,71 @@ producer's rule: nothing plays by itself, and loops only while something is play
 - Changing Trigger, Repeat or the start bar while playing moves to wherever the new setting puts
   the position, with a jump fade when it does not follow on (turning Repeat off inside the single
   pass, at the same place as the loop, carries on seamlessly).
+
+## Smooth lows
+
+The customer, after 0.1: the stripes in the lows are a nice effect, but they lose a lot of a
+picture. On a log scale the lows hold few lines (merged to 25 Hz apart, as closer lines beat and
+pulse), and an analyser with a long FFT (MiniMeters at 8192 and up) resolves them into stripes
+with dark gaps: low-band fill 0.38 at 8192, 0.21 at 16384. Three ways of filling the gaps were
+built and measured with FreqArtLab: lines that wobble inside their spans, narrow noise bands,
+and a rising comb. The comb won (it filled best and flickered least, and at 4096, where the lines
+already looked fine, it stayed as good), so it is **Smooth**, the default for new instances;
+**Stripes** stays as the other choice, as the customer liked it as an effect.
+
+- **What it replaces.** The lines from the bottom up to the last one that stands closer than
+  twice the minimum spacing to the one below (the merged and crowded lows, below 2 kHz): about
+  20 Hz - 1.8 kHz at density 256, up to 2 kHz at 1024, up to about 110 Hz at 16. A line with room
+  on both sides is the density's own scan line and stays, so a low Density keeps its scan-line
+  look above the comb. Nothing is crowded on a linear scale: no comb there. The lines above keep
+  their frequencies (bit for bit) and spans; their amplitudes change only by the normalisation.
+- **The comb.** Sines 20 Hz apart (at most 255) glide upwards together at 200 Hz/s, from 15 Hz
+  below the band to 15 Hz above it, where each wraps round to the bottom; they fade in and out over
+  those 15 Hz. Every height is passed every 0.1 s, so a short window blurs neighbouring sines
+  together and a long one sees each smeared along its glide: energy at every height from 4096 to
+  32768 points. All glide at one speed, so they never cross or crowd; fixed unrelated starting
+  phases keep the passes from adding up in a repeating pattern. What remains is a fine rising
+  shimmer (out of step from height to height), not a pulse of the whole band. 20 Hz and 200 Hz/s
+  had the lowest worst case of the settings tried (25 Hz or 130 Hz/s pulse at up to 5 dB).
+- **Its loudness.** The replaced band of the canvas becomes a grid of plan lines 5 Hz apart (the
+  maximum of the canvas over each cell): finer than the sines, so edges stay where they were
+  drawn. Each sine plays the grid interpolated at the height it has reached, between grid lines
+  and between columns. The grid lines are never sines of their own (not in `activeLines`;
+  `combActive` says where the comb can sound). At the edges of a run of drawn grid lines (in one
+  column, five or more) the outermost plays at half its level and the next at 0.93: a sine then
+  enters a shape over 75 ms, not 25, and splashes less energy below it and into holes (measured:
+  1.3 dB less leakage in the lows, fidelity +0.01, fill unchanged; thin strokes keep their level).
+- **Its brightness.** A line's energy stays in one analyser bin; the comb's is spread along its
+  glide, about 3 dB darker per doubling of the FFT size. It is played 3.5 dB louder (combGain
+  1.5), as bright as the lines above at 8192 (3 dB brighter at 4096, 3 - 7 dB darker at 32768).
+  The normalisation counts it as its sines, each with the mean power of the grid it glides over.
+  The lows carry about 4.5 dB more power than the stripes did, so in drawings with lows the rest
+  sits lower by up to about 5 dB in absolute level (the balance is the intended correction).
+- **The engine.** A separate SIMD kernel turns each sine's step by a fixed angle per sample, so
+  its frequency rises exactly linearly. At every chunk each sine's frequency and phase are worked
+  out afresh from the samples rendered since `reset()` (double-precision recurrences across the
+  sines, no trig per sine), so where blocks and chunks fall changes the sound only by rounding
+  and the phase never drifts. Buffers are sized in `prepare()`; nothing allocates, locks or waits.
+  Plans are checked (`hasComb`) before the comb is played. Crossfades work on the sines'
+  amplitudes, linear between plans of one layout, equal power otherwise, as for lines; switching
+  Lows changes the layout, so it crossfades over 20 ms like a Density change.
+- **Cost.** 93 sines + 88 lines at density 256 (Stripes: 142 lines), 101 + 295 at 1024 (366); in
+  the worst case (a one-beat, fully drawn density-1024 plan) 65 - 95 x real time on one core
+  (Stripes: 100 - 150 x); buildPlan 2 - 8 ms (1 - 3 ms); about 1.5 MB more per plan.
+- **Measured** (FreqArtLab, Hann, interpolated, mean over four drawings and both densities;
+  low = 30 - 250 Hz / mid = 250 Hz - 2 kHz, Stripes -> Smooth):
+
+  | FFT | fidelity | fill | gap dB | flicker dB | leak dB |
+  | --- | --- | --- | --- | --- | --- |
+  | 4096 | .84/.93 -> .89/.96 | .93/.86 -> .93/.92 | 4.2/6.9 -> 4.6/4.7 | 1.2/1.1 -> 2.9/2.8 | -9.7/-16.8 -> -15.4/-22.7 |
+  | 8192 | .69/.76 -> .90/.95 | .38/.53 -> .93/.93 | 17.9/24.7 -> 4.4/3.7 | 0.9/0.8 -> 2.7/2.3 | -9.7/-17.1 -> -17.3/-21.3 |
+  | 16384 | .43/.57 -> .88/.93 | .21/.21 -> .88/.91 | 18.5/28.0 -> 5.8/4.1 | 1.3/0.6 -> 3.7/2.1 | -10.7/-16.4 -> -17.8/-18.3 |
+  | 32768 | .31/.49 -> .84/.90 | .30/.21 -> .81/.90 | 12.5/19.8 -> 7.1/3.9 | 1.7/0.8 -> 3.8/2.0 | -11.1/-14.8 -> -17.4/-15.4 |
+
+  The flicker is the shimmer: steady cells move by about 3 dB from frame to frame (the stripes'
+  were steadier, but dark). The worst regular pulse in any single case falls from 5.5 to 3.7 dB.
+  Still to judge by eye and ear: real photos in MiniMeters on macOS, and the sound of the lows (a
+  rising, shimmering texture instead of steady tones).
 
 ## Interface
 
@@ -178,7 +250,10 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 
 - Shows the current plan as the analyser would: each line drawn at its height with the colour
   map of its amplitude in dB (relative to the loudest), lines 1-2 px tall so low density shows
-  as visible scan lines and high density looks solid. Background = colour map at silence.
+  as visible scan lines and high density looks solid. With Smooth lows the comb's band is drawn
+  filled: each 5 Hz cell of its grid over its whole height, at amplitude / combGain (the
+  brightness an analyser of 8192 points shows; the first line above takes over where the band
+  ends, so there is no seam). Background = colour map at silence.
   Faint frequency grid lines (from `gridFrequencies`) and bar/beat lines.
 - Hz labels on the left axis; bar/beat labels along the bottom (e.g. "1", "2", "3", "4" for
   4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
@@ -230,7 +305,11 @@ while visible.
 - **Layers** (always with nothing selected): title "Layers" with a summary ("5 objects, 1 hidden");
   buttons "Add text", "Add image..."; the layer list; a one-line hint ("Double-click to edit,
   drag to reorder"); then the Keys (shortcut caps) while they fit under the list, or the brush
-  settings mirrored when Brush/Erase is active. The list (`ui/LayerList.h`) is a dark well with
+  settings mirrored when Brush/Erase is active; at the foot, always in the same place, **Lows**: a
+  caps label and a segmented Smooth | Stripes (168 px, 28 tall, right-aligned, 13 px under a
+  hairline; its tooltip says what each does). Lows belongs to the whole drawing, neither to an
+  object nor to the analyser match, so it lives with the list rather than in Settings, and makes
+  way for an object's settings like the list does. The list (`ui/LayerList.h`) is a dark well with
   one 30 px row per object, front first: type icon (T or picture), name (the text's first line
   with words, or the picture's file name; ellipsised), and on the right a delete button (only
   while the mouse is over the row; danger colour on hover), an eye (open and quiet when shown,
@@ -326,16 +405,18 @@ output; match scale/range in Settings; add text/image/paint; choose a band and d
 play in the DAW (or Preview, once or on a loop); Trigger modes and Repeat explained (nothing
 plays by itself); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
 overlapping objects (Alt-click or click again, the right-click menu). Plus tips: highs show the
-sharpest detail; the lowest octaves are coarse in every analyser; raise Density for solid
-shapes, lower for a scan-line look.
+sharpest detail; the lowest octaves are coarse in every analyser; Lows (Smooth fills shapes
+below about 2 kHz, Stripes plays separate lines there); raise Density for solid shapes, lower for
+a scan-line look.
 
 ## Tests
 
 `FreqArtTests` (no host): scale maths; document round trip; image modes (auto-invert on a white
 background, transparency, outline); text rendering coverage; compositor placement; plan
-(frequencies, spacing, normalisation, contrast, slope); the rising comb (`PlanSettings::lowMethod` 3, a
-prototype the processor does not use yet: the lines it replaces, its loudness grid, a long-FFT
-analyser seeing the band filled, leakage, determinism, crossfades, speed); exchange (versions, garbage); engine
+(frequencies, spacing, normalisation, contrast, slope); Smooth lows, the rising comb (the lines it
+replaces, its loudness grid and softened edges, thin strokes left alone, a long-FFT analyser seeing
+the band filled, its power staying in the drawn band, leakage, determinism, crossfades, speed, the
+canvas drawing the band filled and as bright as the lines); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
 speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass from a
 start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
@@ -343,8 +424,11 @@ a host loop over it, the host's meter and tempo, time-signature changes before, 
 after it and odd bars, a typed-in tempo starting on the DAW's bar, its fades through the engine;
 MIDI one-shots and their end, hold-to-loop with overlapping notes and releases, all-offs and stop;
 preview once and looping; jumps); end-to-end: a canvas rendered to audio and analysed back must
-correlate with the canvas; processor (state round trip, defaults, states from before Repeat and
-the Free-loop migration, a single pass and a held MIDI loop through the processor, a single pass
+correlate with the canvas, and at FFT 8192 and 16384 Smooth must fill a block and the text "LOW"
+where Stripes leaves gaps, correlate better with the drawing, and keep the band's level steady (no
+regular pulse); processor (state round trip, defaults, Lows on Smooth for new instances and on
+Stripes for states from before it, switching Lows back and forth while playing without a click,
+states from before Repeat and the Free-loop migration, a single pass and a held MIDI loop through the processor, a single pass
 through time-signature changes and at a typed tempo, preview following Repeat, process with MIDI,
 panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (cancelling it, its
 progress, bounce file names);
@@ -360,6 +444,13 @@ leaving them out.
 `FreqArtSnapshot <dir>` renders the editor in its main states to PNG (Repeat, MIDI with Repeat,
 a start bar and typing one among them, "layers": five objects, one hidden, one selected from the
 list, and the window at 75, 100, 150 and 200 %), and checks the editor's controls by driving
-them: the canvas interactions, the layer list, and the footer's Trigger, Repeat, the start bar
-field (drag, type, Enter, Esc, clamping), the hint line, Preview stopping by itself without
-Repeat, and the layout.
+them: the canvas interactions, the layer list, Lows (at the foot of the list, clear of the keys
+and the brush settings; Stripes and back changing the plan and the canvas; hidden with an
+object's settings), and the footer's Trigger, Repeat, the start bar field (drag, type, Enter,
+Esc, clamping), the hint line, Preview stopping by itself without Repeat, and the layout.
+
+`FreqArtLab <dir> [--lows stripes|smooth]` (tools/LowsLab.cpp) is the bench the lows were chosen
+on: it renders four drawings through the real plan and engine, analyses them like a spectrogram
+(Hann and Blackman-Harris, 4096 to 32768 points, interpolated and nearest-bin) and measures, over
+30 Hz - 2 kHz, fidelity, fill, gap depth, flicker, regular pulsing and leakage, with PNG sheets
+and a comparison against an earlier run (`--baseline`).

@@ -2,6 +2,7 @@
 
 // Parameter ids, ranges and defaults, shared by the processor, the editor and the tests.
 
+#include "core/ArtPlan.h"
 #include "core/FrequencyScale.h"
 #include "dsp/PlayheadTracker.h"
 
@@ -16,6 +17,7 @@ namespace id
     inline constexpr const char* level       = "level";        // dB, -60..0, default -6
     inline constexpr const char* density     = "density";      // lines, 16..1024 (int), default 256
     inline constexpr const char* contrast    = "contrast";     // dB, 12..72, default 40
+    inline constexpr const char* lowEnd      = "lowEnd";       // choice: Smooth, Stripes (not automatable)
 
     // Timing
     inline constexpr const char* length      = "length";       // choice, see lengthNames(), default "4 bars"
@@ -40,10 +42,16 @@ juce::StringArray triggerNames();      // "Transport", "MIDI note"
 juce::StringArray tempoSourceNames();  // "Host", "Manual"
 juce::StringArray scaleNames();        // "Log", "Linear", "Mel"
 juce::StringArray slopeNames();        // "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct"
+juce::StringArray lowEndNames();       // "Smooth", "Stripes"
 
 constexpr int defaultLengthIndex = 4;  // "4 bars"
 constexpr int firstStartBar = 1;
 constexpr int lastStartBar = 999;
+
+/** Lows: Smooth for new instances; Stripes, FreqArt 0.1 and 0.2's only look, for states saved
+    before the parameter existed, so projects made with them do not change. */
+constexpr int smoothLowEndIndex = 0;
+constexpr int stripesLowEndIndex = 1;
 
 /** The index of FreqArt 0.1's third trigger, "Free loop" (it played by itself, looping). States
     saved with it load as Transport with Repeat on. */
@@ -57,5 +65,6 @@ double lengthInQuarterNotes (int lengthIndex, double quarterNotesPerBar = 4.0) n
 float slopeForIndex (int slopeIndex) noexcept;      // dB per octave
 ScaleType scaleForIndex (int scaleIndex) noexcept;
 TriggerMode triggerForIndex (int triggerIndex) noexcept;
+LowEnd lowEndForIndex (int lowEndIndex) noexcept;
 
 } // namespace freqart::params
