@@ -23,7 +23,8 @@ namespace freqart
 class FreqArtProcessor final : public juce::AudioProcessor,
                                public juce::ChangeBroadcaster,
                                private juce::AudioProcessorValueTreeState::Listener,
-                               private juce::Timer
+                               private juce::Timer,
+                               private juce::AsyncUpdater
 {
 public:
     FreqArtProcessor();
@@ -111,15 +112,23 @@ public:
     float getOutputGain() const noexcept;
 
     // ---- editor preferences, kept with the session ---------------------------------------
-    int getEditorWidth() const noexcept { return editorWidth; }
-    int getEditorHeight() const noexcept { return editorHeight; }
-    void setEditorSize (int width, int height) noexcept { editorWidth = width; editorHeight = height; }
+    int getEditorWidth() const noexcept { return editorWidth.load(); }
+    int getEditorHeight() const noexcept { return editorHeight.load(); }
+    void setEditorSize (int width, int height) noexcept { editorWidth.store (width); editorHeight.store (height); }
+
+    /** The sample rate the host prepared the plug-in with (48 kHz before that). */
+    double getCurrentSampleRate() const noexcept { return currentSampleRate.load(); }
 
 private:
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void timerCallback() override;
+    void handleAsyncUpdate() override;
     void documentChanged();
+    void refreshSavedDocument();
+    void applyDocumentState (const juce::ValueTree& documentTree);
     TrackerSettings currentTrackerSettings() const noexcept;
+    void renderChunk (float* out, int numSamples, const HostTiming& timing, const juce::MidiBuffer& midi,
+                      const TrackerSettings& settings) noexcept;
 
     juce::AudioProcessorValueTreeState parameters;
 
@@ -132,7 +141,18 @@ private:
     PlanSettings lastBuiltSettings;
     bool documentDirty = true;
     std::atomic<bool> parametersDirty { true };
-    int editorWidth = 0, editorHeight = 0;  // 0 = default size
+    std::atomic<int> editorWidth { 0 }, editorHeight { 0 };  // 0 = default size
+
+    // The document as last serialised, for hosts that save state from another thread.
+    // Refreshed on the message thread shortly after edits stop.
+    juce::CriticalSection savedStateLock;
+    juce::ValueTree savedDocument;
+    bool savedDocumentStale = true;
+    juce::uint32 lastEditTime = 0;
+
+    // A document loaded by setStateInformation on a thread other than the message thread waits
+    // here until the message thread applies it.
+    juce::ValueTree pendingDocument;
 
     // shared
     PlanExchange planExchange;
@@ -150,6 +170,8 @@ private:
     juce::LinearSmoothedValue<float> outputGain;
     juce::HeapBlock<float> mono;
     int monoCapacity = 0;
+    juce::MidiBuffer chunkMidi;  // for hosts that send blocks larger than announced
+    std::atomic<double> currentSampleRate { 48000.0 };
 
     // parameter pointers (raw values are atomics owned by the value tree)
     std::atomic<float>* levelParam = nullptr;
@@ -157,6 +179,12 @@ private:
     std::atomic<float>* triggerParam = nullptr;
     std::atomic<float>* tempoSourceParam = nullptr;
     std::atomic<float>* bpmParam = nullptr;
+    std::atomic<float>* densityParam = nullptr;
+    std::atomic<float>* contrastParam = nullptr;
+    std::atomic<float>* scaleParam = nullptr;
+    std::atomic<float>* rangeLowParam = nullptr;
+    std::atomic<float>* rangeHighParam = nullptr;
+    std::atomic<float>* slopeParam = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FreqArtProcessor)
 };
