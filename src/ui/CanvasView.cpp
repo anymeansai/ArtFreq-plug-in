@@ -105,6 +105,7 @@ struct CanvasView::Impl
         firstBar = processor.getSinglePassStartBar();
         effectMode = processor.getEffectMode();
         depthDb = processor.getDepthDb();
+        outputGain = processor.getOutputGain();
     }
 
     // ---- geometry ------------------------------------------------------------------------
@@ -532,12 +533,14 @@ struct CanvasView::Impl
         const auto newSignature = processor.getTimeSignature();
         const auto newFirstBar = processor.getSinglePassStartBar();
 
-        // FreqArt FX: the mode and the depth change what the canvas shows.
+        // FreqArt FX: the mode, the depth and the level of the sines (against the stand-in song)
+        // change what the canvas shows.
         const auto newMode = processor.getEffectMode();
         const auto newDepth = processor.getDepthDb();
+        const auto newGain = processor.isEffect() ? processor.getOutputGain() : outputGain;
 
         if (newLength != lengthIndex || newScale != scale || newSignature != timeSignature || newFirstBar != firstBar
-            || newMode != effectMode || ! juce::exactlyEqual (newDepth, depthDb))
+            || newMode != effectMode || ! juce::exactlyEqual (newDepth, depthDb) || ! juce::exactlyEqual (newGain, outputGain))
         {
             lengthIndex = newLength;
             scale = newScale;
@@ -545,6 +548,7 @@ struct CanvasView::Impl
             firstBar = newFirstBar;
             effectMode = newMode;
             depthDb = newDepth;
+            outputGain = newGain;
             owner.repaint();
         }
     }
@@ -584,6 +588,7 @@ struct CanvasView::Impl
             // FreqArt FX: over a stand-in for the song, as the mode will show it.
             if (processor.isEffect())
                 picture = effectPreview.get (planImage.getPixelLevels(), planImage.getRenderCount(), effectMode, depthDb,
+                                             EffectPreviewImage::sinesDbFor (planImage.getLoudestAmplitude(), outputGain),
                                              processor.getCurrentMasks(), picture.getWidth(), picture.getHeight());
             g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
             g.drawImage (picture, a);
@@ -870,6 +875,7 @@ struct CanvasView::Impl
     FrequencyScale scale;
     EffectMode effectMode = EffectMode::carve;
     float depthDb = 0.0f;
+    float outputGain = 1.0f;              // ... and Level, as a gain (the sines' level on the canvas)
     int lengthIndex = params::defaultLengthIndex;
     juce::AudioPlayHead::TimeSignature timeSignature;  // the host's, for the bar and beat grid
     int firstBar = 0;   // the song's bar the drawing plays at (a single Transport pass), else 0

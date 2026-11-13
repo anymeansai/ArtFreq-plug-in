@@ -99,6 +99,7 @@ void CanvasPlanImage::updateLevels (const ArtPlan& plan)
 
     levels.assign (total, 0);
     lineAudible.assign (static_cast<size_t> (juce::jmax (0, numLines)), 0);
+    loudestAmplitude = 0.0f;
 
     if (total == 0 || plan.amplitudes.size() < total || plan.silent)
         return;
@@ -117,6 +118,8 @@ void CanvasPlanImage::updateLevels (const ArtPlan& plan)
         for (int line = 0; line < numLines; ++line)
             loudest = std::max (loudest, shown (line, amplitudes[line]));
     }
+
+    loudestAmplitude = loudest;
 
     // The plan is column-major; the picture is drawn row by row, so store it line-major.
     for (int column = 0; column < numColumns; ++column)

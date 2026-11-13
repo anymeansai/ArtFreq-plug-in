@@ -310,6 +310,12 @@ jobs:
           **Manual install:** download \`FreqArt-VST3-macOS.zip\`, unzip it and copy \`FreqArt.vst3\` and \`FreqArt FX.vst3\` into \`~/Library/Audio/Plug-Ins/VST3\`. If your DAW will not load them, clear the download quarantine once: \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3 ~/Library/Audio/Plug-Ins/VST3/FreqArt\\ FX.vst3\`. Windows and Linux builds are paused until the macOS version is finished.
 
           Then rescan plug-ins in your DAW. Put FreqArt on an instrument track, or FreqArt FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
+
+          **New in 0.3**
+          - **FreqArt FX**, a second plug-in installed alongside FreqArt (listed under audio effects, category Fx / Filter): put it on an audio track, a bus or the master. **Mode**: Carve (the default) mutes the drawing's frequencies in the song so it shows as dark shapes, Carve + Draw plays the drawing in a hole carved a little wider, Stencil keeps only the drawing, Draw plays it on top; **Depth** (default -80 dB) is how far carved frequencies drop. It uses the same window, drawing tools, Length, Trigger, Repeat and start bar.
+          - FreqArt FX delays the audio by **85 ms** (4096 samples at 48 kHz) in every mode and in bypass, and tells your DAW, which keeps the song in time. Put it before the master's final limiter (MiniMeters after both) or leave some headroom: carving and the sines can raise peaks above 0 dBFS.
+          - **Lows**: Smooth (new instances) fills shapes in the low end at every FFT size, with gliding sines; Stripes keeps the separate lines of 0.1 and 0.2. Projects saved with FreqArt 0.1 or 0.2 open with Stripes, so they look and sound as before.
+          - FreqArt and FreqArt FX save the same state, but your DAW keeps presets and projects per plug-in, so a drawing does not move from one to the other by itself: redraw it, or re-add its pictures and text.
           EOF
 
           # Never take the existing download away before the new one is up. An existing

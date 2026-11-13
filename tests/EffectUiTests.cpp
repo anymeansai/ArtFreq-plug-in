@@ -20,6 +20,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
+#include <cmath>
 #include <memory>
 
 using namespace freqart;
@@ -192,6 +194,49 @@ FREQART_TEST (uiEffectHelpFitsTheWindow)
     CHECK_LESS (effectHelp.getIdealHeight(), FreqArtEditor::baseHeight - 24);
 }
 
+FREQART_TEST (uiEffectCanvasFollowsLevel)
+{
+    // In the modes that play the sines the canvas shows them at their level against the
+    // stand-in song: turning Level from 0 to -60 dB changes it (the drawing fades into the song,
+    // or leaves Carve + Draw's hole dark). In Carve and Stencil Level plays no part.
+    for (const auto& [mode, follows] : { std::pair<float, bool> { 3.0f, true }, { 1.0f, true }, { 0.0f, false }, { 2.0f, false } })
+    {
+        auto effect = makeProcessor (FreqArtProcessor::Variant::effect);
+        setParameter (*effect, params::id::mode, mode);
+        effect->rebuildPlanIfNeeded();
+        auto editor = makeEditor (*effect);
+        editor->setVisible (true);
+        pump (100);
+
+        auto* canvas = findComponent (*editor, "canvas");
+
+        if (canvas == nullptr)
+        {
+            CHECK (false);
+            return;
+        }
+
+        const auto snapshotAt = [&] (float levelDb)
+        {
+            setParameter (*effect, params::id::level, levelDb);
+            pump (100);
+            return canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+        };
+
+        const auto loud = snapshotAt (0.0f), quiet = snapshotAt (-60.0f);
+        auto changed = 0;
+
+        for (int y = 0; y < loud.getHeight(); y += 2)
+            for (int x = 0; x < loud.getWidth(); x += 2)
+                changed += loud.getPixelAt (x, y) != quiet.getPixelAt (x, y) ? 1 : 0;
+
+        if (follows)
+            CHECK_GREATER (changed, 500);
+        else
+            CHECK_NEAR (changed, 0, 0);
+    }
+}
+
 FREQART_TEST (uiEffectCanvasShowsEachMode)
 {
     // A band drawn in the middle of the canvas (columns 300 to 700), its sines' picture at full
@@ -219,37 +264,51 @@ FREQART_TEST (uiEffectCanvasShowsEachMode)
 
     // Carve at -80 dB: the drawing is black, the song around it is not (also just before it).
     const auto justBefore = juce::Point<int> (57, 50);   // column 294: 6 before the band
-    auto image = preview.get (sines, 1, EffectMode::carve, -80.0f, shared, width, height);
+    auto image = preview.get (sines, 1, EffectMode::carve, -80.0f, 0.0f, shared, width, height);
     CHECK (levelOf (image, inside.x, inside.y) == 0);
     CHECK_GREATER (levelOf (image, outside.x, outside.y), 40);
     CHECK_GREATER (levelOf (image, justBefore.x, justBefore.y), 20);
 
     // At -24 dB it is darker than the song but not black.
     const auto song = levelOf (image, outside.x, outside.y);
-    image = preview.get (sines, 1, EffectMode::carve, -24.0f, shared, width, height);
+    image = preview.get (sines, 1, EffectMode::carve, -24.0f, 0.0f, shared, width, height);
     CHECK_GREATER (levelOf (image, inside.x, inside.y), 0);
 
     // Stencil: the other way round.
-    image = preview.get (sines, 1, EffectMode::stencil, -80.0f, shared, width, height);
+    image = preview.get (sines, 1, EffectMode::stencil, -80.0f, 0.0f, shared, width, height);
     CHECK_GREATER (levelOf (image, inside.x, inside.y), 40);
     CHECK (levelOf (image, outside.x, outside.y) == 0);
 
     // Carve + Draw: the sines bright in the band, a dark edge just outside it (the halo).
-    image = preview.get (sines, 1, EffectMode::carveDraw, -80.0f, shared, width, height);
+    image = preview.get (sines, 1, EffectMode::carveDraw, -80.0f, 0.0f, shared, width, height);
     CHECK (levelOf (image, inside.x, inside.y) == 255);
     CHECK (levelOf (image, justBefore.x, justBefore.y) == 0);
     CHECK (levelOf (image, outside.x, outside.y) == song);
 
     // Draw: the sines over the song, nothing carved.
-    image = preview.get (sines, 1, EffectMode::draw, -80.0f, shared, width, height);
+    image = preview.get (sines, 1, EffectMode::draw, -80.0f, 0.0f, shared, width, height);
     CHECK (levelOf (image, inside.x, inside.y) == 255);
     CHECK (levelOf (image, outside.x, outside.y) == song);
+
+    // The sines at their level against the song (sinesDb: the plan's loudest with Level), their
+    // power added to the song's: 30 dB down they are half way down the colours (up to 3 dB
+    // brighter where the song is as loud); 60 dB down they are gone, and Carve + Draw shows its
+    // hole alone.
+    const auto songInside = levelOf (preview.get (sines, 1, EffectMode::draw, -80.0f, -200.0f, shared, width, height), inside.x, inside.y);
+    image = preview.get (sines, 1, EffectMode::draw, -80.0f, -30.0f, shared, width, height);
+    CHECK (levelOf (image, inside.x, inside.y) >= std::max (songInside, 128));
+    CHECK (levelOf (image, inside.x, inside.y) <= std::max (songInside, 128) + 13);
+    image = preview.get (sines, 1, EffectMode::draw, -80.0f, -60.0f, shared, width, height);
+    CHECK (levelOf (image, inside.x, inside.y) == songInside);
+    image = preview.get (sines, 1, EffectMode::carveDraw, -80.0f, -60.0f, shared, width, height);
+    CHECK (levelOf (image, inside.x, inside.y) == 0);
+    CHECK_LESS (std::abs (ui::EffectPreviewImage::sinesDbFor (0.1f, 0.5f) - (-26.02f + ui::EffectPreviewImage::sinesCalibrationDb)), 0.01f);
 
     // Nothing drawn: every mode shows the song as it is (Stencil does not black it out).
     auto empty = std::make_shared<MaskPlanSet>();
     empty->exact = buildMaskPlan (Canvas(), MaskSettings());
     empty->halo = widenMaskPlan (*empty->exact, 4, 8);
-    image = preview.get (std::vector<uint8_t> (static_cast<size_t> (width * height), 0), 2, EffectMode::stencil, -80.0f, empty, width, height);
+    image = preview.get (std::vector<uint8_t> (static_cast<size_t> (width * height), 0), 2, EffectMode::stencil, -80.0f, 0.0f, empty, width, height);
     CHECK (levelOf (image, outside.x, outside.y) == song);
     CHECK_GREATER (levelOf (image, inside.x, inside.y), 20);
 

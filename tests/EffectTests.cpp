@@ -11,10 +11,14 @@
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
+#include "dsp/TunedCarver.h"
 
 #include <juce_dsp/juce_dsp.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -676,6 +680,251 @@ FREQART_TEST (effectFollowsSampleRatesAndBlockSizes)
 
         CHECK_LESS (largestDifference (out, reference), (mode == EffectMode::carveDraw ? sinesMove : 0.0f) + 1.0e-6f);
         CHECK_GREATER (differenceFromDelayed (input, reference, steady->getLatencySamples(), 0), 0.01f);
+    }
+}
+
+FREQART_TEST (effectSpreadsItsWorkOverTheHop)
+{
+    // A frame of the carver needs the last sample of its hop, and the first sample played out
+    // after it needs the frame, so its transforms run in the callback that completes the hop.
+    // Reading the drawing for the next frame (all its columns at points across the hop: the
+    // costly part at short lengths, and the same on every platform) is spread over the hop's
+    // other callbacks, so that callback costs about the transforms alone. Measured through the
+    // processor at 48, 96 and 192 kHz with blocks of 32 to 128 samples, Carve and Stencil, a
+    // full-band drawing one beat long (the most columns per hop); the typical worst callback of
+    // a hop is the median over hops of each hop's slowest callback. The times are printed, not
+    // judged (on a shared machine even the transforms alone vary twofold from run to run):
+    // tunedCarverSpreadsTheDrawingOverTheHop checks the rule itself, call by call. Here only the
+    // mean is held to a generous bound. (These transforms are JUCE's portable FFT on Linux; on
+    // the Mac they are vDSP's, several times faster.)
+    using clock = std::chrono::steady_clock;
+    const auto full = bandDocument ({ { 20.0, 20000.0 } });
+
+    for (const auto rate : { 48000.0, 96000.0, 192000.0 })
+    {
+        // The transforms alone: both channels, forward and inverse, as one frame does them.
+        TunedCarver probe;
+        probe.prepare (rate, 512, 2);
+        const auto fftSize = probe.getFftSize();
+        juce::dsp::FFT fft (juce::roundToInt (std::log2 (fftSize)));
+        std::vector<float> scratch (static_cast<size_t> (2 * fftSize), 0.0f);
+        std::vector<double> fftTimes;
+        juce::Random random (2);
+
+        for (int k = 0; k < 200; ++k)
+        {
+            for (int i = 0; i < fftSize; ++i)
+                scratch[static_cast<size_t> (i)] = random.nextFloat() - 0.5f;
+
+            const auto started = clock::now();
+
+            for (int channel = 0; channel < 2; ++channel)
+            {
+                fft.performRealOnlyForwardTransform (scratch.data(), true);
+                fft.performRealOnlyInverseTransform (scratch.data());
+            }
+
+            fftTimes.push_back (std::chrono::duration<double, std::milli> (clock::now() - started).count());
+        }
+
+        std::sort (fftTimes.begin(), fftTimes.end());
+        const auto transforms = fftTimes[fftTimes.size() / 2];
+
+        for (const auto block : { 32, 64, 128 })
+        {
+            for (const auto mode : { EffectMode::carve, EffectMode::stencil })
+            {
+                auto effect = makeProcessor (Variant::effect, full, settingsOf (mode, true, params::defaultDepthDb, 0), rate, block);
+                const auto hop = static_cast<int> (std::lround (effect->getLatencySamples() / 4.0));
+                const auto total = static_cast<int> (rate * 2.0);
+                const auto input = noise (total, 3);
+                FakePlayHead head;
+                effect->setPlayHead (&head);
+                juce::AudioBuffer<float> buffer (2, block);
+                juce::MidiBuffer midi;
+                std::vector<double> hopWorst;
+                auto worst = 0.0, sum = 0.0;
+                auto count = 0;
+
+                for (int start = 0; start + block <= total; start += block)
+                {
+                    for (int channel = 0; channel < 2; ++channel)
+                        buffer.copyFrom (channel, 0, input[static_cast<size_t> (channel)].data() + start, block);
+
+                    head.set (true, 120.0, start / rate * 2.0, start / rate);
+                    const auto started = clock::now();
+                    effect->processBlock (buffer, midi);
+                    const auto took = std::chrono::duration<double, std::milli> (clock::now() - started).count();
+
+                    if (start < total / 4)
+                        continue;   // warming up
+
+                    if ((start / block) % (hop / block) == 0)
+                        hopWorst.push_back (0.0);
+
+                    if (! hopWorst.empty())
+                        hopWorst.back() = std::max (hopWorst.back(), took);
+
+                    worst = std::max (worst, took);
+                    sum += took;
+                    ++count;
+                }
+
+                effect->setPlayHead (nullptr);
+                std::sort (hopWorst.begin(), hopWorst.end());
+                const auto typical = hopWorst[hopWorst.size() / 2];
+                const auto budget = 1000.0 * block / rate;
+                std::printf ("    %6.0f Hz, block %3d, %-7s: typical worst callback %.3f ms (%3.0f %% of %.3f ms), worst %.3f, "
+                             "mean %3.0f %%; transforms alone %.3f ms\n",
+                             rate, block, mode == EffectMode::carve ? "Carve" : "Stencil", typical, 100.0 * typical / budget,
+                             budget, worst, 100.0 * sum / count / budget, transforms);
+                CHECK_LESS (sum / count / budget, 0.5);
+            }
+        }
+    }
+}
+
+FREQART_TEST (effectKeepsTheMasksItIsReadingAlive)
+{
+    // The carver works out a frame's gains over its hop, from the masks it began with. A drawing
+    // that changes in the middle of a hop publishes new masks; the old ones must outlive that
+    // frame (the message thread frees what the audio thread no longer reports), and go after it.
+    auto effect = makeProcessor (Variant::effect, bandDocument ({ { 800.0, 1250.0 } }), settingsOf (EffectMode::carve, true), defaultRate, 64);
+    std::weak_ptr<const MaskPlanSet> old = effect->getCurrentMasks();
+    CHECK (! old.expired());
+
+    // An edit, then the message loop until the processor's timer has rebuilt the drawing (and
+    // collected what the audio thread no longer reads, which it does on the same tick).
+    auto row = 200;
+    const auto editAndCollect = [&]
+    {
+        effect->editDocument ([r = row++] (ArtDocument& document) { document.paint[static_cast<size_t> (r * ArtDocument::paintWidth + 10)] = 255; });
+
+        for (int waited = 0; effect->isPlanPending() && waited < 3000; waited += 10)
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
+
+        CHECK (! effect->isPlanPending());
+    };
+
+    Run run;
+    run.blocks = { 64 };
+    process (*effect, noise (8 * 1024 + 128), run);   // two blocks into a hop: its frame has begun
+
+    editAndCollect();
+    CHECK (effect->getCurrentMasks() != old.lock());
+    process (*effect, noise (64), run);   // the new masks reach the audio thread mid-frame
+    editAndCollect();
+    CHECK (! old.expired());
+
+    process (*effect, noise (1024), run);   // that frame is done; the next began with newer masks
+    editAndCollect();
+    CHECK (old.expired());
+}
+
+FREQART_TEST (effectPeaksOnALimitedMaster)
+{
+    // FreqArt FX passes the song as it is (no clipper on it: outside the pass it is the input,
+    // bit for bit), so on a master limited to -0.3 dBFS carving can raise the peaks (an STFT
+    // changes the phases the peaks were limited at) and the Draw modes add their sines: the
+    // output can go over 0 dBFS, which the README says (put it before the final limiter, or
+    // leave headroom), with the figures here. Pink noise at -11 dBFS RMS hard-limited to a peak
+    // of -0.3 dBFS (as after a master limiter), the default drawing and Level, 8 s from bar 1.
+    const auto total = 8 * 48000;
+    auto song = noise (total, 9);
+    const auto ceiling = juce::Decibels::decibelsToGain (-0.3f);
+
+    for (auto& channel : song)
+    {
+        // Paul Kellet's pink filter
+        double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, power = 0;
+
+        for (auto& x : channel)
+        {
+            const auto white = 4.0 * static_cast<double> (x);
+            b0 = 0.99886 * b0 + white * 0.0555179;
+            b1 = 0.99332 * b1 + white * 0.0750759;
+            b2 = 0.96900 * b2 + white * 0.1538520;
+            b3 = 0.86650 * b3 + white * 0.3104856;
+            b4 = 0.55000 * b4 + white * 0.5329522;
+            b5 = -0.7616 * b5 - white * 0.0168980;
+            x = static_cast<float> (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362);
+            b6 = white * 0.115926;
+            power += static_cast<double> (x) * x;
+        }
+
+        const auto gain = static_cast<float> (juce::Decibels::decibelsToGain (-11.0) / std::sqrt (power / total));
+
+        for (auto& x : channel)
+            x = juce::jlimit (-ceiling, ceiling, x * gain);
+    }
+
+    auto inputPeak = 0.0f;
+
+    for (const auto& channel : song)
+        for (const auto x : channel)
+            inputPeak = std::max (inputPeak, std::abs (x));
+
+    const auto peakDb = [] (const Stereo& audio)
+    {
+        auto peak = 0.0f;
+
+        for (const auto& channel : audio)
+            for (const auto x : channel)
+                peak = std::max (peak, std::abs (x));
+
+        return juce::Decibels::gainToDecibels (peak);
+    };
+
+    std::printf ("    input peak %.2f dBFS\n", static_cast<double> (juce::Decibels::gainToDecibels (inputPeak)));
+
+    for (const auto mode : allModes)
+    {
+        auto effect = makeProcessor (Variant::effect, ArtDocument::createDefault(), settingsOf (mode, false, params::defaultDepthDb, 4));
+        const auto out = process (*effect, song);
+        const auto peak = peakDb (out);
+        std::printf ("    mode %d: output peak %+.2f dBFS\n", static_cast<int> (mode), static_cast<double> (peak));
+
+        // As the README says: about a decibel more in Carve, up to a few in the Draw modes, none in
+        // Stencil (which only takes away).
+        if (mode == EffectMode::stencil)
+            CHECK_LESS (peak, juce::Decibels::gainToDecibels (inputPeak) + 0.5f);
+        else if (mode == EffectMode::carve)
+            CHECK_LESS (peak, 2.0f);
+        else
+            CHECK_LESS (peak, 4.0f);
+    }
+}
+
+FREQART_TEST (effectResetFlushesTheAudioInFlight)
+{
+    // A VST3 host's setProcessing (false) (on stop, on a seek, or while it suspends a silent
+    // effect) reaches the plug-in as reset(). The song and the sines in flight must go with it:
+    // otherwise the next playback starts with up to a latency of the old position's audio. After
+    // it, with the DAW stopped, the output is silence for one latency and then the new input
+    // that late, bit for bit, in every mode.
+    const auto document = bandDocument ({ { 800.0, 1250.0 } });
+
+    for (const auto mode : allModes)
+    {
+        auto effect = makeProcessor (Variant::effect, document, settingsOf (mode, true));
+        const auto latency = effect->getLatencySamples();
+        process (*effect, noise (48000, 5));   // the DAW playing: the song (and the sines) in flight
+
+        effect->reset();
+
+        Run stopped;
+        stopped.playing = false;
+        const auto input = noise (3 * latency, 9);
+        const auto out = process (*effect, input, stopped);
+        auto before = 0.0f;
+
+        for (const auto& channel : out)
+            for (int i = 0; i < latency; ++i)
+                before = std::max (before, std::abs (channel[static_cast<size_t> (i)]));
+
+        CHECK_NEAR (before, 0.0, 0.0);
+        CHECK_NEAR (differenceFromDelayed (input, out, latency, latency), 0.0, 0.0);
+        CHECK (! effect->isSounding());
     }
 }
 

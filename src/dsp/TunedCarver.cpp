@@ -48,13 +48,13 @@ TunedCarver::TunedCarver (const Options& o) : options (o)
 {
     options.overlap = std::clamp (options.overlap, 2, hopRingSize);
     options.windowPower = std::max (0.5f, options.windowPower);
-    options.pointSpacing = std::max (16, options.pointSpacing);
+    options.pointSeconds = std::max (16.0 / 48000.0, options.pointSeconds);
 
     char text[200];
     std::snprintf (text, sizeof (text), "tuned STFT %d (%.1f ms), sin^%g windows, %d x overlap, Carve: mean per bin, "
-                                        "the drawing read every %d samples",
+                                        "the drawing read every %.2f ms",
                    juce::roundToInt (options.frameSeconds * 48000.0), options.frameSeconds * 1000.0,
-                   static_cast<double> (options.windowPower), options.overlap, options.pointSpacing);
+                   static_cast<double> (options.windowPower), options.overlap, options.pointSeconds * 1000.0);
     name = text;
 }
 
@@ -65,9 +65,10 @@ void TunedCarver::prepareCarver()
                           juce::roundToInt (options.frameSeconds * sampleRate / options.overlap) * options.overlap);
     hop = frameSize / options.overlap;
 
-    // Points about pointSpacing apart, an even number of them (the frame reads the second half
-    // of one hop and the first half of the next), each at the centre of its share of the hop.
-    pointsPerHop = std::clamp (2 * juce::roundToInt (0.5 * hop / options.pointSpacing), 2, maxPointsPerHop);
+    // Points about pointSeconds apart (the same number at any rate: 8 a hop), an even number of
+    // them (the frame reads the second half of one hop and the first half of the next), each at
+    // the centre of its share of the hop.
+    pointsPerHop = std::clamp (2 * juce::roundToInt (0.5 * hop / (options.pointSeconds * sampleRate)), 2, maxPointsPerHop);
 
     for (int p = 0; p < pointsPerHop; ++p)
         pointOffset[p] = static_cast<int> ((2 * static_cast<int64_t> (p) + 1) * hop / (2 * pointsPerHop));
@@ -111,7 +112,8 @@ void TunedCarver::prepareCarver()
     scratch.assign (bins, 0.0f);
     binEdgeRows.assign (bins + 1, 0.0);
     prefix.assign (static_cast<size_t> (Canvas::height + 1), 0.0);
-    binRowsCount = -1;
+    binRowsCount = -1;   // looked up when a frame first reads a plan
+    binsInRange = 0;
 
     channelState.resize (static_cast<size_t> (maxChannels));
 
@@ -123,7 +125,6 @@ void TunedCarver::prepareCarver()
     }
 
     gateHistory.assign (static_cast<size_t> (frameSize), 0.0f);
-    lookUpBinRows();
 }
 
 void TunedCarver::resetCarver() noexcept
@@ -145,27 +146,34 @@ void TunedCarver::resetCarver() noexcept
     hopFill = 0;
     // The silence in the history is the delayed input of a fresh start, so it is played out as is.
     untouchedRun = options.overlap;
-}
-
-void TunedCarver::planChanged() noexcept
-{
-    lookUpBinRows();
+    next = NextGains();
 }
 
 void TunedCarver::lookUpBinRows() noexcept
 {
-    // Only when the plan's scale changed (rowAt is a log per bin edge on the log scale).
-    if (plan == nullptr || binEdgeRows.size() != static_cast<size_t> (numBins + 1)
-        || (binRowsCount == plan->numRows && binRowsScale == plan->scale))
+    // For the plan the next frame reads, only when its scale changed (rowAt is a log per bin
+    // edge on the log scale).
+    const auto* source = next.plan;
+
+    if (source == nullptr || binEdgeRows.size() != static_cast<size_t> (numBins + 1)
+        || (binRowsCount == source->numRows && binRowsScale == source->scale))
         return;
 
     const auto binHz = sampleRate / fftSize;
 
     for (int edge = 0; edge <= numBins; ++edge)
-        binEdgeRows[static_cast<size_t> (edge)] = plan->rowAt (std::max (0.0, (edge - 0.5) * binHz));
+        binEdgeRows[static_cast<size_t> (edge)] = source->rowAt (std::max (0.0, (edge - 0.5) * binHz));
 
-    binRowsScale = plan->scale;
-    binRowsCount = plan->numRows;
+    // A bin whose band starts at the top of the scale or above it carves nothing (the canvas
+    // shows nothing there): at high rates most of them, which are then never looked at.
+    const auto top = static_cast<double> (source->numRows) - 0.5;
+    binsInRange = numBins;
+
+    while (binsInRange > 0 && binEdgeRows[static_cast<size_t> (binsInRange - 1)] >= top)
+        --binsInRange;
+
+    binRowsScale = source->scale;
+    binRowsCount = source->numRows;
 }
 
 const TunedCarver::Hop& TunedCarver::hopAt (int64_t index) const noexcept
@@ -250,8 +258,13 @@ void TunedCarver::carve (float* const* channels, int numChannels, int numSamples
 
         if (hopFill == hop)
         {
-            runFrame (numChannels, settings);
+            advanceGains (settings, true);
+            runFrame (numChannels);
             hopFill = 0;
+        }
+        else
+        {
+            advanceGains (settings, false);
         }
     }
 }
@@ -260,14 +273,17 @@ bool TunedCarver::columnAmounts (int column, bool stencil, float* out) noexcept
 {
     // Per bin, the drawing's mean over the bin's band (and in Stencil its maximum there), from
     // one column. Returns false, with every value 0, if that column is empty.
-    if (! plan->isColumnUsed (column))
+    const auto* source = next.plan;
+    work.columnsRead = std::min (work.columnsRead + 1, Work::most);
+
+    if (! source->isColumnUsed (column))
     {
         std::fill (out, out + numBins, 0.0f);
         return false;
     }
 
-    const auto* cells = plan->column (column);
-    const auto rows = plan->numRows;
+    const auto* cells = source->column (column);
+    const auto rows = source->numRows;
     const auto top = static_cast<double> (rows) - 0.5;
     const auto mixMax = stencil ? options.stencilMaskMax : options.carveMaskMax;
 
@@ -282,7 +298,9 @@ bool TunedCarver::columnAmounts (int column, bool stencil, float* out) noexcept
         return prefix[static_cast<size_t> (cell)] + (y + 0.5 - cell) * static_cast<double> (cells[cell]);
     };
 
-    for (int bin = 0; bin < numBins; ++bin)
+    std::fill (out + binsInRange, out + numBins, 0.0f);
+
+    for (int bin = 0; bin < binsInRange; ++bin)
     {
         const auto low = binEdgeRows[static_cast<size_t> (bin)];
         const auto high = binEdgeRows[static_cast<size_t> (bin + 1)];
@@ -317,7 +335,8 @@ void TunedCarver::widenAcrossBins (int radius) noexcept
 
     std::copy (amounts.begin(), amounts.end(), scratch.begin());
 
-    for (int bin = 0; bin < numBins; ++bin)
+    // Above the bins in range and `radius` more, everything stays 0.
+    for (int bin = 0, end = std::min (numBins, binsInRange + radius); bin < end; ++bin)
     {
         const auto from = scratch.begin() + std::max (0, bin - radius);
         const auto to = scratch.begin() + std::min (numBins, bin + radius + 1);
@@ -345,7 +364,7 @@ int TunedCarver::gatherPoints() noexcept
             if (! (gate > 0.0f))
                 continue;
 
-            const auto column = plan->columnAt (source.pointFraction[p] + columnNudge);
+            const auto column = next.plan->columnAt (source.pointFraction[p] + columnNudge);
             total += gate;
 
             if (count > 0 && points[count - 1].column == column)
@@ -390,82 +409,162 @@ int TunedCarver::nearestMoment() noexcept
     if (moment == nullptr)
         return 0;
 
-    points[0] = { plan->columnAt (moment->fraction + columnNudge), 1.0f };
+    points[0] = { next.plan->columnAt (moment->fraction + columnNudge), 1.0f };
     return 1;
 }
 
-bool TunedCarver::computeGains (const CarveSettings& settings) noexcept
+void TunedCarver::advanceGains (const CarveSettings& settings, bool hopComplete) noexcept
 {
+    // The next frame's gains are worked out while its newest hop comes in, a stage (one column of
+    // the drawing, or the last step) at a time, so the callback that completes the hop has only
+    // the transforms left to do. Before then, one stage ahead of an even share of the hop: done
+    // by the time the hop is, unless a block is longer than a stage's share of it. Once it is
+    // complete, whatever is left. The result is the same however the work is cut up.
+    if (next.stage == 0)
+        startGains (settings);
+
+    while (! next.complete)
+    {
+        if (! hopComplete)
+        {
+            // Waiting for the newest hop: settled once the gate opens in it (or the hop ends).
+            if (next.waiting && ! hopAt (hopCount - 1).open)
+                return;
+
+            const auto due = static_cast<int> (static_cast<int64_t> (next.numStages) * hopFill / hop) + 1;
+
+            if (next.stage >= std::min (next.numStages, due))
+                return;
+        }
+
+        gainsStage();
+    }
+}
+
+void TunedCarver::startGains (const CarveSettings& settings) noexcept
+{
+    // The first stage, once the newest hop of the frame has begun: the frame reads the plan and
+    // the settings as they are now to the end (a plan set meanwhile is kept alive by the caller
+    // while getFadingPlan() returns this one), and the drawing at the points of the hops on
+    // either side of its centre, which are complete.
+    next = NextGains();
+    next.stage = 1;
+    next.plan = plan;
+    next.settings = settings;
+
     if (plan == nullptr || plan->empty || plan->numColumns <= 0 || plan->numRows <= 0
         || static_cast<size_t> (plan->numRows) >= prefix.size() || settings.depthDb >= 0.0f)
-        return false;
-
-    auto numPoints = gatherPoints();
-
-    if (numPoints == 0)
-        numPoints = nearestMoment();
-
-    if (numPoints == 0)
-        return false;
+    {
+        next.complete = true;
+        return;
+    }
 
     lookUpBinRows();
+    std::fill (amounts.begin(), amounts.end(), 0.0f);
 
     const auto stencil = settings.mode == CarveMode::stencil;
     const auto loudest = ! stencil && settings.holdLoudest;
-    auto drawn = false;
+    const auto centre = hopCount - 1 - options.overlap / 2 + 1;
 
-    std::fill (amounts.begin(), amounts.end(), 0.0f);
+    // The mean spreads a shape's edge over the frames whose stretch reaches it: the centres
+    // decide there (see finishGains). They are known now, the newest hop's from its first sample.
+    next.sharp = ! loudest && options.sharpEdges && hopAt (centre).openAtStart;
+    next.numPoints = gatherPoints();
 
-    // The points' mean (an empty column adds nothing to it), or with holdLoudest their maximum.
-    for (int p = 0; p < numPoints; ++p)
+    // No point of the frame's stretch is in the pass: what it carves is the pass's nearest
+    // moment, which may be where the gate opens in the newest hop (known once it is complete).
+    next.waiting = next.numPoints == 0;
+    next.numStages = 1 + next.numPoints + (next.sharp ? 3 : 0) + 1;
+}
+
+void TunedCarver::gainsStage() noexcept
+{
+    if (next.waiting)
     {
-        if (! columnAmounts (points[p].column, stencil, columnValues.data()))
-            continue;
+        // The pass's nearest moment in the frame (nearestMoment) depends on whether the gate opens
+        // in the newest hop, and where: known once it has opened (from then on nothing about the
+        // hop changes) or once the hop is complete.
+        next.waiting = false;
+        next.numPoints = nearestMoment();
 
-        drawn = true;
-        const auto weight = points[p].weight;
+        if (next.numPoints == 0)
+        {
+            next.complete = true;   // the gate is shut all through the frame: it changes nothing
+            return;
+        }
 
-        if (loudest)
-            for (int bin = 0; bin < numBins; ++bin)
-                amounts[static_cast<size_t> (bin)] = std::max (amounts[static_cast<size_t> (bin)], columnValues[static_cast<size_t> (bin)]);
-        else
-            for (int bin = 0; bin < numBins; ++bin)
-                amounts[static_cast<size_t> (bin)] += weight * columnValues[static_cast<size_t> (bin)];
+        next.numStages = 1 + next.numPoints + (next.sharp ? 3 : 0) + 1;
     }
 
-    // The mean spreads a shape's edge over the frames whose stretch reaches it, half a hop
-    // either side of where it is drawn. Where the frame's centre is drawn, it carves at least as
-    // much as the centre asks; where it is not but the centre of a frame beside it is, that
-    // frame carves the shape and this one leaves it alone (as when the drawing was read at the
-    // centres only). Only a stroke that falls between the centres is left to the mean.
-    if (! loudest && options.sharpEdges)
+    const auto stage = next.stage++;
+    const auto stencil = next.settings.mode == CarveMode::stencil;
+    const auto inRange = static_cast<size_t> (binsInRange);
+
+    if (stage <= next.numPoints)
     {
+        // A point: the points' mean (an empty column adds nothing to it), or with holdLoudest
+        // their maximum.
+        const auto& point = points[stage - 1];
+
+        if (! columnAmounts (point.column, stencil, columnValues.data()))
+            return;
+
+        next.drawn = true;
+
+        if (! stencil && next.settings.holdLoudest)
+            for (size_t bin = 0; bin < inRange; ++bin)
+                amounts[bin] = std::max (amounts[bin], columnValues[bin]);
+        else
+            for (size_t bin = 0; bin < inRange; ++bin)
+                amounts[bin] += point.weight * columnValues[bin];
+
+        return;
+    }
+
+    if (stage < next.numStages - 1)
+    {
+        // The drawing at the centre of this frame and of the frames either side.
         const auto centre = hopCount - 1 - options.overlap / 2 + 1;
-        const auto valuesAt = [this, stencil] (const Hop& source, std::vector<float>& out)
-        {
-            if (source.openAtStart && columnAmounts (plan->columnAt (source.fraction + columnNudge), stencil, out.data()))
-                return true;
+        const auto side = stage - next.numPoints - 1;   // 0: this frame, 1: the one before, 2: after
+        const auto& source = hopAt (centre + (side == 0 ? 0 : (side == 1 ? -1 : 1)));
+        auto& out = side == 0 ? columnValues : (side == 1 ? besideBefore : besideAfter);
+        auto found = false;
 
+        if (source.openAtStart)
+            found = columnAmounts (next.plan->columnAt (source.fraction + columnNudge), stencil, out.data());
+
+        if (! found)
             std::fill (out.begin(), out.end(), 0.0f);
-            return false;
-        };
 
-        if (hopAt (centre).openAtStart)
+        (side == 0 ? next.atCentre : (side == 1 ? next.atBefore : next.atAfter)) = found;
+        return;
+    }
+
+    finishGains();
+}
+
+void TunedCarver::finishGains() noexcept
+{
+    const auto stencil = next.settings.mode == CarveMode::stencil;
+    const auto inRange = static_cast<size_t> (binsInRange);
+    next.complete = true;
+
+    // At a shape's edges the centres decide: where the frame's centre is drawn, it carves at
+    // least as much as the centre asks; where it is not but the centre of a frame beside it is,
+    // that frame carves the shape and this one leaves it alone (as when the drawing was read at
+    // the centres only). Only a stroke that falls between the centres is left to the mean.
+    if (next.sharp)
+    {
+        next.drawn = next.drawn || next.atCentre;
+
+        if (next.atCentre || next.atBefore || next.atAfter)
         {
-            const auto atCentre = valuesAt (hopAt (centre), columnValues);
-            const auto before = valuesAt (hopAt (centre - 1), besideBefore);
-            const auto after = valuesAt (hopAt (centre + 1), besideAfter);
-            drawn = drawn || atCentre;
-
-            if (atCentre || before || after)
+            for (size_t bin = 0; bin < inRange; ++bin)
             {
-                for (size_t bin = 0; bin < amounts.size(); ++bin)
-                {
-                    if (columnValues[bin] > 0.0f)
-                        amounts[bin] = std::max (amounts[bin], columnValues[bin]);
-                    else if (besideBefore[bin] > 0.0f || besideAfter[bin] > 0.0f)
-                        amounts[bin] = 0.0f;
-                }
+                if (columnValues[bin] > 0.0f)
+                    amounts[bin] = std::max (amounts[bin], columnValues[bin]);
+                else if (besideBefore[bin] > 0.0f || besideAfter[bin] > 0.0f)
+                    amounts[bin] = 0.0f;
             }
         }
     }
@@ -478,24 +577,36 @@ bool TunedCarver::computeGains (const CarveSettings& settings) noexcept
     }
     else
     {
-        if (! drawn)
-            return false;
+        if (! next.drawn)
+            return;
 
-        widenAcrossBins (std::clamp (settings.haloBins, 0, 64));
+        widenAcrossBins (std::clamp (next.settings.haloBins, 0, 64));
     }
 
-    // gain = depth ^ amount, as a natural exponent per unit of amount
-    const auto perAmount = settings.depthDb * 0.11512925f;  // ln (10) / 20
+    // gain = depth ^ amount, as a natural exponent per unit of amount (most bins are carved by
+    // none or all of it)
+    const auto perAmount = next.settings.depthDb * 0.11512925f;  // ln (10) / 20
+    const auto all = std::exp (perAmount);
 
     for (size_t bin = 0; bin < amounts.size(); ++bin)
-        gains[bin] = std::exp (perAmount * amounts[bin]);
+    {
+        const auto amount = amounts[bin];
+        gains[bin] = juce::exactlyEqual (amount, 0.0f) ? 1.0f
+                   : (juce::exactlyEqual (amount, 1.0f) ? all : std::exp (perAmount * amount));
+    }
 
-    return true;
+    next.changes = true;
 }
 
-void TunedCarver::runFrame (int numChannels, const CarveSettings& settings) noexcept
+void TunedCarver::runFrame (int numChannels) noexcept
 {
-    const auto changes = computeGains (settings);
+    // The gains are complete (advanceGains); the next frame's are worked out from the next hop on.
+    const auto changes = next.complete && next.changes;
+    next = NextGains();
+
+    if (changes)
+        work.framesTransformed = std::min (work.framesTransformed + 1, Work::most);
+
     untouchedRun = changes ? 0 : std::min (untouchedRun + 1, options.overlap);
 
     // Every frame over the hop about to be played changed nothing: play the input itself.

@@ -919,3 +919,105 @@ FREQART_TEST (tunedCarverHaloFollowsTheMode)
     CHECK_LESS (byShare, -2.0);
     CHECK_LESS (byMost, byShare - 3.0);
 }
+
+FREQART_TEST (tunedCarverSpreadsTheDrawingOverTheHop)
+{
+    // A frame's transforms need the last sample of its hop, and the first sample played out
+    // after them needs them, so they run in the call that completes the hop. Reading the drawing
+    // for the next frame (its columns at the points across the hop, then the gains) is spread
+    // over the calls before that one: with small blocks, the call that transforms a frame reads
+    // no column of the drawing and no call reads more than one, at any rate. The points are
+    // spaced in time, 8 a hop at any rate (the work does not grow with the rate), and the output
+    // is the same however the work falls (tunedCarverIsBlockSizeIndependent).
+    const auto plan = bandPlan (25.0, 19000.0);
+
+    for (const auto sampleRate : { 44100.0, 48000.0, 96000.0, 192000.0 })
+    {
+        for (const auto mode : { CarveMode::carve, CarveMode::stencil })
+        {
+            auto carver = std::make_unique<TunedCarver>();
+            carver->prepare (sampleRate, 512, 2);
+            carver->setPlan (plan.get());
+            CHECK_NEAR (carver->getPointsPerHop(), 8, 0);
+
+            const auto block = 32;
+            const auto passSamples = 0.5 * sampleRate;   // one beat at 120 BPM: a column every few points
+            std::vector<float> left (static_cast<size_t> (block)), right (static_cast<size_t> (block));
+            float* channels[2] = { left.data(), right.data() };
+            juce::Random random (6);
+            CarveSettings settings;
+            settings.mode = mode;
+            auto frames = 0, mostColumns = 0, columnsWhileTransforming = 0, columns = 0;
+            carver->takeWork();
+
+            for (int start = 0; start < static_cast<int> (sampleRate); start += block)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    left[static_cast<size_t> (i)] = random.nextFloat() - 0.5f;
+                    right[static_cast<size_t> (i)] = random.nextFloat() - 0.5f;
+                }
+
+                PlaySegment segment;
+                segment.length = block;
+                segment.playing = true;
+                segment.fraction = std::fmod (start / passSamples, 1.0);
+                segment.fractionPerSample = 1.0 / passSamples;
+                carver->process (channels, 2, block, &segment, 1, settings);
+
+                const auto work = carver->takeWork();
+                frames += work.framesTransformed;
+                columns += work.columnsRead;
+                mostColumns = std::max (mostColumns, work.columnsRead);
+
+                if (work.framesTransformed > 0)
+                    columnsWhileTransforming += work.columnsRead;
+            }
+
+            // Every frame of the second read columns (the drawing covers every column), and none
+            // of them in the call that transformed it.
+            const auto hops = static_cast<int> (sampleRate) / carver->getHopSize();
+            CHECK_GREATER (frames, hops - 6);
+            CHECK_GREATER (columns, 4 * frames);
+            CHECK_NEAR (columnsWhileTransforming, 0, 0);
+            CHECK_NEAR (mostColumns, 1, 0);
+        }
+    }
+
+    // Blocks as long as a hop or longer still do it all in one call, as before.
+    auto whole = preparedTuned();
+    whole->setPlan (plan.get());
+    run (*whole, noise (8192), { 4096 }, CarveSettings(), 0.5 * rate);
+    const auto work = dynamic_cast<TunedCarver&> (*whole).takeWork();
+    CHECK_NEAR (work.framesTransformed, 8, 0);
+}
+
+FREQART_TEST (tunedCarverFinishesAFrameWithThePlanItBegan)
+{
+    // A frame reads the drawing while its hop comes in, from the plan set when it began: a plan
+    // set in the middle of the hop is used from the next frame on, and until then the engine
+    // reports the earlier one as still in use (getFadingPlan), so the caller keeps it alive.
+    const auto first = bandPlan (800.0, 1250.0);
+    const auto second = bandPlan (3000.0, 5000.0);
+
+    auto carver = preparedTuned();
+    carver->setPlan (first.get());
+    const auto hop = dynamic_cast<TunedCarver&> (*carver).getHopSize();
+    run (*carver, noise (hop * 8 + 100, 3), { 512 }, CarveSettings());   // into a hop: its frame has begun
+    CHECK (carver->getFadingPlan() == nullptr);
+
+    carver->setPlan (second.get());
+    CHECK (carver->getFadingPlan() == first.get());
+    CHECK (carver->getPlan() == second.get());
+
+    // The rest of the hop and a little of the next: that frame was transformed, and the next one
+    // began with the new plan.
+    run (*carver, noise (hop - 100 + 10, 4), { 512 }, CarveSettings());
+    CHECK (carver->getFadingPlan() == nullptr);
+
+    // A reset lets go of it too.
+    carver->setPlan (first.get());
+    CHECK (carver->getFadingPlan() == second.get());
+    carver->reset();
+    CHECK (carver->getFadingPlan() == nullptr);
+}

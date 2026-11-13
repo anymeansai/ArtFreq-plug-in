@@ -205,6 +205,9 @@ void FreqArtProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamp
         drawGain.setCurrentAndTargetValue (playsSines (getEffectMode()) ? 1.0f : 0.0f);
         sinesRunning = false;
 
+        // The carver starts afresh: it reads no older masks.
+        olderMasks = nullptr;
+
         if (auto* masks = maskExchange.acquire())
             currentMasks = masks;
 
@@ -219,6 +222,39 @@ void FreqArtProcessor::releaseResources()
 
     if (isEffect())
         carver.reset();
+}
+
+void FreqArtProcessor::reset()
+{
+    // A host's flush: VST3 setProcessing (false), on stop, on a seek, or while it suspends a
+    // silent effect. The effect drops the audio it holds (the song in the carver, the sines in
+    // their delay), so the next playback does not start with up to a latency of what played
+    // before; from here the output is the new input one latency late, as after prepareToPlay.
+    // The instrument holds no audio (its gate fades it out when the DAW stops).
+    if (! isEffect())
+        return;
+
+    // Hosts may call this from another thread, never during a block: the wrapper processes
+    // under the callback lock. Only clearing here: no allocation.
+    const juce::ScopedLock lock (getCallbackLock());
+
+    carver.reset();
+    olderMasks = nullptr;
+    engine.reset();
+    tracker.reset();
+    sinesRunning = false;
+
+    if (sineDelayLength > 0)
+        std::fill (sineDelay.get(), sineDelay.get() + sineDelayLength, 0.0f);
+
+    sineDelayPosition = 0;
+    sineDelaySilence = sineDelayLength;
+
+    outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (levelParam->load(), -100.0f));
+    drawGain.setCurrentAndTargetValue (playsSines (getEffectMode()) ? 1.0f : 0.0f);
+
+    playPosition.store (0.0);
+    sounding.store (false);
 }
 
 bool FreqArtProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -462,7 +498,15 @@ void FreqArtProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
         engine.setPlan (plan);
 
     if (auto* masks = maskExchange.acquire())
+    {
+        // The carver finishes the frame it began with the plan it began with: the set it came
+        // from stays alive until then (with every newer one: the exchange keeps all from the
+        // oldest version reported).
+        if (olderMasks == nullptr)
+            olderMasks = currentMasks;
+
         currentMasks = masks;
+    }
 
     const auto mode = getEffectMode();
     const auto carving = ! bypassed && carvesAudio (mode);
@@ -608,8 +652,11 @@ void FreqArtProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
         previewToken.compare_exchange_strong (expected, 0);
     }
 
+    if (carver.getFadingPlan() == nullptr)
+        olderMasks = nullptr;
+
     planExchange.reportInUse (versionOf (engine.getPlan()), versionOf (engine.getFadingPlan()));
-    maskExchange.reportInUse (versionOf (currentMasks), 0);
+    maskExchange.reportInUse (versionOf (currentMasks), versionOf (olderMasks));
 
     sounding.store (playing && ! bypassed);
     effectiveTempo.store (tracker.getTempo());

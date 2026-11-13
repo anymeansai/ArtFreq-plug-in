@@ -42,6 +42,11 @@ public:
     /** Counts the pictures rendered: it changes whenever the picture last returned does. */
     uint64_t getRenderCount() const noexcept { return renderCount; }
 
+    /** The amplitude the top colour (level 255) stands for in the picture last returned: the
+        plan's loudest line, as an analyser shows it (the comb's grid divided by combGain), as a
+        linear sine amplitude before the output level. 0 for silence. */
+    float getLoudestAmplitude() const noexcept { return levelsPlan != nullptr ? loudestAmplitude : 0.0f; }
+
     /** The colour-map index 0..255 for a linear amplitude relative to the loudest (exposed for
         tests). 0 for silence, 255 at the loudest, windowDb below it maps to 0. */
     static uint8_t levelFor (float amplitude, float loudest) noexcept;
@@ -64,6 +69,7 @@ private:
     std::shared_ptr<const ArtPlan> levelsPlan;  // kept so the pointer cannot be reused
     std::vector<uint8_t> levels;
     std::vector<uint8_t> lineAudible;
+    float loudestAmplitude = 0.0f;
 
     // Scratch, kept to avoid reallocating per rebuild
     struct Contribution

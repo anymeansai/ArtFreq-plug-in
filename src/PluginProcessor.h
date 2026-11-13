@@ -53,6 +53,7 @@ public:
     // ---- juce::AudioProcessor -------------------------------------------------------------
     void prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock) override;
     void releaseResources() override;
+    void reset() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
@@ -251,6 +252,7 @@ private:
     // audio thread, the effect only
     TunedCarver carver;
     const MaskPlanSet* currentMasks = nullptr;
+    const MaskPlanSet* olderMasks = nullptr;       // the oldest set the carver may still read (a frame it began)
     juce::LinearSmoothedValue<float> drawGain;     // 1 in the modes that play the sines, else 0
     bool sinesRunning = false;                     // the engine is being rendered
     juce::HeapBlock<float> sineDelay;              // the sines, as late as the carved audio

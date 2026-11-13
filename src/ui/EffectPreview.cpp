@@ -4,6 +4,7 @@
 #include "Theme.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace freqart::ui
@@ -21,6 +22,23 @@ namespace
     }
 
     constexpr float levelsPerDb = 255.0f / CanvasPlanImage::windowDb;
+
+    /** What adding a quieter sound to a louder one adds to the louder, in colour levels, by how
+        far apart they are in levels (0..255): powers add, as in an analyser's cell. */
+    const std::array<float, 256>& powerSumTable()
+    {
+        static const auto table = []
+        {
+            std::array<float, 256> t {};
+
+            for (size_t i = 0; i < t.size(); ++i)
+                t[i] = 10.0f * std::log10 (1.0f + std::pow (10.0f, -static_cast<float> (i) / levelsPerDb / 10.0f)) * levelsPerDb;
+
+            return t;
+        }();
+
+        return table;
+    }
 } // namespace
 
 float EffectPreviewImage::songDb (double x, double y) noexcept
@@ -85,19 +103,32 @@ void EffectPreviewImage::makeTexture (int width, int height)
     }
 }
 
+float EffectPreviewImage::sinesDbFor (float loudestAmplitude, float outputGain) noexcept
+{
+    const auto amplitude = loudestAmplitude * outputGain;
+    return amplitude > 0.0f && std::isfinite (amplitude) ? 20.0f * std::log10 (amplitude) + sinesCalibrationDb : -200.0f;
+}
+
 juce::Image EffectPreviewImage::get (const std::vector<uint8_t>& planLevels, uint64_t planKey, EffectMode mode, float depthDb,
-                                     const std::shared_ptr<const MaskPlanSet>& masks, int width, int height)
+                                     float sinesDb, const std::shared_ptr<const MaskPlanSet>& masks, int width, int height)
 {
     width = juce::jmax (1, width);
     height = juce::jmax (1, height);
+    sinesDb = std::isfinite (sinesDb) ? juce::jlimit (-200.0f, 60.0f, sinesDb) : -200.0f;
+
+    // The sines only show in the modes that play them.
+    if (! playsSines (mode))
+        sinesDb = -200.0f;
 
     if (image.isValid() && image.getWidth() == width && image.getHeight() == height && imagePlanKey == planKey
-        && imageMode == mode && juce::exactlyEqual (imageDepth, depthDb) && imageMasks == masks)
+        && imageMode == mode && juce::exactlyEqual (imageDepth, depthDb) && juce::exactlyEqual (imageSinesDb, sinesDb)
+        && imageMasks == masks)
         return image;
 
     imagePlanKey = planKey;
     imageMode = mode;
     imageDepth = depthDb;
+    imageSinesDb = sinesDb;
     imageMasks = masks;
 
     makeTexture (width, height);
@@ -129,8 +160,12 @@ juce::Image EffectPreviewImage::get (const std::vector<uint8_t>& planLevels, uin
 
     const auto stencil = mode == EffectMode::stencil;
     const auto perUnit = juce::jlimit (params::minDepthDb, 0.0f, depthDb) * levelsPerDb;   // levels per unit of mask
-    const auto withSines = playsSines (mode) && planLevels.size() == static_cast<size_t> (width) * static_cast<size_t> (height);
+    // A plan level of 255 is the loudest sine, sinesDb from the top of the window.
+    const auto sinesOffset = sinesDb * levelsPerDb;
+    const auto withSines = playsSines (mode) && sinesOffset > -255.0f
+                        && planLevels.size() == static_cast<size_t> (width) * static_cast<size_t> (height);
     const auto& table = theme::spectrumTable();
+    const auto& sum = powerSumTable();
 
     juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
     rowPixels.resize (static_cast<size_t> (width));
@@ -150,12 +185,22 @@ juce::Image EffectPreviewImage::get (const std::vector<uint8_t>& planLevels, uin
                 level += (stencil ? 1.0f - m : m) * perUnit;
             }
 
-            auto index = juce::jlimit (0, 255, static_cast<int> (level + 0.5f));
-
-            // The sines, where they are louder than what is left of the song.
+            // The sines added to what is left of the song, as powers (where both are about as
+            // loud, the cell is 3 dB brighter than either).
             if (withSines)
-                index = std::max (index, static_cast<int> (planLevels[offset + static_cast<size_t> (x)]));
+            {
+                if (const auto sine = planLevels[offset + static_cast<size_t> (x)]; sine > 0)
+                {
+                    if (const auto sineLevel = static_cast<float> (sine) + sinesOffset; sineLevel > 0.0f)
+                    {
+                        const auto louder = std::max (level, sineLevel);
+                        const auto apart = juce::jlimit (0, 255, static_cast<int> (std::abs (level - sineLevel) + 0.5f));
+                        level = louder + sum[static_cast<size_t> (apart)];
+                    }
+                }
+            }
 
+            const auto index = juce::jlimit (0, 255, static_cast<int> (level + 0.5f));
             rowPixels[static_cast<size_t> (x)] = table[static_cast<size_t> (index)];
         }
 

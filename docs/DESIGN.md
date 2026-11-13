@@ -51,7 +51,9 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
   and in the Draw modes the engine, level and clipper on the sines, then their delay); pushes
   output to the live analyser only while the live view is visible. No locks, no allocation.
 - **Plans** travel through `PlanExchange`, the effect's masks through `MaskSetExchange` (wait-free
-  acquire on the audio thread, garbage collected on the message thread).
+  acquire on the audio thread, garbage collected on the message thread). The carver reads a
+  frame's masks over a hop of callbacks: new masks arriving meanwhile, the processor also reports
+  the set the frame began with until the frame is done (`getFadingPlan`), so it is not freed.
 - **Export** renders on a background thread from a shared (immutable) plan; a change that makes
   the render unwanted stops it (the message thread never waits for it).
 
@@ -288,8 +290,8 @@ its frequencies in the incoming audio, so it shows as dark shapes in the song's 
   with crossover weights): at the default Depth both look as visible (a tie at -80 dB), engine 1
   costs a third of the CPU, has 43 ms less latency and much simpler code. Three things were
   grafted onto it from engine 2:
-  - **The drawing over each hop.** A frame reads the drawing at points about every 128 samples
-    (8 at 48 kHz, an even number, 32 at most) over the hop around its centre (the second half of
+  - **The drawing over each hop.** A frame reads the drawing at points about every 2.7 ms
+    (8 a hop at any rate; 128 samples at 48 kHz) over the hop around its centre (the second half of
     the hop before the window's centre and the first half of the next), weighted by the gate
     there, not at one moment: at a one-beat length a hop spans 40 columns, and a thin vertical
     stroke between two frames' centres was missed. Carve and Stencil take the points' mean (a
@@ -310,6 +312,22 @@ its frequencies in the incoming audio, so it shows as dark shapes in the song's 
     (`columnNudge`), so where a host's rounding falls never changes which column is read.
   - **The halo per mode** (`CarveSettings::haloBins`): Carve 1 bin, Carve + Draw 3 (35 Hz either
     side, the low half of its dark edge), Stencil none.
+- **Work per audio callback.** A frame's transforms need the last sample of its hop, and the
+  first sample played out after it needs them, so they run in the callback that completes the hop
+  (at this latency there is no way round that: spreading them would cost another hop). Reading
+  the drawing for a frame, its columns at the points and then the gains, does not: it runs a
+  stage (one column, or the last step) at a time over the callbacks while the frame's newest hop
+  comes in, a stage ahead of an even share of the hop, so with blocks up to a thirteenth of a hop
+  (78 samples at 48 kHz, 315 at 192 kHz) the callback that completes the hop only transforms
+  (`tunedCarverSpreadsTheDrawingOverTheHop` counts it call by call). A frame reads the plan and
+  the settings of the callback it began in to its end; a plan set in the middle of the hop is
+  reported as still in use (`getFadingPlan`), and the processor keeps its mask set alive until the
+  frame is done. The points are spaced in time, so their number does not grow with the rate, and
+  only the bins below the top of the scale are read (at 192 kHz a fifth of them). Before this, the
+  callback that completed a hop also read the drawing (32 points a hop at 192 kHz): measured here
+  with a full-band drawing one beat long, its typical worst callback at 96 kHz / 32 samples went
+  from 1.2 to 0.5 ms and at 192 kHz / 128 from 2.3 to 0.9 ms, about the transforms alone (JUCE's
+  portable FFT on Linux; on the Mac vDSP's, several times faster). The mean cost halved at 192 kHz.
 - **The lab** (`tools/CarveLab.cpp`, target `FreqArtCarveLab`) plays dense songs (pink noise, a
   busy synthetic mix, or a WAV) through an engine with four drawings (text, a filled sun, a
   ramp, a photo-like portrait), one 8 s pass from bar 2, in Carve and Stencil, and measures
@@ -369,10 +387,22 @@ therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and *
   input one latency late, bit for bit (plus the sines in Draw); carving fades in and out with the
   gate's 5 ms S-curve at the output. A frame reaching over the pass's start or end carves as the
   pass's nearest moment.
+- **Peaks.** The song is not limited or clipped (the safety clipper is on the sines only), so
+  transparency holds; but carving changes the phases a limiter set the peaks with, and the Draw
+  modes add sines. On pink noise at -11 dBFS RMS limited to -0.3 dBFS, with the default drawing
+  and Level: Carve +0.8 dBFS, Carve + Draw +1.8, Draw +2.2, Stencil below the input
+  (`effectPeaksOnALimitedMaster`). The README tells users to put FreqArt FX before the master's
+  final limiter, or leave that headroom.
 - **Bypass** (`processBlockBypassed`): the same path with Depth 0 and the gate closing: the carve
   crossfades out over a frame, the sines fade out, then the output is the delayed input bit for
   bit. The latency stays, so a host's bypass never shifts the audio. The carver is never reset
   there (that would drop the audio in flight); the tracker and the sines are, once silent.
+- **A host's flush** (`reset()`: VST3 setProcessing (false), on stop, on a seek, or while a host
+  suspends a silent effect) drops the audio in flight: the carver's history and overlap-add, the
+  sines' delay, the engine and the tracker. Otherwise the next playback would start with up to a
+  latency of what played before, at full level. From there the output is silence for a latency
+  and then the input that late, as after prepareToPlay (only clearing: no allocation; under the
+  callback lock, as hosts may call it from another thread). The instrument holds no audio.
 - **Mode and Depth changes** never click: the carve's gains change from frame to frame and the
   frames overlap-add (sin^3 windows, 75 %), the sines fade (tested with every mode switched in
   turn and Depth jumping 80 dB).
@@ -385,7 +415,11 @@ therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and *
 - **State.** The same XML as the instrument's (`FreqArtState`, now with a `plugin` attribute
   naming the variant that saved it), so either loads the other's drawing and shared settings:
   the instrument leaves out Mode and Depth (unknown parameters are dropped on load, so they are
-  not saved back as its own), the effect fills them in at their defaults.
+  not saved back as its own), the effect fills them in at their defaults. Hosts do not offer
+  that, though: they keep presets and states per class ID (FqAr and FqFx differ, and the VST3
+  SDK's preset loader refuses another class's preset), so moving a drawing between the two needs
+  a feature of its own (copy and paste of the drawing, or an export and import of it), not yet
+  built; the README says so.
 - **The editor** is the instrument's with:
   - **Header**: "FreqArt FX" (FX in accent2); Canvas | Live beside the wordmark; then, centred
     between it and undo, MODE and a segmented Carve | Carve + Draw | Stencil | Draw (284 px; its
@@ -397,9 +431,18 @@ therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and *
     -22 to -40 dB of the 60 dB colour window, sixteen beats of kick in the lows and hats in the
     highs, held chords, grain on a fixed grid so resizing does not shimmer), carved by the
     processor's own masks as deep as Depth: Carve, dark shapes; Stencil, the shapes filled with the
-    stand-in on black; Carve + Draw, the sines' picture (the instrument's canvas, as levels) bright
-    in a hole carved with the halo masks; Draw, the sines over the stand-in. Nothing drawn: the
-    stand-in as it is, as the effect leaves the song.
+    stand-in on black; Carve + Draw, the sines' picture (the instrument's canvas, as levels) in a
+    hole carved with the halo masks; Draw, the sines over the stand-in. Nothing drawn: the
+    stand-in as it is, as the effect leaves the song. In the Draw modes the sines are drawn at
+    their own level, Level included (the canvas follows it), and added to the stand-in as powers:
+    the window's top is a full-scale sine in an analyser cell, the stand-in sits where a loud
+    master (-10 dBFS RMS) shows at FFT 4096 (about -32 dB a cell at 1 kHz; pink noise there: -34),
+    and the sines are drawn 10 dB above their plan amplitude (`sinesCalibrationDb`), which gives
+    the contrasts measured through the processor on that master: the default drawing at the
+    default Level +5.3 dB above the song in Draw, +9.4 in Carve + Draw (drawn against undrawn
+    cells, 400 Hz - 2.5 kHz); the canvas, +5.4 / +9.6. Before, the sines were drawn at the top of
+    the window whatever the Level, about 31 dB above the stand-in: Draw looked far stronger than
+    it is on a full song, which is the customer's complaint. At -60 dB the sines are gone.
   - **Live** shows what comes out (the song, carved): the processor pushes its output (the
     channels' mean) to the analyser.
   - **Footer**: Density, Contrast and Level are greyed in Carve and Stencil (they shape the sines
