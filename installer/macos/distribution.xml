@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The FreqArt installer. build-pkg.sh replaces @VERSION@ and assembles it with productbuild. -->
+<installer-gui-script minSpecVersion="2">
+    <title>FreqArt @VERSION@</title>
+    <organization>com.anymeans</organization>
+    <!-- hostArchitectures: runs natively on Apple Silicon (no Rosetta prompt) and on Intel. -->
+    <options customize="allow" require-scripts="false" rootVolumeOnly="true" hostArchitectures="x86_64,arm64"/>
+    <domains enable_localSystem="true"/>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <license file="license.txt" mime-type="text/plain"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+
+    <choices-outline>
+        <line choice="vst3"/>
+        <line choice="finish"/>
+    </choices-outline>
+
+    <choice id="vst3" title="FreqArt VST3 plug-in" start_selected="true"
+            description="The FreqArt instrument by AnyMeans, for Ableton Live, FL Studio, Reaper, Cubase, Studio One, Bitwig and other VST3 hosts. Installed in /Library/Audio/Plug-Ins/VST3.">
+        <pkg-ref id="com.anymeans.freqart.vst3"/>
+    </choice>
+    <!-- Hidden, always on: a payload-free package whose postinstall offers to move the
+         downloaded installer to the Trash. It is listed last so it runs last. -->
+    <choice id="finish" visible="false" start_selected="true" start_enabled="false">
+        <pkg-ref id="com.anymeans.freqart.finish"/>
+    </choice>
+
+    <pkg-ref id="com.anymeans.freqart.vst3"   version="@VERSION@" onConclusion="none">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.anymeans.freqart.finish" version="@VERSION@" onConclusion="none">finish.pkg</pkg-ref>
+</installer-gui-script>

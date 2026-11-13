@@ -1,0 +1,48 @@
+#!/bin/bash
+# Final step of the FreqArt installer (by AnyMeans). Runs as root once FreqArt.vst3 is in
+# /Library/Audio/Plug-Ins/VST3, and offers to move the downloaded installer to the Trash.
+#
+# Nothing here may fail the installation: the plug-in is already in place, so every step is
+# optional and the script always exits 0 (which is also why it does not use set -e).
+
+# Graphical installs only: `sudo installer -pkg ...` (and management tools) set
+# COMMAND_LINE_INSTALL, and there is nobody to ask.
+[ -n "${COMMAND_LINE_INSTALL:-}" ] && exit 0
+
+# The installer that was opened (the product archive the user double-clicked).
+PKG="${PACKAGE_PATH:-}"
+case "$PKG" in *.pkg) ;; *) exit 0 ;; esac
+[ -f "$PKG" ] || exit 0
+
+# Ask the person sitting at the Mac, in their own session.
+USER_NAME=$(stat -f %Su /dev/console 2> /dev/null || true)
+{ [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ] && [ "$USER_NAME" != "loginwindow" ]; } || exit 0
+USER_ID=$(id -u "$USER_NAME" 2> /dev/null || true)
+[ -n "$USER_ID" ] || exit 0
+NAME=$(basename "$PKG")
+
+as_user()
+{
+    launchctl asuser "$USER_ID" sudo -u "$USER_NAME" "$@"
+}
+
+# The file name and path go in as arguments (argv), never pasted into the AppleScript source,
+# so quotes or backslashes in a file name cannot break the script or change what it does.
+ANSWER=$(as_user osascript \
+    -e 'on run argv' \
+    -e 'set theQuestion to "FreqArt is installed." & return & return & "Move the installer \"" & (item 1 of argv) & "\" to the Trash?"' \
+    -e 'return button returned of (display dialog theQuestion buttons {"Keep", "Move to Trash"} default button "Move to Trash" with title "FreqArt" with icon note giving up after 120)' \
+    -e 'end run' \
+    "$NAME" 2> /dev/null || true)
+
+if [ "$ANSWER" = "Move to Trash" ]; then
+    # Through the Finder, so the file can be put back from the Trash like any other.
+    as_user osascript \
+        -e 'on run argv' \
+        -e 'set theFile to (POSIX file (item 1 of argv)) as alias' \
+        -e 'tell application "Finder" to delete theFile' \
+        -e 'end run' \
+        "$PKG" > /dev/null 2>&1 || true
+fi
+
+exit 0

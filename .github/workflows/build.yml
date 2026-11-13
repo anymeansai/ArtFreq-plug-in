@@ -1,0 +1,303 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # Every target compiles all of FreqArt's sources (the tests and the snapshot tool link the
+    # processor and the editor too), twice over for the universal build.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-15
+            cmake_args: '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
+            pluginval_zip: pluginval_macOS.zip
+            pluginval_bin: pluginval.app/Contents/MacOS/pluginval
+          # Windows and Linux are switched off until the macOS version is right.
+          # Uncomment these two entries to build them again; everything else is ready.
+          # - name: Windows
+          #   os: windows-2022
+          #   cmake_args: ''
+          #   pluginval_zip: pluginval_Windows.zip
+          #   pluginval_bin: pluginval.exe
+          # - name: Linux
+          #   os: ubuntu-22.04
+          #   cmake_args: ''
+          #   pluginval_zip: pluginval_Linux.zip
+          #   pluginval_bin: pluginval
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libfreetype6-dev libfontconfig1-dev xvfb
+
+      # Configuring downloads JUCE from GitHub, which occasionally fails: try three times.
+      - name: Configure
+        shell: bash
+        run: |
+          args=(-S . -B build -DCMAKE_BUILD_TYPE=Release)
+          if [ -n "${{ matrix.cmake_args }}" ]; then args+=("${{ matrix.cmake_args }}"); fi
+          for attempt in 1 2 3; do
+            if cmake "${args[@]}"; then
+              exit 0
+            fi
+            echo "::warning::Configure failed (attempt $attempt of 3)."
+            rm -rf build
+            sleep 30
+          done
+          exit 1
+
+      # All targets: the plug-in (FreqArt), the tests (FreqArtTests) and the interface snapshot
+      # tool (FreqArtSnapshot).
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel 4
+
+      # FreqArtTests links the processor and the editor as well as core and dsp, so a failure
+      # here can come from any part of the plug-in, not only the engine. It opens no window,
+      # but on Linux it runs under a virtual display all the same, as JUCE's GUI classes are
+      # linked in.
+      - name: Tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+          else
+            ctest --test-dir build -C Release --output-on-failure
+          fi
+
+      - name: Check the build is universal
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          for binary in \
+            "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3/Contents/MacOS/FreqArt" \
+            "build/FreqArtTests_artefacts/Release/FreqArtTests" \
+            "build/FreqArtSnapshot_artefacts/Release/FreqArtSnapshot"; do
+            lipo -info "$binary"
+            lipo "$binary" -verify_arch arm64 x86_64
+          done
+
+      # The macOS build is universal but the runner is Apple Silicon, so the tests above ran
+      # the arm64 half only. Run them again on the Intel half under Rosetta.
+      - name: Tests on the Intel half (Rosetta)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          tests="build/FreqArtTests_artefacts/Release/FreqArtTests"
+          test -x "$tests"
+          if arch -x86_64 /usr/bin/true 2> /dev/null; then
+            arch -x86_64 "$tests"
+          else
+            echo "::warning::Rosetta is not available on this runner; the Intel half was not tested."
+          fi
+
+      # JUCE signs the bundle before it writes moduleinfo.json into it, which leaves the
+      # signature's seal broken. Sign again (ad hoc) now that the bundle is complete, before it
+      # is validated and packaged, so the bundle pluginval checks is the one that ships.
+      - name: Sign the plug-in (ad hoc)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          plugin="build/FreqArt_artefacts/Release/VST3/FreqArt.vst3"
+          if [ ! -f "$plugin/Contents/Resources/moduleinfo.json" ]; then
+            echo "::warning::$plugin has no Contents/Resources/moduleinfo.json; VST 3.7.5+ hosts scan it more slowly."
+          fi
+          codesign --force --sign - "$plugin"
+          codesign --verify --strict --verbose=2 "$plugin"
+
+      # Renders the editor in its main states to PNG files, to check the interface on a real
+      # Mac (fonts, HiDPI). It runs headless on the macOS runner; on Linux it needs a display
+      # (xvfb-run -a).
+      - name: Interface snapshots
+        id: snapshots
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          build/FreqArtSnapshot_artefacts/Release/FreqArtSnapshot snapshots
+          ls -l snapshots
+          ls snapshots/*.png > /dev/null
+
+      # Uploaded even when the tool failed part-way, to see how far it got.
+      - name: Upload interface snapshots
+        if: ${{ !cancelled() && steps.snapshots.outcome != 'skipped' && runner.os == 'macOS' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreqArt-Snapshots
+          path: snapshots/*.png
+          if-no-files-found: warn
+
+      - name: Validate with pluginval
+        shell: bash
+        run: |
+          curl -sSL --retry 3 -o pluginval.zip \
+            "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/${{ matrix.pluginval_zip }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then 7z x -y pluginval.zip > /dev/null; else unzip -oq pluginval.zip; fi
+          plugin="build/FreqArt_artefacts/Release/VST3/FreqArt.vst3"
+          args=(--strictness-level 10 --validate-in-process --output-dir pluginval-logs --validate "$plugin")
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            xvfb-run -a "./${{ matrix.pluginval_bin }}" "${args[@]}"
+          else
+            "./${{ matrix.pluginval_bin }}" "${args[@]}"
+          fi
+
+      - name: Upload pluginval logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginval-logs-${{ matrix.name }}
+          path: pluginval-logs
+          if-no-files-found: ignore
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          cd build/FreqArt_artefacts/Release/VST3
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            codesign --verify --strict FreqArt.vst3
+            ditto -c -k --keepParent FreqArt.vst3 "$GITHUB_WORKSPACE/dist/FreqArt-VST3-macOS.zip"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            7z a -tzip "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Windows.zip" FreqArt.vst3 > /dev/null
+          else
+            zip -qry "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Linux.zip" FreqArt.vst3
+          fi
+
+      - name: Upload plug-in
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreqArt-VST3-${{ matrix.name }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+      # A standard macOS installer (installer/macos) that puts the plug-in in
+      # /Library/Audio/Plug-Ins/VST3. It is not signed with a Developer ID or notarised, so
+      # macOS asks before opening it.
+      - name: Build macOS installer
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(FreqArt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          bash installer/macos/build-pkg.sh build out "$version"
+          test -f "out/FreqArt-$version-macOS.pkg"
+
+      # Prove it: install it on this machine and validate the installed copy.
+      - name: Test-install the macOS installer
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(FreqArt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          sudo installer -pkg "out/FreqArt-$version-macOS.pkg" -target / -verbose
+          installed="/Library/Audio/Plug-Ins/VST3/FreqArt.vst3"
+          test -d "$installed"
+          test -f "$installed/Contents/MacOS/FreqArt"
+          # The very binary that was built and validated, not a relocated or older copy.
+          cmp "$installed/Contents/MacOS/FreqArt" build/FreqArt_artefacts/Release/VST3/FreqArt.vst3/Contents/MacOS/FreqArt
+          codesign --verify --strict "$installed"
+          pkgutil --pkg-info com.anymeans.freqart.vst3
+          "./${{ matrix.pluginval_bin }}" --strictness-level 5 --validate-in-process --validate "$installed"
+
+      - name: Upload macOS installer
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreqArt-Installer-macOS
+          path: out/*.pkg
+          if-no-files-found: error
+
+  # Publishes the builds on the repository's Releases page, so they can be downloaded
+  # from a browser. Each successful build of a branch updates the release for the
+  # current version (the version number in CMakeLists.txt).
+  release:
+    name: Publish release
+    needs: build
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'branch'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # The plug-in zips and the installer only (not the interface snapshots).
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: FreqArt-VST3-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: FreqArt-Installer-*
+          merge-multiple: true
+
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version=$(sed -n 's/^project(FreqArt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          tag="v$version"
+          ls -l dist
+          test -f "dist/FreqArt-$version-macOS.pkg"
+          test -f "dist/FreqArt-VST3-macOS.zip"
+
+          cat > notes.md <<EOF
+          FreqArt $version by AnyMeans, built from commit ${GITHUB_SHA::7}. A VST3 instrument that turns text, pictures and brush strokes into sound whose spectrogram shows them. Universal (Apple Silicon and Intel), macOS 10.15 or later.
+
+          **macOS:** download \`FreqArt-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`FreqArt.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`.
+
+          **Manual install:** download \`FreqArt-VST3-macOS.zip\`, unzip it and copy \`FreqArt.vst3\` into \`~/Library/Audio/Plug-Ins/VST3\`. If your DAW will not load it, clear the download quarantine once: \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3\`. Windows and Linux builds are paused until the macOS version is finished.
+
+          Then rescan plug-ins in your DAW, put FreqArt on an instrument track, open a spectrogram on its output (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
+          EOF
+
+          # Never take the existing download away before the new one is up: an existing
+          # release is updated in place (assets replaced one by one, then the notes and
+          # the tag), and only a missing one is created from scratch.
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+
+            # Files left over from a build that made more than this one does are out of
+            # date: take them off.
+            for asset in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
+              if [ ! -e "dist/$asset" ]; then
+                gh release delete-asset "$tag" "$asset" --yes
+              fi
+            done
+
+            gh release edit "$tag" --title "FreqArt $version" --notes-file notes.md --latest
+            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
+              || echo "::warning::Could not move tag $tag to $GITHUB_SHA; the release assets are up to date."
+          else
+            # GitHub refuses to let a workflow tag a commit whose workflow files differ from
+            # the default branch's (an older build being re-run, for instance). Tagging the
+            # branch itself is always allowed, so fall back to that.
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "FreqArt $version" --notes-file notes.md --latest \
+              || gh release create "$tag" dist/* --target "$GITHUB_REF_NAME" --title "FreqArt $version" --notes-file notes.md --latest
+          fi
