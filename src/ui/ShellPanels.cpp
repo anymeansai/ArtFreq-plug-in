@@ -363,7 +363,8 @@ namespace
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
                                                        "in the panel on the right. Density sets how many lines draw it." } },
             { "6", { "Press play in your DAW.", "Or press Preview to hear the drawing on a loop while the DAW is stopped." } },
-            { "7", { "Bounce to WAV.", "Export renders one pass. Drag the file into your DAW, or save it." } },
+            { "7", { "Bounce to WAV.", "Export renders one pass, and a new file after each change. Drag it into "
+                                       "your DAW, or save it." } },
         };
         return steps;
     }

@@ -8,6 +8,8 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <algorithm>
+
 using freqart::ExportSettings;
 
 namespace
@@ -179,11 +181,70 @@ FREQART_TEST (exportCanBeCancelled)
     CHECK (target.loadFileAsString() == "an earlier file");
     CHECK (scratch.folder.getNumberOfChildFiles (juce::File::findFiles) == 1);
 
-    // Never cancelled: as without it.
+    // Never cancelled: as without it. Progress is told after every block, rising to 1.
     settings.seconds = 0.25;
     error.clear();
-    CHECK (freqart::renderPlanToWav (*plan, settings, target, error, [] { return false; }));
+    std::vector<double> progress;
+    CHECK (freqart::renderPlanToWav (*plan, settings, target, error, [] { return false; },
+                                     [&progress] (double fraction) { progress.push_back (fraction); }));
     CHECK (error.isEmpty() && load (target).audio.getNumSamples() == 12000);
+    CHECK (progress.size() == 3);   // 12000 samples in blocks of 4096
+    CHECK (std::is_sorted (progress.begin(), progress.end()) && ! progress.empty() && progress.front() > 0.0);
+    CHECK (! progress.empty() && std::abs (progress.back() - 1.0) < 1.0e-12);
+}
+
+FREQART_TEST (exportFileNamesAreReadableAndSafe)
+{
+    using freqart::fileNamePart;
+
+    // What file systems, shells and DAWs choke on separates words; runs of spaces collapse.
+    CHECK (fileNamePart ("HELLO", 20) == "HELLO");
+    CHECK (fileNamePart ("  a/b\\c:d*e?f\"g<h>i|j  ", 40) == "a b c d e f g h i j");
+    CHECK (fileNamePart ("two\nlines\tand tabs", 40) == "two lines and tabs");
+    CHECK (fileNamePart ("v1.2 ../etc", 40) == "v1 2 etc");
+    CHECK (fileNamePart ("Rock & Roll (live)!", 40) == "Rock & Roll (live)!");
+    CHECK (fileNamePart (juce::String::fromUTF8 ("Caf\xc3\xa9 \xc3\x97 Na\xc3\xafve"), 40)
+           == juce::String::fromUTF8 ("Caf\xc3\xa9 Na\xc3\xafve"));                 // accents kept, the times sign not
+    CHECK (fileNamePart (juce::String::fromUTF8 ("Hi \xf0\x9f\x8e\xb5 there"), 40) == "Hi there");   // no emoji
+    CHECK (fileNamePart ("...", 20).isEmpty());
+
+    // Whole words up to the limit; one long word is cut.
+    CHECK (fileNamePart ("The quick brown fox jumps over", 20) == "The quick brown fox");
+    CHECK (fileNamePart ("Supercalifragilisticexpialidocious", 20) == "Supercalifragilistic");
+    CHECK (fileNamePart ("anything", 0).isEmpty());
+
+    // The label: the first text that leaves something, else "Drawing".
+    freqart::ArtDocument document;
+    CHECK (freqart::bounceLabel (document) == "Drawing");
+    document.objects.push_back (freqart::ArtDocument::makeTextObject ("  ?? ", 3500.0f, 16000.0f));
+    CHECK (freqart::bounceLabel (document) == "Drawing");
+    document.objects.push_back (freqart::ArtDocument::makeTextObject ("Hello, World:\nline two", 300.0f, 3000.0f));
+    document.objects.push_back (freqart::ArtDocument::makeTextObject ("Second", 40.0f, 250.0f));
+    CHECK (freqart::bounceLabel (document) == "Hello World line two");
+
+    // Reserved at once, so even in the same second every bounce has its own name.
+    ScratchFolder scratch;
+    const auto folder = scratch.folder.getChildFile ("FreqArt");
+    const auto when = juce::Time (2026, 10, 13, 14, 3, 27);   // 13 Nov 2026, 14:03:27 local
+    const auto first = freqart::reserveBounceFile (folder, "HELLO", when);
+    const auto second = freqart::reserveBounceFile (folder, "HELLO", when);
+    const auto third = freqart::reserveBounceFile (folder, "HELLO", when);
+    CHECK (first.getFileName() == "FreqArt HELLO 14-03-27.wav");
+    CHECK (second.getFileName() == "FreqArt HELLO 14-03-27 2.wav");
+    CHECK (third.getFileName() == "FreqArt HELLO 14-03-27 3.wav");
+    CHECK (first.existsAsFile() && second.existsAsFile() && third.existsAsFile() && first.getSize() == 0);
+    CHECK (freqart::reserveBounceFile (folder, "Drawing", when).getFileName() == "FreqArt Drawing 14-03-27.wav");
+    CHECK (freqart::reserveBounceFile (folder, "FreqArt", when).getFileName() == "FreqArt 14-03-27.wav");
+    CHECK (freqart::reserveBounceFile (folder, "FreqArt Rocks", when).getFileName() == "FreqArt Rocks 14-03-27.wav");
+
+    // A name made from any text is a plain file name in that folder.
+    const auto awkward = freqart::reserveBounceFile (folder, fileNamePart ("..\\..//<x>|:*?\"", 20), when);
+    CHECK (awkward.getParentDirectory() == folder && awkward.getFileName() == juce::File::createLegalFileName (awkward.getFileName()));
+
+    // A folder that cannot be made: no file.
+    const auto blocker = scratch.folder.getChildFile ("notAFolder");
+    blocker.replaceWithText ("x");
+    CHECK (freqart::reserveBounceFile (blocker, "HELLO", when) == juce::File());
 }
 
 FREQART_TEST (exportSoftClipShape)

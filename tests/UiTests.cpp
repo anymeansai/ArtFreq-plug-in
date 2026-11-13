@@ -19,9 +19,12 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <memory>
+#include <vector>
 
 using namespace freqart;
 using testutil::setParameter;
@@ -144,6 +147,122 @@ double secondsSince (std::chrono::steady_clock::time_point start)
     return std::chrono::duration<double> (std::chrono::steady_clock::now() - start).count();
 }
 
+/** Runs the message loop (the editor's timer) until `done` or the timeout; true if `done`. */
+template <typename Predicate>
+bool pumpUntil (Predicate&& done, int timeoutMilliseconds)
+{
+    const auto start = std::chrono::steady_clock::now();
+
+    while (! done())
+    {
+        if (secondsSince (start) * 1000.0 > timeoutMilliseconds)
+            return false;
+
+        pump (10);
+    }
+
+    return true;
+}
+
+/** The left channel of a WAV file (empty if it cannot be read). */
+std::vector<float> readWav (const juce::File& file)
+{
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatReader> reader (wav.createReaderFor (file.createInputStream().release(), true));
+
+    if (reader == nullptr || reader->lengthInSamples <= 0)
+        return {};
+
+    juce::AudioBuffer<float> audio (static_cast<int> (reader->numChannels), static_cast<int> (reader->lengthInSamples));
+    reader->read (&audio, 0, audio.getNumSamples(), 0, true, true);
+    return { audio.getReadPointer (0), audio.getReadPointer (0) + audio.getNumSamples() };
+}
+
+/** One pass of the processor's current plan, rendered here as the export panel would. */
+std::vector<float> renderCurrentPlan (FreqArtProcessor& processor)
+{
+    const auto plan = processor.getCurrentPlan();
+
+    if (plan == nullptr)
+        return {};
+
+    ExportSettings settings;
+    settings.sampleRate = sampleRate;
+    settings.seconds = processor.getLengthSeconds();
+    settings.gain = processor.getOutputGain();
+
+    const auto file = juce::File::createTempFile (".wav");
+    juce::String error;
+    const auto ok = renderPlanToWav (*plan, settings, file, error);
+    auto audio = ok ? readWav (file) : std::vector<float>();
+    file.deleteFile();
+    return audio;
+}
+
+double largestDifference (const std::vector<float>& a, const std::vector<float>& b)
+{
+    if (a.size() != b.size() || a.empty())
+        return std::numeric_limits<double>::infinity();
+
+    double largest = 0.0;
+
+    for (size_t i = 0; i < a.size(); ++i)
+        largest = std::max (largest, static_cast<double> (std::abs (a[i] - b[i])));
+
+    return largest;
+}
+
+double rmsOf (const std::vector<float>& x)
+{
+    double sum = 0.0;
+
+    for (const auto v : x)
+        sum += static_cast<double> (v) * static_cast<double> (v);
+
+    return x.empty() ? 0.0 : std::sqrt (sum / static_cast<double> (x.size()));
+}
+
+/** A fresh instance whose drawing is one word, with its editor open (and visible, as in a
+    host: the export follows the drawing only while it can be seen). */
+struct ExportRig
+{
+    explicit ExportRig (const juce::String& word)
+        : processor (makeProcessor())
+    {
+        ArtDocument document;
+        document.objects.push_back (ArtDocument::makeTextObject (word, 300.0f, 3000.0f));
+        textId = document.objects.front().id;
+        processor->setDocument (document);
+        processor->rebuildPlanIfNeeded();
+
+        editor = makeEditor (*processor);
+        editor->setVisible (true);
+        exporter = find<ui::shell::ExportPanel> (*editor, "export");
+        bounce = find<juce::Button> (*editor, "bounce");
+        chip = findComponent (*editor, "export-chip");
+        save = find<juce::Button> (*editor, "export-save");
+    }
+
+    bool valid() const { return exporter != nullptr && bounce != nullptr && chip != nullptr && save != nullptr; }
+
+    void setText (const juce::String& text)
+    {
+        processor->editDocument ([this, text] (ArtDocument& d) { d.find (textId)->text = text; });
+    }
+
+    bool chipShows (const juce::String& text) const   { return chip->isVisible() && chip->getTitle() == text; }
+
+    std::unique_ptr<FreqArtProcessor> processor;
+    std::unique_ptr<FreqArtEditor> editor;
+    juce::Uuid textId;
+    ui::shell::ExportPanel* exporter = nullptr;
+    juce::Button* bounce = nullptr;
+    juce::Component* chip = nullptr;
+    juce::Button* save = nullptr;
+};
+
+const juce::String updatingText = "Updating" + juce::String::fromUTF8 ("\xe2\x80\xa6");
+
 } // namespace
 
 //==============================================================================
@@ -177,7 +296,10 @@ FREQART_TEST (uiEveryBounceHasItsOwnFile)
     exportA->refresh();
 
     CHECK (fileA != fileB);
-    CHECK (fileA.getParentDirectory() == ui::shell::ExportPanel::getBounceFolder() && fileA.getFileName().startsWith ("FreqArt-"));
+    // Both named after the default drawing's text ("FreqArt") and the time (in the same second
+    // the second one gets a number).
+    CHECK (fileA.getParentDirectory() == ui::shell::ExportPanel::getBounceFolder() && fileA.getFileName().startsWith ("FreqArt "));
+    CHECK (fileB.getFileName().startsWith ("FreqArt "));
     CHECK (exportA->hasCurrentFile() && fileA.existsAsFile());
     CHECK (fileA.getSize() == bytesA && fileA.getLastModificationTime() == writtenA);
 
@@ -271,7 +393,7 @@ FREQART_TEST (uiClosingDuringABounceDoesNotWaitForIt)
     if (exporter == nullptr)
         return;
 
-    const auto bounces = [] { return ui::shell::ExportPanel::getBounceFolder().getNumberOfChildFiles (juce::File::findFiles, "FreqArt-*.wav"); };
+    const auto bounces = [] { return ui::shell::ExportPanel::getBounceFolder().getNumberOfChildFiles (juce::File::findFiles, "FreqArt*.wav"); };
     const auto before = bounces();
     exporter->startBounce();
     CHECK (exporter->isBouncing());
@@ -283,6 +405,210 @@ FREQART_TEST (uiClosingDuringABounceDoesNotWaitForIt)
 
     CHECK_MSG (closing < fullRender * 0.25, "closing took " << closing << " s, the render " << fullRender << " s");
     CHECK (bounces() == before);   // nothing left behind, not even the temporary file
+}
+
+FREQART_TEST (uiExportNeedsOneClick)
+{
+    // Nothing renders unasked: before the first "Bounce WAV", changes start no render.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    ExportRig rig ("HELLO");
+    CHECK (rig.valid());
+
+    if (! rig.valid())
+        return;
+
+    rig.setText ("WORLD");
+    setParameter (*rig.processor, params::id::level, -12.0f);
+    pump (2 * ui::shell::ExportPanel::updateDelayMilliseconds);
+    CHECK (! rig.exporter->isFollowing() && ! rig.exporter->isBouncing());
+    CHECK (rig.exporter->getBounceFile() == juce::File() && rig.bounce->isVisible() && ! rig.chip->isVisible());
+}
+
+FREQART_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    ExportRig rig ("HELLO");
+    CHECK (rig.valid());
+
+    if (! rig.valid())
+        return;
+
+    auto& exporter = *rig.exporter;
+    auto& processor = *rig.processor;
+
+    // The first bounce, asked for with the button.
+    rig.bounce->onClick();
+    CHECK (exporter.isBouncing() && exporter.isFollowing());
+    CHECK (exporter.waitForBounce (60000) && exporter.hasCurrentFile());
+    const auto first = exporter.getBounceFile();
+    const auto firstAudio = readWav (first);
+    CHECK (first.getFileName().startsWith ("FreqArt HELLO ") && first.getFileName().endsWith (".wav"));
+    CHECK (rig.chipShows (first.getFileName()) && rig.save->isEnabled() && exporter.getFileToHandOut() == first);
+    CHECK (largestDifference (firstAudio, renderCurrentPlan (processor)) < 1.0e-6);
+
+    // An edit: from that moment on the old file is not handed out, even before the processor
+    // has rebuilt the plan (0.1.1 kept offering it until then, and a drag in that moment took
+    // the old drawing).
+    rig.setText ("WORLD");
+    CHECK (processor.isPlanPending());
+    CHECK (exporter.getFileToHandOut() == juce::File() && ! exporter.hasCurrentFile());
+    CHECK (rig.chipShows (updatingText) && ! rig.save->isEnabled());
+
+    // The new render waits for the drawing to settle, then comes by itself.
+    processor.rebuildPlanIfNeeded();
+    exporter.refresh();
+    CHECK (! exporter.isBouncing() && rig.chipShows (updatingText));
+    CHECK (pumpUntil ([&] { return exporter.isBouncing() || exporter.hasCurrentFile(); }, 5000));
+    CHECK (pumpUntil ([&] { return exporter.hasCurrentFile(); }, 60000));
+
+    const auto second = exporter.getBounceFile();
+    const auto secondAudio = readWav (second);
+    CHECK (second != first && second.getFileName().startsWith ("FreqArt WORLD "));
+    CHECK (rig.chipShows (second.getFileName()) && exporter.getFileToHandOut() == second);
+    CHECK (! first.exists());   // superseded and never dragged out: gone
+    CHECK_MSG (largestDifference (secondAudio, renderCurrentPlan (processor)) < 1.0e-6, "the new file is the new drawing");
+    CHECK_MSG (largestDifference (secondAudio, firstAudio) > 0.01, "... and not the old one");
+
+    // The level: a new file, as loud as the new level.
+    setParameter (processor, params::id::level, -18.0f);
+    CHECK (! exporter.hasCurrentFile());
+    CHECK (pumpUntil ([&] { return exporter.hasCurrentFile(); }, 60000));
+    const auto third = exporter.getBounceFile();
+    const auto thirdAudio = readWav (third);
+    CHECK (third != second && ! second.exists());
+    CHECK_NEAR (rmsOf (thirdAudio) / rmsOf (secondAudio), juce::Decibels::decibelsToGain (-12.0), 0.01);
+    CHECK (largestDifference (thirdAudio, renderCurrentPlan (processor)) < 1.0e-6);
+
+    // The tempo (and so the length of a pass): a new file of the new length.
+    setParameter (processor, params::id::tempoSource, 1.0f);
+    setParameter (processor, params::id::bpm, 150.0f);
+    CHECK (pumpUntil ([&] { return exporter.hasCurrentFile() && exporter.getBounceFile() != third; }, 60000));
+    const auto fourth = exporter.getBounceFile();
+    CHECK (readWav (fourth).size() == static_cast<size_t> (std::llround (processor.getLengthSeconds() * sampleRate)));
+    CHECK (std::abs (processor.getLengthSeconds() - 6.4) < 1.0e-9);   // 4 bars at 150 BPM
+
+    // The length: likewise.
+    setParameter (processor, params::id::length, 3.0f);   // 2 bars
+    CHECK (pumpUntil ([&] { return exporter.hasCurrentFile() && exporter.getBounceFile() != fourth; }, 60000));
+    CHECK (readWav (exporter.getBounceFile()).size() == static_cast<size_t> (std::llround (3.2 * sampleRate)));
+
+    // An empty drawing: nothing to hand out until something is drawn again.
+    const auto fifth = exporter.getBounceFile();
+    rig.setText ("");
+    CHECK (pumpUntil ([&] { return rig.chipShows ("Nothing drawn"); }, 5000));
+    CHECK (exporter.getFileToHandOut() == juce::File() && ! exporter.isBouncing());
+    rig.setText ("AGAIN");
+    CHECK (pumpUntil ([&] { return exporter.hasCurrentFile(); }, 60000));
+    CHECK (exporter.getBounceFile().getFileName().startsWith ("FreqArt AGAIN ") && ! fifth.exists());
+
+    // Closing takes the last file with it.
+    const auto last = exporter.getBounceFile();
+    rig.editor.reset();
+    CHECK (! last.exists());
+}
+
+FREQART_TEST (uiExportStopsRendersThatAreNoLongerWanted)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    ExportRig rig ("LONG");
+    CHECK (rig.valid());
+
+    if (! rig.valid())
+        return;
+
+    auto& exporter = *rig.exporter;
+    auto& processor = *rig.processor;
+
+    // Minutes of a solid drawing: renders that take a while.
+    setParameter (processor, params::id::tempoSource, 1.0f);
+    setParameter (processor, params::id::bpm, 20.0f);
+    setParameter (processor, params::id::length, 7.0f);   // 32 bars: 384 s
+    setParameter (processor, params::id::density, 512.0f);
+    processor.editDocument ([] (ArtDocument& document)
+    {
+        document.paint.assign (static_cast<size_t> (ArtDocument::paintWidth * ArtDocument::paintHeight), 200);
+    });
+
+    rig.bounce->onClick();
+    const auto firstRender = exporter.getRenderingFile();
+    CHECK (exporter.isBouncing() && firstRender.existsAsFile());   // the name is reserved at once
+    pump (50);
+
+    // A change while it renders: it is stopped at once and leaves nothing behind.
+    setParameter (processor, params::id::level, -10.0f);
+    exporter.refresh();
+    CHECK (! exporter.isBouncing());
+    CHECK (pumpUntil ([&] { return ! firstRender.exists(); }, 2000));
+
+    // ... and the new one starts once the change has settled.
+    CHECK (pumpUntil ([&] { return exporter.isBouncing(); }, 5000));
+    // (In the same second it may take the name the stopped one had: that file never existed.)
+    const auto secondRender = exporter.getRenderingFile();
+    CHECK (secondRender.existsAsFile());
+    pump (50);
+
+    // Closing during it does not wait for it, and leaves nothing behind.
+    const auto closeStart = std::chrono::steady_clock::now();
+    rig.editor.reset();
+    const auto closing = secondsSince (closeStart);
+    CHECK_MSG (closing < 0.5, "closing took " << closing << " s");
+    CHECK (! secondRender.exists() && ! firstRender.exists());
+}
+
+FREQART_TEST (uiExportSavesTheCurrentFile)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    ExportRig rig ("SAVE");
+    CHECK (rig.valid());
+
+    if (! rig.valid())
+        return;
+
+    auto& exporter = *rig.exporter;
+    const auto folder = juce::File::createTempFile ("");
+    folder.createDirectory();
+
+    rig.bounce->onClick();
+    CHECK (exporter.waitForBounce (60000) && exporter.hasCurrentFile());
+
+    // While the file is current: copied at once.
+    const auto now = folder.getChildFile ("now.wav");
+    exporter.saveTo (now);
+    CHECK (now.existsAsFile() && now.hasIdenticalContentTo (exporter.getBounceFile()));
+
+    // Chosen while an update is on its way: the update is what gets saved.
+    rig.setText ("SAVED LATER");
+    const auto later = folder.getChildFile ("later.wav");
+    exporter.saveTo (later);
+    CHECK (! later.exists());
+    CHECK (pumpUntil ([&] { return exporter.hasCurrentFile(); }, 60000));
+    CHECK (later.existsAsFile() && later.hasIdenticalContentTo (exporter.getBounceFile()));
+    CHECK (! later.hasIdenticalContentTo (now) && exporter.getLastError().isEmpty());
+
+    folder.deleteRecursively();
+}
+
+FREQART_TEST (uiExportWaitsWhileHidden)
+{
+    // Renders start by themselves only while the export can be seen.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    ExportRig rig ("HIDDEN");
+    CHECK (rig.valid());
+
+    if (! rig.valid())
+        return;
+
+    rig.bounce->onClick();
+    CHECK (rig.exporter->waitForBounce (60000) && rig.exporter->hasCurrentFile());
+
+    rig.editor->setVisible (false);
+    rig.setText ("CHANGED");
+    pump (2 * ui::shell::ExportPanel::updateDelayMilliseconds);
+    CHECK (! rig.exporter->isBouncing() && ! rig.exporter->hasCurrentFile());
+
+    rig.editor->setVisible (true);
+    CHECK (pumpUntil ([&] { return rig.exporter->hasCurrentFile(); }, 60000));
+    CHECK (rig.exporter->getBounceFile().getFileName().startsWith ("FreqArt CHANGED "));
 }
 
 //==============================================================================

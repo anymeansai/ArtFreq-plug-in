@@ -94,6 +94,10 @@ public:
     /** Rebuilds the plan now if anything changed (normally done by a timer). */
     void rebuildPlanIfNeeded();
 
+    /** True from an edit (or a change to a plan setting) until the timer has rebuilt the plan:
+        getCurrentPlan() is then older than the drawing. Message thread. */
+    bool isPlanPending() const noexcept { return documentDirty || parametersDirty.load(); }
+
     // ---- playback information for the editor ---------------------------------------------
     double getPlayPosition() const noexcept { return playPosition.load(); }  // 0..1
     bool isSounding() const noexcept { return sounding.load(); }
