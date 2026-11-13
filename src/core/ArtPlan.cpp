@@ -124,6 +124,26 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
         layout.push_back ({ hz, norm, cell, cell });
     }
 
+    // Where lines crowd together (the merged lows on a log scale), they would sit exactly
+    // minSpacing apart, so every pair beats at the same rate and in step: the band pulses in
+    // regular blobs on an analyser. A small fixed offset per line (a quarter of the spacing at
+    // most, either way) breaks that common period, leaving an even, noise-like texture.
+    for (size_t l = 1; l < layout.size(); ++l)
+    {
+        const auto gap = layout[l].hz - layout[l - 1].hz;
+
+        if (minSpacing > 0.0 && gap < 2.0 * minSpacing)
+        {
+            auto bits = static_cast<uint32_t> (l) * 0x9E3779B9u;
+            bits ^= bits >> 16;
+            bits *= 0x85EBCA6Bu;
+            bits ^= bits >> 13;
+            const auto unit = static_cast<double> (bits & 0xFFFFu) / 65535.0;  // 0..1
+            layout[l].hz += (unit - 0.5) * 0.5 * minSpacing;
+            layout[l].norm = scale.toNorm (layout[l].hz);
+        }
+    }
+
     const auto numLines = static_cast<int> (layout.size());
     const auto numColumns = Canvas::width;
     const auto lines = static_cast<size_t> (numLines);

@@ -22,6 +22,9 @@ PlanSettings settingsFor (ScaleType type, int density, double minHz = 20.0, doub
     settings.scale.minHz = minHz;
     settings.scale.maxHz = maxHz;
     settings.density = density;
+    // The layout tests were written for a 5 Hz minimum spacing, which keeps every line of the
+    // sparser layouts; the product default (wider, see planDefaultSpacing) is tested separately.
+    settings.minLineSpacingHz = 5.0f;
     return settings;
 }
 
@@ -133,12 +136,14 @@ FREQART_TEST (planLineLayout)
 
             for (size_t l = 0; l < expected.size() && l < plan->frequencies.size(); ++l)
             {
-                CHECK_NEAR (plan->frequencies[l], expected[l], expected[l] * 1.0e-6);
+                // Crowded lines are offset by up to a quarter of the minimum spacing.
+                CHECK_NEAR (plan->frequencies[l], expected[l],
+                            std::max (expected[l] * 1.0e-6, 0.25 * settings.minLineSpacingHz + 1.0e-3));
                 CHECK_NEAR (plan->lineNorm[l], settings.scale.toNorm (plan->frequencies[l]), 1.0e-5);
             }
 
             for (size_t l = 1; l < plan->frequencies.size(); ++l)
-                CHECK (plan->frequencies[l] - plan->frequencies[l - 1] >= settings.minLineSpacingHz - 1.0e-3f);
+                CHECK (plan->frequencies[l] - plan->frequencies[l - 1] >= 0.5f * settings.minLineSpacingHz - 1.0e-3f);
 
             CHECK (plan->frequencies.front() >= 10.0f);
             CHECK (plan->frequencies.back() <= settings.maxFrequencyHz);
@@ -174,7 +179,7 @@ FREQART_TEST (planSpacingAndLimits)
     const auto spaced = buildPlan (empty, wide);
 
     for (size_t l = 1; l < spaced->frequencies.size(); ++l)
-        CHECK (spaced->frequencies[l] - spaced->frequencies[l - 1] >= 50.0f - 1.0e-3f);
+        CHECK (spaced->frequencies[l] - spaced->frequencies[l - 1] >= 25.0f - 1.0e-3f);
 
     // Lines above the maximum frequency are dropped.
     auto capped = settingsFor (ScaleType::linear, 256, 20.0, 24000.0);
@@ -418,4 +423,22 @@ FREQART_TEST (planTiming)
     const auto ms = millisecondsSince (start) / runs;
     std::printf ("    buildPlan density 1024: %.2f ms (budget 15 ms)\n", ms);
     CHECK_LESS (ms, 4 * 15.0);
+}
+
+FREQART_TEST (planDefaultSpacing)
+{
+    // Lines closer than an analyser can separate beat in visible pulses; the default spacing
+    // keeps the lows steady (25 Hz beats average out inside a typical analysis window).
+    PlanSettings settings;
+    CHECK_NEAR (settings.minLineSpacingHz, 25.0f, 1.0e-6);
+
+    settings.density = 1024;
+    const Canvas empty;
+    const auto plan = buildPlan (empty, settings);
+
+    for (int l = 1; l < plan->numLines; ++l)
+        CHECK (plan->frequencies[static_cast<size_t> (l)] - plan->frequencies[static_cast<size_t> (l - 1)] >= 12.5f - 1.0e-3f);
+
+    // The highs keep their full density.
+    CHECK_GREATER (plan->numLines, 300);
 }

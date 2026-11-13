@@ -32,7 +32,7 @@ The **?** button shows these steps inside the plug-in.
 ## Tips
 
 - **The highs show the most detail.** An analyser's frequency bins are evenly spaced in hertz, so on a log scale the top octaves get many bins each and stay sharp. Text and fine pictures read best in the **High** band.
-- **The lowest octaves are coarse in every analyser.** The bottom octaves get only a few bins each, so shapes there come out blurred whatever made them (FreqArt also merges lines closer than 5 Hz, which would beat against each other). Keep low-band art big and simple.
+- **The lowest octaves are coarse in every analyser.** The bottom octaves get only a few bins each, so shapes there come out blurred whatever made them (FreqArt also keeps its lines at least 25 Hz apart, because closer lines beat against each other and pulse on the analyser). Keep low-band art big and simple.
 - **Keep Level modest if you mix FreqArt under music.** A spectrogram shows quiet sounds clearly, and a drawing full of highs is easy to hear. Turn Level down until it sits where you want it in the mix, then check that the drawing still shows.
 - **Fit the length to the screen.** If your spectrogram shows, say, 8 seconds across its width, a drawing that lasts about 8 seconds fits on screen in one piece.
 - **Big solid shapes are loud.** Outline text, or an image in Outline mode, draws the same shape with much less sound.

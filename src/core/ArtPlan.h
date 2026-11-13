@@ -29,7 +29,7 @@ struct PlanSettings
     int density = 256;              // lines across the full canvas height, 16..1024
     float contrastDb = 40.0f;       // dB between a value of 1 and a value just above 0
     float slopeDbPerOctave = 0.0f;  // tilt of the user's analyser, compensated (pivot 1 kHz)
-    float minLineSpacingHz = 5.0f;  // closer lines beat audibly and visibly: they are merged
+    float minLineSpacingHz = 25.0f; // closer lines beat audibly and visibly: they are merged
     float maxFrequencyHz = 20000.0f;// lines above this are dropped (kept below Nyquist by the engine too)
 };
 
@@ -68,7 +68,10 @@ struct ArtPlan
     Lines: density lines are spaced evenly in canvas height, line i (0 = bottom) at
     norm (i + 0.5) / density, frequency scale.toHz (norm). Going up from the bottom, a line closer
     than minLineSpacingHz to the last kept line is merged into it (its canvas span joins the kept
-    line's span); lines below 10 Hz or above maxFrequencyHz are dropped.
+    line's span); lines below 10 Hz or above maxFrequencyHz are dropped. Lines closer than twice
+    the minimum spacing to the line below are then moved by a fixed pseudo-random offset of up
+    to a quarter of the minimum spacing either way (so crowded lines do not all beat in step),
+    and their lineNorm follows.
 
     Values: a line's value at a column is the MAXIMUM of the canvas over the rows its span covers
     (so thin strokes never fall between lines), where a line's span runs halfway to its kept
