@@ -1,6 +1,7 @@
 #include "SpectralCarver.h"
 
 #include "BaselineCarver.h"
+#include "TunedCarver.h"
 
 #include <algorithm>
 #include <cmath>
@@ -137,13 +138,14 @@ std::unique_ptr<SpectralCarver> createSpectralCarver (int engine)
     switch (engine)
     {
         case 0:  return std::make_unique<BaselineCarver>();
+        case 1:  return std::make_unique<TunedCarver>();
         default: return nullptr;
     }
 }
 
 int getNumSpectralCarvers() noexcept
 {
-    return 1;
+    return 2;
 }
 
 } // namespace freqart

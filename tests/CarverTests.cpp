@@ -1,11 +1,13 @@
-// Spectral carving: the mask plan built from the canvas, its exchange, and the baseline engine
-// (transparency, carving and stencilling a band, the latency, the gate, block sizes).
+// Spectral carving: the mask plan built from the canvas, its exchange, the baseline engine
+// (transparency, carving and stencilling a band, the latency, the gate, block sizes) and the
+// tuned engine (engine 1: the same, plus thin low strokes and the gate at the output).
 
 #include "TestFramework.h"
 
 #include "core/MaskPlan.h"
 #include "dsp/PlanExchange.h"
 #include "dsp/SpectralCarver.h"
+#include "dsp/TunedCarver.h"
 
 #include <juce_core/juce_core.h>
 
@@ -123,6 +125,49 @@ Stereo run (SpectralCarver& carver, const Stereo& audio, const std::vector<int>&
     return out;
 }
 
+/** The same with the gate open only over [gateFrom, gateTo): the pass starts at gateFrom (its
+    first sample is the drawing's start) and is cut off at gateTo. */
+Stereo runPass (SpectralCarver& carver, const Stereo& audio, const std::vector<int>& blocks, const CarveSettings& settings,
+                int gateFrom, int gateTo, double passSamples = 8.0 * rate)
+{
+    auto out = audio;
+    const auto total = static_cast<int> (audio[0].size());
+    size_t next = 0;
+
+    for (int start = 0; start < total;)
+    {
+        const auto length = std::min (blocks[next++ % blocks.size()], total - start);
+        PlaySegment segments[3];
+        auto count = 0;
+
+        const auto addSegment = [&] (int from, int to)
+        {
+            if (to <= from)
+                return;
+
+            auto& segment = segments[count++];
+            segment.start = from - start;
+            segment.length = to - from;
+            segment.playing = from >= gateFrom && from < gateTo;
+            segment.once = true;
+            segment.fraction = std::clamp ((from - gateFrom) / passSamples, 0.0, 1.0);
+            segment.fractionPerSample = 1.0 / passSamples;
+        };
+
+        const auto first = juce::jlimit (start, start + length, gateFrom);
+        const auto second = juce::jlimit (first, start + length, gateTo);
+        addSegment (start, first);
+        addSegment (first, second);
+        addSegment (second, start + length);
+
+        float* channels[2] = { out[0].data() + start, out[1].data() + start };
+        carver.process (channels, 2, length, segments, count, settings);
+        start += length;
+    }
+
+    return out;
+}
+
 /** The largest difference between the output and the input delayed by `latency`. */
 float differenceFromDelayed (const Stereo& in, const Stereo& out, int latency, int from = 0)
 {
@@ -155,6 +200,13 @@ double levelDb (const Stereo& audio, double hz, int from, int to)
 std::unique_ptr<SpectralCarver> preparedBaseline (double sampleRate = rate, int maxBlock = 512)
 {
     auto carver = createSpectralCarver (0);
+    carver->prepare (sampleRate, maxBlock, 2);
+    return carver;
+}
+
+std::unique_ptr<SpectralCarver> preparedTuned (double sampleRate = rate, int maxBlock = 512)
+{
+    auto carver = createSpectralCarver (1);
     carver->prepare (sampleRate, maxBlock, 2);
     return carver;
 }
@@ -422,4 +474,252 @@ FREQART_TEST (carverGateOpensWithThePass)
 
     CHECK_NEAR (differenceFromDelayed (late, early, latency), 0.0, 0.0);
     CHECK_LESS (levelDb (out, 1000.0, 48000 + latency + 4096, 96000) - levelDb (input, 1000.0, 48000 + latency + 4096, 96000), -57.0);
+}
+
+// ---- engine 1: the tuned STFT ------------------------------------------------------------------
+
+FREQART_TEST (tunedCarverIsTransparentWithNothingToCarve)
+{
+    const auto input = noise (48000);
+
+    for (const auto mode : { CarveMode::carve, CarveMode::stencil })
+    {
+        CarveSettings settings;
+        settings.mode = mode;
+
+        // No plan, an empty one, and a drawing with the gate shut: the delayed input, bit for bit.
+        auto carver = preparedTuned();
+        const auto latency = carver->getLatencySamples();
+        CHECK_NEAR (differenceFromDelayed (input, run (*carver, input, { 512 }, settings), latency), 0.0, 0.0);
+
+        const auto empty = buildMaskPlan (Canvas(), MaskSettings());
+        carver = preparedTuned();
+        carver->setPlan (empty.get());
+        CHECK_NEAR (differenceFromDelayed (input, run (*carver, input, { 512 }, settings), latency), 0.0, 0.0);
+
+        const auto plan = bandPlan (900.0, 1100.0);
+        carver = preparedTuned();
+        carver->setPlan (plan.get());
+        CHECK_NEAR (differenceFromDelayed (input, run (*carver, input, { 512 }, settings, 8.0 * rate, 1 << 30), latency), 0.0, 0.0);
+    }
+
+    // Through the transforms, at the rates where the frame is a power of 2 and where it is
+    // zero-padded (44.1 kHz), and for a window pair whose products do not add up to a constant:
+    // where the mask is 0 the input comes back to float precision.
+    const auto sinesIn = sines (48000, { { 200.0, 0.3f }, { 1000.0, 0.3f }, { 5000.0, 0.3f } });
+    const auto high = bandPlan (18000.0, 20000.0);
+
+    for (const auto sampleRate : { 48000.0, 44100.0 })
+    {
+        auto carver = preparedTuned (sampleRate);
+        carver->setPlan (high.get());
+        const auto out = run (*carver, sinesIn, { 512 }, CarveSettings());
+        CHECK_LESS (differenceFromDelayed (sinesIn, out, carver->getLatencySamples()), 1.0e-5);
+    }
+
+    TunedCarver::Options rippling;
+    rippling.windowPower = 2.5f;
+    TunedCarver odd (rippling);
+    odd.prepare (rate, 512, 2);
+    odd.setPlan (high.get());
+    CHECK_LESS (differenceFromDelayed (sinesIn, run (odd, sinesIn, { 512 }, CarveSettings()), odd.getLatencySamples()), 1.0e-5);
+}
+
+FREQART_TEST (tunedCarverCarvesASineInsideTheBand)
+{
+    const auto input = sines (96000, { { 1000.0, 0.5f }, { 4000.0, 0.5f } });
+    const auto plan = bandPlan (800.0, 1250.0);
+
+    for (const auto depth : { -60.0f, -30.0f })
+    {
+        auto carver = preparedTuned();
+        carver->setPlan (plan.get());
+        CarveSettings settings;
+        settings.depthDb = depth;
+        const auto out = run (*carver, input, { 512 }, settings);
+
+        const auto from = carver->getLatencySamples() + 8192, to = 96000;
+        const auto inside = levelDb (out, 1000.0, from, to) - levelDb (input, 1000.0, from, to);
+        const auto outside = levelDb (out, 4000.0, from, to) - levelDb (input, 4000.0, from, to);
+
+        CHECK_LESS (inside, depth + 3.0f);
+        CHECK_GREATER (inside, depth - 3.0f);
+        CHECK_NEAR (outside, 0.0, 0.1);
+    }
+}
+
+FREQART_TEST (tunedCarverCarvesTheLows)
+{
+    // What the longer frame is for: a sine at 70 Hz in a band of 60 - 85 Hz (half an octave,
+    // about one of the baseline's bins) drops by nearly all of Depth (56 dB of 60; the baseline
+    // manages 14), and one at 160 Hz, an octave above the band, keeps its level.
+    const auto input = sines (4 * 48000, { { 70.0, 0.5f }, { 160.0, 0.5f } });
+    const auto band = bandPlan (60.0, 85.0);
+    const auto from = 4096 + 16384, to = 4 * 48000;
+
+    auto tuned = preparedTuned();
+    tuned->setPlan (band.get());
+    const auto out = run (*tuned, input, { 512 }, CarveSettings());
+    const auto carved = levelDb (out, 70.0, from, to) - levelDb (input, 70.0, from, to);
+    CHECK_LESS (carved, -50.0);
+    CHECK_NEAR (levelDb (out, 160.0, from, to) - levelDb (input, 160.0, from, to), 0.0, 0.2);
+
+    // A stroke thinner than a bin (64 - 68 Hz) is carved by its share of the bins around it
+    // (17 dB) rather than missed between their centres (the baseline leaves it untouched).
+    const auto thin = bandPlan (64.0, 68.0);
+    const auto thinInput = sines (4 * 48000, { { 66.0, 0.5f } });
+    tuned = preparedTuned();
+    tuned->setPlan (thin.get());
+    const auto thinOut = run (*tuned, thinInput, { 512 }, CarveSettings());
+    CHECK_LESS (levelDb (thinOut, 66.0, from, to) - levelDb (thinInput, 66.0, from, to), -12.0);
+}
+
+FREQART_TEST (tunedCarverStencilKeepsOnlyTheDrawing)
+{
+    const auto input = sines (96000, { { 1000.0, 0.5f }, { 4000.0, 0.5f } });
+    const auto plan = bandPlan (800.0, 1250.0);
+    auto carver = preparedTuned();
+    carver->setPlan (plan.get());
+
+    CarveSettings settings;
+    settings.mode = CarveMode::stencil;
+    const auto out = run (*carver, input, { 512 }, settings);
+
+    const auto from = carver->getLatencySamples() + 8192, to = 96000;
+    CHECK_NEAR (levelDb (out, 1000.0, from, to) - levelDb (input, 1000.0, from, to), 0.0, 0.1);
+    CHECK_LESS (levelDb (out, 4000.0, from, to) - levelDb (input, 4000.0, from, to), -57.0);
+}
+
+FREQART_TEST (tunedCarverReportsItsLatency)
+{
+    const auto plan = bandPlan (18000.0, 20000.0);  // makes every frame go through the transforms
+
+    for (const auto mode : { CarveMode::carve, CarveMode::stencil })
+    {
+        auto carver = preparedTuned();
+        carver->setPlan (plan.get());
+        const auto latency = carver->getLatencySamples();
+        CHECK_NEAR (latency, 4096, 0);
+
+        Stereo impulse (2, std::vector<float> (24000, 0.0f));
+        impulse[0][7000] = impulse[1][7000] = 1.0f;
+
+        const auto peakAt = [] (const Stereo& audio)
+        {
+            const auto peak = std::max_element (audio[0].begin(), audio[0].end(),
+                                                [] (float a, float b) { return std::abs (a) < std::abs (b); });
+            return static_cast<int> (peak - audio[0].begin());
+        };
+
+        CarveSettings settings;
+        settings.mode = mode;
+        CHECK_NEAR (peakAt (run (*carver, impulse, { 512 }, settings)), 7000 + latency, 0);
+
+        // The same with another depth, and with no plan (no transforms at all) after a reset.
+        settings.depthDb = -12.0f;
+        carver->reset();
+        CHECK_NEAR (peakAt (run (*carver, impulse, { 512 }, settings)), 7000 + latency, 0);
+        carver->setPlan (nullptr);
+        carver->reset();
+        CHECK_NEAR (carver->getLatencySamples(), latency, 0);
+        CHECK_NEAR (peakAt (run (*carver, impulse, { 512 }, settings)), 7000 + latency, 0);
+    }
+
+    // About 85 ms at any rate: a whole number of hops, the FFT the next power of 2.
+    TunedCarver at44;
+    at44.prepare (44100.0, 512, 2);
+    CHECK_NEAR (at44.getLatencySamples(), 3764, 0);
+    CHECK_NEAR (at44.getHopSize(), 941, 0);
+    CHECK_NEAR (at44.getFftSize(), 4096, 0);
+
+    auto fast = preparedTuned (96000.0);
+    CHECK_NEAR (fast->getLatencySamples(), 8192, 0);
+}
+
+FREQART_TEST (tunedCarverIsBlockSizeIndependent)
+{
+    const auto input = noise (3 * 48000, 11);
+    const auto plan = bandPlan (300.0, 3000.0, 200, 700);
+
+    for (const auto mode : { CarveMode::carve, CarveMode::stencil })
+    {
+        CarveSettings settings;
+        settings.mode = mode;
+
+        auto steady = preparedTuned();
+        steady->setPlan (plan.get());
+        const auto reference = runPass (*steady, input, { 512 }, settings, 20000, 120000, 2.0 * rate);
+
+        // Random sizes, also longer than the prepared block (worked through in pieces).
+        juce::Random random (3);
+        std::vector<int> sizes;
+        for (int i = 0; i < 400; ++i)
+            sizes.push_back (1 + random.nextInt (2048));
+
+        auto varied = preparedTuned();
+        varied->setPlan (plan.get());
+        const auto other = runPass (*varied, input, sizes, settings, 20000, 120000, 2.0 * rate);
+
+        auto largest = 0.0f;
+        for (size_t channel = 0; channel < 2; ++channel)
+            for (size_t i = 0; i < input[0].size(); ++i)
+                largest = std::max (largest, std::abs (reference[channel][i] - other[channel][i]));
+
+        CHECK_NEAR (largest, 0.0, 0.0);
+
+        // ... and it did carve something.
+        CHECK_GREATER (differenceFromDelayed (input, reference, steady->getLatencySamples()), 0.01);
+    }
+}
+
+FREQART_TEST (tunedCarverGateWorksAtTheOutput)
+{
+    // A pass from 1 s to 2 s over a sine in the drawn band. The gate is applied per sample at the
+    // output: before the pass and once the gate has faded out after it the output is the delayed
+    // input bit for bit (in Stencil too, which no longer mutes a frame's length either side), and
+    // from the end of the gate's 5 ms fade on the band is carved fully, right from the start of
+    // the pass and up to its end.
+    const auto input = sines (3 * 48000, { { 1000.0, 0.5f }, { 4000.0, 0.5f } });
+    const auto plan = bandPlan (800.0, 1250.0);
+    // The pass starts just after a hop starts (hops are 1024 samples at 48 kHz), the hardest
+    // place for frames that look at the timeline once per hop.
+    const auto passFrom = 47 * 1024 + 1, passTo = 96000;
+    const auto fade = static_cast<int> (SpectralCarver::gateFadeSeconds * rate) + 2;
+
+    for (const auto mode : { CarveMode::carve, CarveMode::stencil })
+    {
+        auto carver = preparedTuned();
+        carver->setPlan (plan.get());
+        CarveSettings settings;
+        settings.mode = mode;
+
+        const auto out = runPass (*carver, input, { 256 }, settings, passFrom, passTo);
+        const auto latency = carver->getLatencySamples();
+
+        auto before = 0.0f, after = 0.0f;
+
+        for (size_t channel = 0; channel < 2; ++channel)
+        {
+            for (int i = latency; i < passFrom + latency; ++i)
+                before = std::max (before, std::abs (out[channel][static_cast<size_t> (i)] - input[channel][static_cast<size_t> (i - latency)]));
+
+            for (int i = passTo + fade + latency; i < static_cast<int> (out[channel].size()); ++i)
+                after = std::max (after, std::abs (out[channel][static_cast<size_t> (i)] - input[channel][static_cast<size_t> (i - latency)]));
+        }
+
+        CHECK_NEAR (before, 0.0, 0.0);
+        CHECK_NEAR (after, 0.0, 0.0);
+
+        // The first 10 ms of the pass after the fade, and the last 10 ms before the gate closes.
+        const auto carvedHz = mode == CarveMode::carve ? 1000.0 : 4000.0;
+        const auto keptHz = mode == CarveMode::carve ? 4000.0 : 1000.0;
+        const auto edge = 480;
+
+        for (const auto start : { passFrom + fade, passTo - fade - edge })
+        {
+            const auto from = start + latency, to = from + edge;
+            CHECK_LESS (levelDb (out, carvedHz, from, to) - levelDb (input, carvedHz, start, start + edge), -55.0);
+            CHECK_NEAR (levelDb (out, keptHz, from, to) - levelDb (input, keptHz, start, start + edge), 0.0, 0.2);
+        }
+    }
 }

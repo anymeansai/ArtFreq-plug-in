@@ -132,8 +132,8 @@ private:
     float gateStep = 0.0f;
 };
 
-/** The carving engines, by number (the lab's --engine N): 0 is the baseline STFT. Returns
-    nullptr for a number with no engine. */
+/** The carving engines, by number (the lab's --engine N): 0 is the baseline STFT, 1 the tuned
+    STFT (dsp/TunedCarver.h). Returns nullptr for a number with no engine. */
 std::unique_ptr<SpectralCarver> createSpectralCarver (int engine);
 
 /** How many engines createSpectralCarver knows (numbers 0 to this - 1). */
