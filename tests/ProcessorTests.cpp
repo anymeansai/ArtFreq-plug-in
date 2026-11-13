@@ -535,6 +535,115 @@ FREQART_TEST (processorTransportPlaysOnceFromTheStartBar)
     processor->setPlayHead (nullptr);
 }
 
+FREQART_TEST (processorSinglePassFollowsTheSongsBars)
+{
+    // A painted drawing played once (Repeat off) through songs whose time signature changes, from
+    // the song start, the host reporting each block's signature and bar start. Returns which
+    // quarter notes of the song sound (at 120 BPM: 24000 samples each).
+    struct Run { double from; int numerator; };
+
+    const auto soundingQuarters = [] (std::vector<Run> runs, int lengthIndex, int startBar, int quarters)
+    {
+        auto processor = makeProcessor();
+        ArtDocument painted;
+        std::fill (painted.paint.begin(), painted.paint.end(), static_cast<uint8_t> (255));
+        processor->setDocument (painted);
+        setParameter (*processor, params::id::length, static_cast<float> (lengthIndex));
+        setParameter (*processor, params::id::startBar, static_cast<float> (startBar));
+        processor->rebuildPlanIfNeeded();
+
+        FakePlayHead playHead;
+        processor->setPlayHead (&playHead);
+
+        const auto out = render (*processor, quarters * 24000, blockSize, [&] (int start, int, juce::MidiBuffer&)
+        {
+            const auto ppq = static_cast<double> (start) / 24000.0;
+            playHead.set (true, 120.0, ppq, ppq * 0.5);
+
+            // Walk the bars to the one the block starts in.
+            auto barStart = 0.0;
+            auto numerator = runs.front().numerator;
+
+            for (;;)
+            {
+                for (const auto& run : runs)
+                    if (barStart >= run.from - 1.0e-9)
+                        numerator = run.numerator;
+
+                if (ppq < barStart + numerator - 1.0e-9)
+                    break;
+
+                barStart += numerator;
+            }
+
+            playHead.info.setTimeSignature (juce::AudioPlayHead::TimeSignature { numerator, 4 });
+            playHead.info.setPpqPositionOfLastBarStart (barStart);
+        });
+
+        processor->setPlayHead (nullptr);
+        std::vector<int> sounding;
+
+        for (int q = 0; q < quarters; ++q)
+            if (rms (out, static_cast<size_t> (q * 24000 + 600), static_cast<size_t> ((q + 1) * 24000 - 600)) > 1.0e-3)
+                sounding.push_back (q);
+
+        return sounding;
+    };
+
+    const auto range = [] (int first, int last)
+    {
+        std::vector<int> quarters;
+
+        for (auto q = first; q <= last; ++q)
+            quarters.push_back (q);
+
+        return quarters;
+    };
+
+    // 3/4 from bar 9, where the pass starts: "1 bar" sounds from bar 9 for a bar of 3/4, "4 bars"
+    // for four.
+    CHECK (soundingQuarters ({ { 0.0, 4 }, { 32.0, 3 } }, 2, 9, 52) == range (32, 34));
+    CHECK (soundingQuarters ({ { 0.0, 4 }, { 32.0, 3 } }, 4, 9, 52) == range (32, 43));
+
+    // A longer bar after the pass does not play it again; a change inside it does not cut it short.
+    CHECK (soundingQuarters ({ { 0.0, 4 }, { 16.0, 7 } }, 2, 3, 30) == range (8, 11));
+    CHECK (soundingQuarters ({ { 0.0, 4 }, { 12.0, 3 } }, 4, 2, 26) == range (4, 19));
+
+    // One 2/4 bar at bar 5: nothing sounds in it, and bar 9 is the DAW's bar 9 (quarter note 30).
+    CHECK (soundingQuarters ({ { 0.0, 4 }, { 16.0, 2 }, { 18.0, 4 } }, 4, 9, 50) == range (30, 45));
+}
+
+FREQART_TEST (processorSinglePassAtATypedTempoStartsOnTheDawsBar)
+{
+    // The DAW at 90 BPM, FreqArt at a typed 120: "1 bar" from bar 9 sounds from the DAW's bar 9
+    // (21.33 s), for 2 s.
+    auto processor = makeProcessor();
+    ArtDocument painted;
+    std::fill (painted.paint.begin(), painted.paint.end(), static_cast<uint8_t> (255));
+    processor->setDocument (painted);
+    setParameter (*processor, params::id::length, 2.0f);
+    setParameter (*processor, params::id::startBar, 9.0f);
+    setParameter (*processor, params::id::tempoSource, 1.0f);
+    setParameter (*processor, params::id::bpm, 120.0f);
+    processor->rebuildPlanIfNeeded();
+
+    FakePlayHead playHead;
+    processor->setPlayHead (&playHead);
+    const auto out = render (*processor, 26 * 48000, blockSize, [&] (int start, int, juce::MidiBuffer&)
+    {
+        const auto seconds = static_cast<double> (start) / sampleRate;
+        playHead.set (true, 90.0, seconds * 1.5, seconds);
+    });
+    processor->setPlayHead (nullptr);
+
+    const auto barNine = static_cast<size_t> (32.0 / 1.5 * sampleRate);
+    CHECK_LESS (peak (out, 0, barNine), 1.0e-6);
+    CHECK_GREATER (peak (out, barNine, barNine + 480), 1.0e-4);
+    CHECK_GREATER (rms (out, barNine + 4800, barNine + 96000 - 4800), 0.005);
+    CHECK_LESS (peak (out, barNine + 96000), 1.0e-6);
+    CHECK (processor->getSinglePassStartBar() == 9);
+}
+
 FREQART_TEST (processorMidiRepeatLoopsWhileHeld)
 {
     // "1 beat" (0.5 s at 120). With Repeat a held note plays on past the end of the drawing;

@@ -93,10 +93,19 @@ producer's rule: nothing plays by itself, and loops only while something is play
 | **Transport** | Once: from the start of bar *Start bar* to *Length* later, following the DAW's timeline. Start the DAW inside it and it plays from there; before and after it is silent; a DAW loop over it plays it each time round. | Loops every *Length*, on the host's bar lines (bar 1, 1 + Length, ...), while the DAW plays. |
 | **MIDI note** | Each note-on plays it once from the start (a new one restarts it); note-offs are ignored. | A note-on starts it (a new one restarts it) and it loops while any key is down; letting go of the last fades it out. |
 
-- Bar N starts (N - 1) x quarterNotesPerBar quarter notes after the song start, in the host's
-  *current* time signature: VST3 gives no bar numbers, and the signature map before the start bar
-  is unknown, so the signature is assumed constant from the song start (a change before the start
-  bar moves the pass). With a typed-in tempo the bars are counted at that tempo.
+- Bar N is the DAW's bar N, on the host's ppq, also with a typed-in tempo (which then only sets
+  how fast the pass plays from where the DAW reaches its start bar); the pass lasts Length in the
+  start bar's time signature. VST3 gives no bar numbers, so the tracker keeps the pass's place in
+  the song. When playback starts or moves to before it, bar N is (N - 1) x quarterNotesPerBar
+  quarter notes from the song start in the current signature (assumed constant from the song
+  start), moved to the nearest of the host's bar lines (`ppqPositionOfLastBarStart`; the earlier
+  one half way), so it is always on a bar line, and the DAW's bar N after a shorter odd bar. While
+  the song plays towards it the bars still to go are counted in the bar it is in, so a signature
+  change on the way (an odd bar, a new section) moves it with the bars; from its start on it stays
+  put, so a change at, inside or after it moves nothing and a DAW loop over it plays the same pass
+  (also after moving back into bars already counted). Only starting the DAW between a signature
+  change and the start bar, without having played through the change, places it by the
+  assumption.
 - The edges of a single pass fade like a gate: the 5 ms fade-in starts at the pass's first
   sample, and the gate closes 5 ms (and a sample) before its end so the fade-out ends with the
   drawing, as a bounce and a MIDI one-shot do. A relocation into the middle fades the old sound
@@ -269,13 +278,15 @@ background, transparency, outline); text rendering coverage; compositor placemen
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
 speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass from a
 start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
-a host loop over it, the host's meter and tempo, its fades through the engine; MIDI one-shots and
-their end, hold-to-loop with overlapping notes and releases, all-offs and stop; preview once and
-looping; jumps); end-to-end: a canvas rendered to audio and analysed back must correlate with the
-canvas; processor (state round trip, defaults, states from before Repeat and the Free-loop
-migration, a single pass and a held MIDI loop through the processor, preview following Repeat,
-process with MIDI, panic, bypass fades, time signature, the canvas's song bars, level/clipper
-bound); WAV export (and cancelling it);
+a host loop over it, the host's meter and tempo, time-signature changes before, at, inside and
+after it and odd bars, a typed-in tempo starting on the DAW's bar, its fades through the engine;
+MIDI one-shots and their end, hold-to-loop with overlapping notes and releases, all-offs and stop;
+preview once and looping; jumps); end-to-end: a canvas rendered to audio and analysed back must
+correlate with the canvas; processor (state round trip, defaults, states from before Repeat and
+the Free-loop migration, a single pass and a held MIDI loop through the processor, a single pass
+through time-signature changes and at a typed tempo, preview following Repeat, process with MIDI,
+panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (and
+cancelling it);
 the editor, driven with synthetic events (bounce files, undo steps of wheel and arrow gestures,
 clicking and placing objects, the live view's span, unreadable pictures; under a virtual display
 on Linux).

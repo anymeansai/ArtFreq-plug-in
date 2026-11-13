@@ -912,15 +912,15 @@ FREQART_TEST (trackerTransportSinglePassInTheHostsMeterAndTempo)
     segments = run (tracker, playingAt (12.1, 90.0), settings);
     CHECK (segments.size() == 1 && ! segments[0].playing);
 
-    // A typed-in tempo counts its own bars from the song start: at 60 BPM bar 2 of 4/4 starts
-    // 4 s in, which the host (at 120) calls ppq 8.
+    // A typed-in tempo still starts on the DAW's bar (bar 2 of 4/4 at ppq 4, 2 s in at 120) and
+    // plays at its own tempo from there.
     auto manual = settingsFor (TriggerMode::transport, 16.0, false, 2);
     manual.useHostTempo = false;
     manual.manualBpm = 60.0;
 
     PlayheadTracker typed;
     typed.prepare (sampleRate);
-    segments = run (typed, playingAt (8.0 - blockQuarterNotes (120.0) * 0.5, 120.0), manual);
+    segments = run (typed, playingAt (4.0 - blockQuarterNotes (120.0) * 0.5, 120.0), manual);
     CHECK (segments.size() == 2 && ! segments[0].playing && segments[1].playing);
     CHECK (segments.size() == 2 && segments[1].start == block / 2);
     CHECK (segments.size() == 2 && std::abs (segments[1].fractionPerSample - rateFor (60.0, 16.0)) < 1.0e-15);
@@ -962,6 +962,261 @@ FREQART_TEST (trackerSinglePassFadesAtItsEdges)
 
     const auto fadeSlope = 1.5 / (ArtEngine::gateFadeSeconds * sampleRate) * 0.3;
     CHECK_LESS (test::largestStep (out), test::sineStepBound ({ 5000.0f }, { 0.3f }, sampleRate) + fadeSlope + 1.0e-4);
+}
+
+namespace
+{
+
+/** A run of bars of one time signature, from a bar line of the run before. */
+struct MeterRun
+{
+    double from, quarterNotesPerBar;
+};
+
+/** Where the bar at `ppq` starts and how long it is, in a song of these runs. */
+std::pair<double, double> barAt (const std::vector<MeterRun>& meters, double ppq)
+{
+    auto barStart = 0.0;
+
+    for (;;)
+    {
+        auto barLength = meters.front().quarterNotesPerBar;
+
+        for (const auto& run : meters)
+            if (barStart >= run.from - 1.0e-9)
+                barLength = run.quarterNotesPerBar;
+
+        if (ppq < barStart + barLength - 1.0e-9)
+            return { barStart, barLength };
+
+        barStart += barLength;
+    }
+}
+
+/** What a single pass did over a stretch of the song. */
+struct PassTrace
+{
+    double firstPlayed = -1.0;   // where it started and stopped sounding, in the song's quarter notes
+    double lastPlayed = -1.0;
+    double played = 0.0;         // how long it sounded in all, in quarter notes
+    int jumps = 0;               // sounding segments marked as jumps
+    bool inPlace = true;         // every sounding segment at (ppq - start) / length
+};
+
+/** Plays a song of these meters at 120 BPM from `from` to `to` (quarter notes) in blocks of 500
+    samples, reporting each block's time signature and bar start as a host does (at the block's
+    first sample), with Length `lengthBars` in that signature, as the processor gives it. The pass
+    is expected at `start` for `length` quarter notes. */
+PassTrace playThroughMeters (PlayheadTracker& tracker, const std::vector<MeterRun>& meters, int startBar, double lengthBars,
+                             double from, double to, double start, double length)
+{
+    PassTrace trace;
+    const auto qnPerSample = blockQuarterNotes (120.0, 1);
+    const auto blockLength = 500;
+
+    for (int b = 0;; ++b)
+    {
+        const auto ppq = from + b * blockLength * qnPerSample;
+
+        if (ppq >= to)
+            break;
+
+        const auto [barStart, barLength] = barAt (meters, ppq);
+        auto settings = settingsFor (TriggerMode::transport, lengthBars * barLength, false, startBar);
+        settings.quarterNotesPerBar = barLength;
+
+        auto timing = playingAt (ppq);
+        timing.ppqPositionOfLastBarStart = barStart;
+
+        for (const auto& segment : run (tracker, timing, settings, blockLength))
+        {
+            if (! segment.playing)
+                continue;
+
+            // (The block that opens the pass is reported in the bar before it, so it may run at the
+            // length in that bar's signature; the pass takes the start bar's in the next block.)
+            const auto at = ppq + segment.start * qnPerSample;
+            trace.inPlace = trace.inPlace && std::abs (segment.fraction - (at - start) / length) < 1.0e-6
+                            && (trace.firstPlayed < 0.0 || std::abs (segment.fractionPerSample - qnPerSample / length) < 1.0e-12);
+            trace.jumps += segment.jump ? 1 : 0;
+
+            if (trace.firstPlayed < 0.0)
+                trace.firstPlayed = at;
+
+            trace.lastPlayed = at + segment.length * qnPerSample;
+            trace.played += segment.length * qnPerSample;
+        }
+    }
+
+    return trace;
+}
+
+PassTrace playThroughMeters (const std::vector<MeterRun>& meters, int startBar, double lengthBars, double from, double to,
+                             double start, double length)
+{
+    PlayheadTracker tracker;
+    tracker.prepare (sampleRate);
+    return playThroughMeters (tracker, meters, startBar, lengthBars, from, to, start, length);
+}
+
+/** The pass sounded once, from `start` (within a sample) to its gate's close before `start + length`,
+    in place and without a jump. */
+void checkOnePass (const PassTrace& trace, double start, double length, int expectedJumps = 0)
+{
+    const auto qnPerSample = blockQuarterNotes (120.0, 1);
+    const auto lead = (std::ceil (ArtEngine::gateFadeSeconds * sampleRate) + 1.0) * qnPerSample;
+
+    CHECK_NEAR (trace.firstPlayed, start, qnPerSample);
+    CHECK_NEAR (trace.lastPlayed, start + length - lead, 2.0 * qnPerSample);
+    CHECK_NEAR (trace.played, length - lead, 2.0 * qnPerSample);
+    CHECK (trace.jumps == expectedJumps);
+    CHECK (trace.inPlace);
+}
+
+} // namespace
+
+FREQART_TEST (trackerSinglePassKeepsItsPlaceThroughMeterChanges)
+{
+    // Played from the song start. 4/4, then 3/4 from bar 9, where the pass starts (a new section):
+    // it starts there, from the drawing's start, for Length in the start bar's signature ("1 bar"
+    // is 3 quarter notes, "4 bars" 12), although the bars before it were longer.
+    checkOnePass (playThroughMeters ({ { 0.0, 4.0 }, { 32.0, 3.0 } }, 9, 1.0, 0.0, 60.0, 32.0, 3.0), 32.0, 3.0);
+    checkOnePass (playThroughMeters ({ { 0.0, 4.0 }, { 32.0, 3.0 } }, 9, 4.0, 0.0, 60.0, 32.0, 12.0), 32.0, 12.0);
+
+    // A change inside it: no jump, and it ends where its length puts it.
+    checkOnePass (playThroughMeters ({ { 0.0, 4.0 }, { 12.0, 3.0 } }, 2, 4.0, 0.0, 30.0, 4.0, 16.0), 4.0, 16.0);
+    checkOnePass (playThroughMeters ({ { 0.0, 4.0 }, { 40.0, 3.0 } }, 9, 4.0, 0.0, 60.0, 32.0, 16.0), 32.0, 16.0);
+
+    // A change after it, to a longer or a shorter bar, does not play it again.
+    checkOnePass (playThroughMeters ({ { 0.0, 4.0 }, { 16.0, 7.0 } }, 3, 1.0, 0.0, 40.0, 8.0, 4.0), 8.0, 4.0);
+    checkOnePass (playThroughMeters ({ { 0.0, 4.0 }, { 16.0, 6.0 } }, 3, 1.0, 0.0, 40.0, 8.0, 4.0), 8.0, 4.0);   // 12/8
+    checkOnePass (playThroughMeters ({ { 0.0, 3.0 }, { 36.0, 4.0 } }, 9, 4.0, 0.0, 60.0, 24.0, 12.0), 24.0, 12.0);
+
+    // The DAW looping over the pass after it played through: each time round from the drawing's
+    // start (the 3/4 at the loop start does not move it), each wrap a jump back.
+    PlayheadTracker tracker;
+    tracker.prepare (sampleRate);
+    const std::vector<MeterRun> newSection { { 0.0, 4.0 }, { 32.0, 3.0 } };
+    checkOnePass (playThroughMeters (tracker, newSection, 9, 4.0, 0.0, 50.0, 32.0, 12.0), 32.0, 12.0);
+
+    for (int round = 0; round < 2; ++round)
+        checkOnePass (playThroughMeters (tracker, newSection, 9, 4.0, 32.0, 50.0, 32.0, 12.0), 32.0, 12.0, 1);
+}
+
+FREQART_TEST (trackerSinglePassStartsOnTheDawsBars)
+{
+    // 4/4 with one 2/4 bar at bar 5 (quarter notes 16 to 18), so bar N starts at 4N - 6 after it.
+    // Played from the song start, the bars are counted as they go by: the pass starts on the DAW's
+    // bar N, and the odd bar, where the start bar would be a different place, sounds nothing. "1
+    // bar" is the start bar's: 2 quarter notes from bar 5, 4 from the bar after it.
+    const std::vector<MeterRun> oddBar { { 0.0, 4.0 }, { 16.0, 2.0 }, { 18.0, 4.0 } };
+
+    for (const auto bar : { 4, 5, 6, 7, 9, 10, 20 })
+    {
+        const auto start = bar <= 5 ? 4.0 * (bar - 1) : 4.0 * bar - 6.0;
+        const auto length = bar == 5 ? 2.0 : 4.0;
+        checkOnePass (playThroughMeters (oddBar, bar, 1.0, 0.0, start + 8.0, start, length), start, length);
+    }
+
+    // Started after the odd bar, the DAW's position is all there is to go on: bar N in 4/4 from the
+    // song start (4N - 4), moved to the nearest bar line (the earlier one, half way). That is the
+    // DAW's bar N after a shorter bar, and the same bar line every time.
+    for (const auto bar : { 9, 10, 20 })
+    {
+        const auto start = 4.0 * bar - 6.0;
+        checkOnePass (playThroughMeters (oddBar, bar, 1.0, 22.5, start + 8.0, start, 4.0), start, 4.0);
+    }
+
+    // A 3/4 bar instead (16 to 19): bar N at 4N - 5, counted or the nearest bar line.
+    const std::vector<MeterRun> threeFour { { 0.0, 4.0 }, { 16.0, 3.0 }, { 19.0, 4.0 } };
+    checkOnePass (playThroughMeters (threeFour, 9, 1.0, 0.0, 40.0, 31.0, 4.0), 31.0, 4.0);
+    checkOnePass (playThroughMeters (threeFour, 9, 1.0, 20.0, 40.0, 31.0, 4.0), 31.0, 4.0);
+
+    // A new time signature before the start bar, played through: 3/4 from bar 5, bar 9 at 28.
+    // Started again a bar before the pass, after the change, it is still there (counting all the
+    // bars in 3/4 would make bar 9 quarter note 24); from the song start it is counted again.
+    PlayheadTracker tracker;
+    tracker.prepare (sampleRate);
+    const std::vector<MeterRun> newSection { { 0.0, 4.0 }, { 16.0, 3.0 } };
+
+    for (const auto from : { 0.0, 25.0, 0.0, 22.0 })
+        checkOnePass (playThroughMeters (tracker, newSection, 9, 1.0, from, 40.0, 28.0, 3.0), 28.0, 3.0);
+}
+
+FREQART_TEST (trackerSinglePassAtATypedTempoStartsOnTheDawsBar)
+{
+    // The DAW at 90 BPM in 4/4, the drawing at a typed 120 BPM: "1 bar" from bar 9 starts on the
+    // DAW's bar 9 (ppq 32, 21.33 s in: sample 1024000) and plays its 4 quarter notes at 120 BPM
+    // (2 s), not where bar 9 of a song at 120 BPM would be.
+    auto settings = settingsFor (TriggerMode::transport, 4.0, false, 9);
+    settings.useHostTempo = false;
+    settings.manualBpm = 120.0;
+
+    PlayheadTracker tracker;
+    tracker.prepare (sampleRate);
+    const auto hostQnPerSample = blockQuarterNotes (90.0, 1);
+    const auto rate = rateFor (120.0, 4.0);
+    const auto lead = std::ceil (ArtEngine::gateFadeSeconds * sampleRate) + 1.0;
+    int64_t firstPlayed = -1, lastPlayed = -1;
+    auto jumps = 0;
+    auto inPlace = true;
+
+    for (int b = 0; b < 25 * 48000 / block; ++b)
+    {
+        const auto at = static_cast<int64_t> (b) * block;
+
+        for (const auto& segment : run (tracker, playingAt (static_cast<double> (at) * hostQnPerSample, 90.0), settings))
+        {
+            if (! segment.playing)
+                continue;
+
+            const auto sample = at + segment.start;
+            inPlace = inPlace && std::abs (segment.fraction - static_cast<double> (sample - 1024000) * rate) < 1.0e-9
+                      && std::abs (segment.fractionPerSample - rate) < 1.0e-15;
+            jumps += segment.jump ? 1 : 0;
+
+            if (firstPlayed < 0)
+                firstPlayed = sample;
+
+            lastPlayed = sample + segment.length;
+        }
+    }
+
+    CHECK (firstPlayed == 1024000);
+    CHECK_NEAR (static_cast<double> (lastPlayed), 1024000.0 + 96000.0 - lead, 1.0);
+    CHECK (jumps == 0);
+    CHECK (inPlace);
+
+    // Relocated into it: a quarter note of the DAW (2/3 s) after bar 9 is 4/3 of the drawing's
+    // quarter notes at 120 BPM, and it plays on at 120 from there.
+    auto segments = run (tracker, playingAt (33.0, 90.0), settings);
+    CHECK (segments.size() == 1 && segments[0].playing && segments[0].jump);
+    CHECK_NEAR (segments[0].fraction, (4.0 / 3.0) / 4.0, 1.0e-9);
+    segments = run (tracker, playingAt (33.0 + blockQuarterNotes (90.0), 90.0), settings);
+    CHECK (segments.size() == 1 && segments[0].playing && ! segments[0].jump);
+    CHECK_NEAR (segments[0].fraction, (4.0 / 3.0) / 4.0 + rate * block, 1.0e-9);
+
+    // The DAW's tempo changing before bar 9 still starts it on that bar: 60 BPM to ppq 16, then
+    // 150, so bar 9 is 16 s + 6.4 s in.
+    PlayheadTracker ramped;
+    ramped.prepare (sampleRate);
+    auto ppq = 0.0;
+    firstPlayed = -1;
+
+    for (int64_t at = 0; at < 30 * 48000 && firstPlayed < 0; at += block)
+    {
+        const auto bpm = ppq < 16.0 - 1.0e-9 ? 60.0 : 150.0;
+        auto timing = playingAt (ppq, bpm);
+        timing.timeInSeconds = static_cast<double> (at) / sampleRate;
+
+        for (const auto& segment : run (ramped, timing, settings))
+            if (segment.playing && firstPlayed < 0)
+                firstPlayed = at + segment.start;
+
+        ppq += blockQuarterNotes (bpm);
+    }
+
+    CHECK_NEAR (static_cast<double> (firstPlayed), 22.4 * sampleRate, 1.0);
 }
 
 FREQART_TEST (trackerMidiRepeatLoopsWhileANoteIsHeld)

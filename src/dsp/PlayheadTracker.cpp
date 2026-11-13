@@ -1,6 +1,7 @@
 #include "PlayheadTracker.h"
 
 #include <cmath>
+#include <utility>
 
 namespace freqart
 {
@@ -147,6 +148,8 @@ void PlayheadTracker::reset() noexcept
     heldNotes.reset();
     wasPlaying = false;
     timeAnchored = false;
+    passElapsedCounting = false;
+    songExpected = false;
 }
 
 void PlayheadTracker::setPreview (bool shouldPreview) noexcept
@@ -203,9 +206,14 @@ int PlayheadTracker::process (const HostTiming& timing, const juce::MidiBuffer& 
     if (transportStopped)
         heldNotes.reset();
 
-    // Anything but the transport counting from the host's time leaves its count stale.
+    // Anything but the transport counting from the host's time leaves its count stale, and
+    // anything but the single pass leaves the song's place stale for it (coming back to it is like
+    // a relocation).
     if (preview || settings.mode != TriggerMode::transport)
         timeAnchored = false;
+
+    if (preview || settings.mode != TriggerMode::transport || settings.repeat)
+        songExpected = false;
 
     if (preview)
     {
@@ -247,6 +255,12 @@ void PlayheadTracker::processTransport (const HostTiming& timing, double tempo, 
         return;
     }
 
+    if (! repeat)
+    {
+        processSinglePass (timing, tempo, usingHostTempo, length, barLength, settings.startBar, out);
+        return;
+    }
+
     const auto ppq = finite (timing.ppqPosition);
     const auto seconds = finite (timing.timeInSeconds);
 
@@ -273,35 +287,7 @@ void PlayheadTracker::processTransport (const HostTiming& timing, double tempo, 
     }
     else if (seconds.has_value())
     {
-        // Anchored to the time when playback starts or the host relocates, then counted on at
-        // each block's tempo, so changing the tempo while playing bends the position instead of
-        // moving it (by the whole song's length times the change).
-        if (! timeAnchored || std::abs (*seconds - expectedNextSeconds) > jumpToleranceSeconds)
-            timeQuarterNotes = *seconds * tempo / 60.0;
-
-        quarterNotes = timeQuarterNotes;
-        timeQuarterNotes += numSamples / sampleRate * tempo / 60.0;
-        expectedNextSeconds = *seconds + numSamples / sampleRate;
-        timeAnchored = true;
-    }
-
-    const auto span = (rate - lastRate) * lastLength;
-    const auto tolerance = jumpToleranceSeconds * sampleRate * rate;
-
-    if (! repeat)
-    {
-        // Bar N starts (N - 1) bars after the song start, in the current time signature (VST3
-        // gives no bar numbers, and the signature map before the start bar is unknown). With
-        // nothing usable from the host, the pass runs on from where the last block ended.
-        const auto startBar = juce::jlimit (1, lastStartBar, settings.startBar);
-        const auto position = quarterNotes.has_value()
-                                ? (*quarterNotes - static_cast<double> (startBar - 1) * barLength) / length
-                                : (hasExpected ? expectedNextPosition : 0.0);
-        const auto jump = ! hasExpected || ! followsOn (position, expectedNextPosition, span, tolerance, false);
-
-        playSinglePass (position, rate, jump, out);
-        expectNext (position, rate, numSamples, false);
-        return;
+        quarterNotes = countFromTime (*seconds, tempo, numSamples);
     }
 
     if (! quarterNotes.has_value())
@@ -311,11 +297,191 @@ void PlayheadTracker::processTransport (const HostTiming& timing, double tempo, 
         return;
     }
 
+    const auto span = (rate - lastRate) * lastLength;
+    const auto tolerance = jumpToleranceSeconds * sampleRate * rate;
     const auto position = wrap (modulo (*quarterNotes - barOffset, length) / length);
     const auto jump = ! hasExpected || ! followsOn (position, expectedNextPosition, span, tolerance, true);
 
     out.add (numSamples, true, position, rate, jump);
     expectNext (position, rate, numSamples, true);
+}
+
+double PlayheadTracker::countFromTime (double seconds, double tempo, int numSamples) noexcept
+{
+    // Anchored to the time when playback starts or the host relocates, then counted on at each
+    // block's tempo, so changing the tempo while playing bends the position instead of moving it
+    // (by the whole song's length times the change).
+    if (! timeAnchored || std::abs (seconds - expectedNextSeconds) > jumpToleranceSeconds)
+        timeQuarterNotes = seconds * tempo / 60.0;
+
+    const auto quarterNotes = timeQuarterNotes;
+    timeQuarterNotes += numSamples / sampleRate * tempo / 60.0;
+    expectedNextSeconds = seconds + numSamples / sampleRate;
+    timeAnchored = true;
+    return quarterNotes;
+}
+
+void PlayheadTracker::processSinglePass (const HostTiming& timing, double tempo, bool usingHostTempo, double length,
+                                         double barLength, int startBar, Writer& out) noexcept
+{
+    const auto numSamples = out.getLength();
+    const auto ppq = finite (timing.ppqPosition);
+    const auto hostBpm = finite (timing.bpm);
+    const auto seconds = finite (timing.timeInSeconds);
+    const auto wasCounting = std::exchange (passElapsedCounting, false);
+
+    // Where the song is, in quarter notes since its start, and how far that moves per sample.
+    // With the host's ppq and tempo that is the DAW's own count whatever tempo the drawing plays
+    // at, so the start bar is the DAW's bar; without them it is counted from the time.
+    const auto hostCount = ppq.has_value() && hostBpm.has_value() && *hostBpm > 0.0;
+    std::optional<double> song;
+    std::optional<double> barStart;
+    auto songRate = tempo / 60.0 / sampleRate;
+
+    if (hostCount)
+    {
+        song = *ppq;
+        barStart = finite (timing.ppqPositionOfLastBarStart);
+        timeAnchored = false;
+
+        // At the rate the host's ppq really moves, even at tempos outside 20..400, or every
+        // block would land somewhere other than where the last one led.
+        songRate = juce::jlimit (minHostTempo, maxHostTempo, *hostBpm) / 60.0 / sampleRate;
+    }
+    else if (seconds.has_value())
+    {
+        song = countFromTime (*seconds, tempo, numSamples);
+    }
+
+    if (! song.has_value())
+    {
+        // Nothing usable from the host: the pass runs on from where the last block ended.
+        songExpected = false;
+        const auto rate = tempo / 60.0 / sampleRate / (passPlaced ? passLength : length);
+        const auto position = hasExpected ? expectedNextPosition : 0.0;
+
+        playSinglePass (position, rate, ! hasExpected, out);
+        expectNext (position, rate, numSamples, false);
+        return;
+    }
+
+    const auto follows = placePass (*song, songRate, barStart, length, barLength, startBar, numSamples);
+    auto position = (*song - passStart) / passLength;
+    auto rate = songRate / passLength;
+
+    if (hostCount && ! usingHostTempo)
+    {
+        // A typed-in tempo: the pass starts where the DAW reaches its start bar and plays at the
+        // typed tempo from there, counted on (so a change of the typed tempo bends the position).
+        // Before the pass, and when the DAW moves into it, the count is where the DAW's position
+        // puts it at the DAW's current tempo.
+        const auto quarterNotesPerSample = tempo / 60.0 / sampleRate;
+
+        if (! wasCounting || ! follows || *song < passStart)
+            passElapsed = (*song - passStart) / songRate * quarterNotesPerSample;
+
+        position = passElapsed / passLength;
+        rate = quarterNotesPerSample / passLength;
+        passElapsed += quarterNotesPerSample * numSamples;
+        passElapsedCounting = true;
+    }
+
+    const auto span = (rate - lastRate) * lastLength;
+    const auto tolerance = jumpToleranceSeconds * sampleRate * rate;
+    const auto jump = ! hasExpected || ! followsOn (position, expectedNextPosition, span, tolerance, false);
+
+    playSinglePass (position, rate, jump, out);
+    expectNext (position, rate, numSamples, false);
+}
+
+bool PlayheadTracker::placePass (double song, double songRate, std::optional<double> barStart, double length,
+                                 double barLength, int startBar, int numSamples) noexcept
+{
+    startBar = juce::jlimit (1, lastStartBar, startBar);
+
+    // Whether the song plays on from the last block (as the position does, see followsOn), and
+    // whether Length changed rather than the time signature (which also changes the length).
+    const auto songTolerance = jumpToleranceSeconds * sampleRate * songRate;
+    const auto follows = songExpected
+                      && followsOn (song, expectedSong, (songRate - lastSongRate) * lastSongLength, songTolerance, false);
+    const auto newLength = ! juce::exactlyEqual (length, lastLengthSetting)
+                        && juce::exactlyEqual (barLength, lastBarLengthSetting);
+
+    // Moved to before the pass: its place still holds if the song is somewhere its bars were
+    // counted through since the last time-signature change (in that signature). Further back, a
+    // change may lie between the song and the pass, to be counted again.
+    const auto movedBefore = ! follows && song < passStart - songTolerance;
+    const auto counted = song >= passCountedFrom - songTolerance && juce::exactlyEqual (barLength, passBarLength);
+
+    if (! passPlaced || startBar != passStartBar || (movedBefore && ! counted))
+    {
+        // Placed afresh. VST3 gives no bar numbers, so bar N is N - 1 bars in the current time
+        // signature from the song start, moved to the nearest of the host's bar lines (the
+        // earlier one half way): after an odd bar (a 2/4 bar in 4/4, a pickup) that is still a
+        // bar line, and the DAW's bar N after a shorter bar.
+        const auto nominal = static_cast<double> (startBar - 1) * barLength;
+        passStart = nominal;
+
+        if (barStart.has_value())
+        {
+            const auto snapped = *barStart + std::ceil ((nominal - *barStart) / barLength - 0.5 - 1.0e-9) * barLength;
+
+            // (A host's bar start can be a hair off; only a real shift moves the pass.)
+            if (std::abs (snapped - nominal) > 1.0e-6)
+                passStart = snapped;
+        }
+
+        passStartBar = startBar;
+        passBarLength = barLength;
+        passCountedFrom = barStart.value_or (song);
+        passLength = length;
+        passPlaced = true;
+    }
+    else if (song < passStart)
+    {
+        // Playing on towards it (or moved to where it was counted): the bars still to go are
+        // counted in the bar the song is in, so a new time signature on the way (an odd bar, a new
+        // section) moves the pass with the bars rather than counting all the bars before it again
+        // in the new one. Until the song is in the start bar, its length is Length in this bar.
+        if (! juce::exactlyEqual (barLength, passBarLength))
+        {
+            const auto from = barStart.value_or (song);
+            passStart = from + (passStart - from) / passBarLength * barLength;
+            passBarLength = barLength;
+            passCountedFrom = from;
+        }
+
+        passLength = length;
+    }
+    else if (follows && approachingPass)
+    {
+        // The first block inside the pass, played into: the host now reports the start bar's own
+        // time signature (the block that opened the pass was in the bar before), so the length
+        // becomes Length in it. The position moves on by at most this block's share of the
+        // difference, so what the last block led to is scaled with it, not taken for a jump.
+        if (! juce::exactlyEqual (length, passLength))
+        {
+            expectedNextPosition *= passLength / length;
+            lastRate *= passLength / length;
+            passLength = length;
+        }
+    }
+    else if (newLength)
+    {
+        passLength = length;
+    }
+
+    // Otherwise, playing in or after the pass, or moved into or after it, it stays where it is: a
+    // time signature from its start bar on moves nothing, and a DAW loop over it plays it the same.
+
+    approachingPass = song < passStart;
+    expectedSong = song + songRate * numSamples;
+    lastSongRate = songRate;
+    lastSongLength = numSamples;
+    songExpected = true;
+    lastLengthSetting = length;
+    lastBarLengthSetting = barLength;
+    return follows;
 }
 
 void PlayheadTracker::playSinglePass (double position, double rate, bool jump, Writer& out) noexcept
