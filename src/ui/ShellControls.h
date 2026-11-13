@@ -58,6 +58,7 @@ namespace shellIcons
     juce::Path waveFile();
     juce::Path dragHandle();
     juce::Path plus();
+    juce::Path repeat();
 } // namespace shellIcons
 
 /** Number formatting shared by read-outs and fields. */
@@ -133,6 +134,7 @@ public:
         double snap = 0.0;                                 // round dragged values to this step (0 = no)
         bool editOnSingleClick = false;
         juce::String unit;                                 // drawn faint after the number, e.g. "Hz"
+        float textSize = theme::controlSize;               // smaller for a field in a line of text
     };
 
     NumberField (juce::RangedAudioParameter& parameter, Options options);
@@ -177,6 +179,23 @@ private:
     std::unique_ptr<juce::TextEditor> editor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NumberField)
+};
+
+//==============================================================================
+/** An on / off switch with an icon and a label, drawn as a one-segment SegmentedControl (lit
+    like a chosen segment when on), so it sits with the segmented controls beside it. Bind it to
+    a bool parameter with juce::ButtonParameterAttachment. */
+class ToggleChip final : public juce::Button
+{
+public:
+    ToggleChip (const juce::String& label, juce::Path icon24);
+
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+
+private:
+    juce::Path icon;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ToggleChip)
 };
 
 //==============================================================================

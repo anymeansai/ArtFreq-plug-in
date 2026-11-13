@@ -23,16 +23,24 @@
 //   freqart-painting.png         a brush stroke just painted, the brush cursor over it
 //   freqart-empty.png            after Clear: the empty canvas and its hint
 //   freqart-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
+//   freqart-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
+//   freqart-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
+//   freqart-start-bar.png        a single pass from bar 9: the start bar field, bars 9 to 12 on
+//                                the canvas
+//   freqart-start-bar-edit.png   typing a start bar
 //   freqart-75.png               window at 75 %, one image pixel per logical pixel
+//   freqart-100.png              window at 100 %, one image pixel per logical pixel
 //   freqart-150.png              window at 150 %, one image pixel per logical pixel
+//   freqart-200.png              window at 200 %, one image pixel per logical pixel
 //
-// All but the last two are rendered at <pixel-scale> image pixels per logical pixel (default 2, as
-// on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
+// All but the last four are rendered at <pixel-scale> image pixels per logical pixel (default 2,
+// as on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
 // WAV file of the right length), that the window size is remembered, and drives the editor with
-// synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar),
-// checking what each does to the drawing and that undo takes it back. It exits with 1 if a file
-// cannot be written or a check fails. At the end it puts the window on the (virtual) desktop to
-// check the live view's own timer: the analyser on while shown, scrolling, off when hidden.
+// synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar,
+// the footer's Trigger, Repeat, start bar and Preview), checking what each does to the drawing
+// or the settings and that undo takes it back. It exits with 1 if a file cannot be written or a
+// check fails. At the end it puts the window on the (virtual) desktop to check the live view's
+// own timer: the analyser on while shown, scrolling, off when hidden.
 //
 // On Linux run it under a virtual display:  xvfb-run -a FreqArtSnapshot out
 
@@ -43,8 +51,10 @@
 #include "ui/Actions.h"
 #include "ui/CanvasView.h"
 #include "ui/Editor.h"
+#include "ui/CanvasAxes.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
+#include "ui/ShellFooter.h"
 #include "ui/ShellToolbar.h"
 #include "ui/Widgets.h"
 
@@ -611,6 +621,172 @@ void checkInteractions (freqart::FreqArtEditor& editor, freqart::FreqArtProcesso
     pump (30);
 }
 
+/** The footer's timing controls, as a person would use them: Trigger, Repeat, the start bar
+    field (drag, type, Enter, Esc) and what the hint line under them says; Preview following
+    Repeat; the canvas numbering the song's bars. Puts the settings back as they were. */
+void checkFooter (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor,
+                  const std::function<void (const juce::String&, bool)>& save)
+{
+    using namespace freqart;
+
+    auto* footer = find<ui::shell::Footer> (editor, "footer");
+    auto* trigger = find<ui::SegmentedControl> (editor, "trigger");
+    auto* repeat = find<juce::Button> (editor, "repeat");
+    auto* startBar = find<ui::shell::NumberField> (editor, "start-bar");
+    auto* preview = find<juce::Button> (editor, "preview");
+
+    if (footer == nullptr || trigger == nullptr || repeat == nullptr || startBar == nullptr || preview == nullptr)
+        return;
+
+    const auto value = [&] (const char* id) { return processor.getParameters().getRawParameterValue (id)->load(); };
+    const auto settle = [&] { pump (60); footer->refresh(); };
+    const auto middleOf = [] (juce::Component& c, float across) { return juce::Point<float> (static_cast<float> (c.getWidth()) * across,
+                                                                                               static_cast<float> (c.getHeight()) * 0.5f); };
+    settle();
+
+    // ---- the defaults: a single pass from bar 1 ----------------------------------------------
+    check (trigger->getOptions() == juce::StringArray { "Transport", "MIDI" }, "Trigger offers Transport and MIDI (no Loop)");
+    check (! repeat->getToggleState() && startBar->isVisible() && footer->getTriggerHint() == "Plays once from bar 1",
+           "by default the drawing plays once from bar 1, and the footer says so, with the bar as a field");
+
+    // ---- the layout: in line, inside the footer, nothing overlapping ------------------------------
+    {
+        juce::Array<juce::Component*> row;
+
+        for (const auto* id : { "density", "contrast", "level", "length", "trigger", "repeat", "tempo-source", "bpm", "preview", "export" })
+            row.add (findComponentWithId (*footer, id));
+
+        auto apart = ! row.contains (nullptr);
+
+        for (int i = 0; apart && i < row.size(); ++i)
+            for (int j = i + 1; j < row.size(); ++j)
+                apart = apart && ! row[i]->getBounds().intersects (row[j]->getBounds());
+
+        check (apart, "the footer's controls do not overlap");
+
+        if (apart)
+        {
+            check (trigger->getY() == repeat->getY() && trigger->getHeight() == repeat->getHeight()
+                   && repeat->getRight() <= findComponentWithId (*footer, "tempo-source")->getX() - 16,
+                   "Repeat sits in line with Trigger, clear of Tempo");
+            check (findComponentWithId (*footer, "bpm")->getRight() <= footer->getWidth() - 280 - 24,
+                   "the timing controls end a margin before the Preview column");
+        }
+
+        check (startBar->getX() > trigger->getX() + 90 && startBar->getRight() <= repeat->getRight()
+               && startBar->getY() > trigger->getBottom() + 6 && startBar->getBottom() < footer->getHeight() - 8,
+               "the start bar field sits in the hint line under Trigger, after its words");
+    }
+
+    // ---- the start bar: drag, type, Enter, Esc ---------------------------------------------------
+    dragOn (*startBar, middleOf (*startBar, 0.5f), middleOf (*startBar, 0.5f) + juce::Point<float> (0.0f, -32.0f));
+    check (juce::approximatelyEqual (value (params::id::startBar), 9.0f), "dragging the start bar up 32 px adds 8 bars ("
+                                                                          + juce::String (value (params::id::startBar)) + ")");
+    settle();
+    check (footer->getTriggerHint() == "Plays once from bar 9" && processor.getSinglePassStartBar() == 9,
+           "... and the hint says where it now plays");
+    save ("start-bar", true);
+
+    {
+        const auto marks = ui::axes::timeMarks (params::defaultLengthIndex, 4, 4, 600.0f, processor.getSinglePassStartBar());
+        juce::StringArray labels;
+
+        for (const auto& mark : marks)
+            if (mark.label.isNotEmpty())
+                labels.add (mark.label);
+
+        check (labels == juce::StringArray { "9", "10", "11", "12" }, "the canvas numbers the song's bars: 9 to 12 ("
+                                                                       + labels.joinIntoString (" ") + ")");
+    }
+
+    const auto typeInto = [&] (const juce::String& text, const juce::KeyPress& key, const juce::String& snapshot)
+    {
+        clickOn (*startBar, middleOf (*startBar, 0.5f));   // a single click opens the field
+        juce::TextEditor* field = nullptr;
+
+        for (auto* child : startBar->getChildren())
+            if (auto* t = dynamic_cast<juce::TextEditor*> (child))
+                field = t;
+
+        check (field != nullptr && startBar->isEditing(), "a click on the start bar opens it for typing");
+
+        if (field == nullptr)
+            return;
+
+        field->setText (text, true);
+
+        if (snapshot.isNotEmpty())
+            save (snapshot, false);
+
+        field->keyPressed (key);
+        pump (30);
+    };
+
+    typeInto ("17", juce::KeyPress (juce::KeyPress::returnKey), "start-bar-edit");
+    check (! startBar->isEditing() && juce::approximatelyEqual (value (params::id::startBar), 17.0f), "typing 17 and Enter sets bar 17");
+    typeInto ("50", juce::KeyPress (juce::KeyPress::escapeKey), {});
+    check (! startBar->isEditing() && juce::approximatelyEqual (value (params::id::startBar), 17.0f), "Esc leaves it as it was");
+    typeInto ("5000", juce::KeyPress (juce::KeyPress::returnKey), {});
+    check (juce::approximatelyEqual (value (params::id::startBar), 999.0f), "a bar past 999 is 999");
+    typeInto ("0", juce::KeyPress (juce::KeyPress::returnKey), {});
+    check (juce::approximatelyEqual (value (params::id::startBar), 1.0f), "bar 0 is bar 1");
+
+    // ---- Repeat and Trigger ----------------------------------------------------------------------
+    clickOn (*repeat, middleOf (*repeat, 0.5f));
+    settle();
+    check (value (params::id::repeat) > 0.5f && repeat->getToggleState() && ! startBar->isVisible()
+           && footer->getTriggerHint() == "Repeats every 4 bars from bar 1" && processor.getSinglePassStartBar() == 0,
+           "Repeat loops the drawing every Length from bar 1 (no start bar to set then)");
+    save ("repeat", true);
+
+    clickOn (*trigger, middleOf (*trigger, 0.85f));
+    settle();
+    check (juce::approximatelyEqual (value (params::id::trigger), 1.0f) && footer->getTriggerHint() == "Loops while a note is held"
+           && ! startBar->isVisible(), "MIDI with Repeat loops while a note is held");
+    save ("midi-repeat", true);
+
+    clickOn (*repeat, middleOf (*repeat, 0.5f));
+    settle();
+    check (value (params::id::repeat) < 0.5f && footer->getTriggerHint() == "Each note plays it once" && ! startBar->isVisible(),
+           "MIDI without Repeat plays it once per note");
+
+    clickOn (*trigger, middleOf (*trigger, 0.2f));
+    settle();
+    check (juce::approximatelyEqual (value (params::id::trigger), 0.0f) && startBar->isVisible()
+           && footer->getTriggerHint() == "Plays once from bar 1", "back to Transport: once from bar 1, the field back");
+
+    // Automation (or the host) changing Repeat moves the switch too.
+    setParameter (processor, params::id::repeat, 1.0f);
+    settle();
+    check (repeat->getToggleState() && ! startBar->isVisible(), "the Repeat switch follows the parameter");
+    setParameter (processor, params::id::repeat, 0.0f);
+    settle();
+
+    // ---- Preview follows Repeat: once, then the button turns itself off; or on a loop ------------
+    setParameter (processor, params::id::length, 2.0f);   // 1 bar: 2 s
+    clickOn (*preview, middleOf (*preview, 0.5f));
+    playFor (processor, 1.0);
+    settle();
+    check (processor.isPreviewing() && preview->getToggleState(), "Preview plays");
+    playFor (processor, 1.3);
+    settle();
+    check (! processor.isPreviewing() && ! preview->getToggleState(), "without Repeat, Preview stops by itself after one pass");
+
+    setParameter (processor, params::id::repeat, 1.0f);
+    clickOn (*preview, middleOf (*preview, 0.5f));
+    playFor (processor, 4.5);
+    settle();
+    check (processor.isPreviewing() && preview->getToggleState() && processor.isSounding(), "with Repeat, Preview goes round");
+    clickOn (*preview, middleOf (*preview, 0.5f));
+    playFor (processor, 0.1);
+    settle();
+    check (! processor.isPreviewing() && ! preview->getToggleState(), "... until it is pressed again");
+
+    setParameter (processor, params::id::repeat, 0.0f);
+    setParameter (processor, params::id::length, static_cast<float> (params::defaultLengthIndex));
+    settle();
+}
+
 int countDifferentPixels (const juce::Image& a, const juce::Image& b)
 {
     if (a.getBounds() != b.getBounds())
@@ -776,6 +952,7 @@ int main (int argc, char* argv[])
         // ---- using the editor with the mouse ------------------------------------------------------
         checkInteractions (*editor, processor, *content, textId, imageId,
                            [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
+        checkFooter (*editor, processor, [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
 
         // ---- the look of standard controls: a menu, a tooltip, typing a value --------------------------
         if (auto* length = find<juce::ComboBox> (*editor, "length"))
@@ -875,6 +1052,12 @@ int main (int argc, char* argv[])
         }
 
         // ---- window sizes -------------------------------------------------------------------------
+        save ("100", 1.0f);
+
+        setWindowScale (*editor, 2.0f);
+        pump (60);
+        save ("200", 1.0f);
+
         setWindowScale (*editor, 1.5f);
         pump (60);
         check (processor.getEditorWidth() == 1680 && processor.getEditorHeight() == 1080, "the window size is remembered");

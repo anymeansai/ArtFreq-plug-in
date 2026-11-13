@@ -13,13 +13,20 @@ namespace
     constexpr int hintTop = 80;
     constexpr int hintHeight = 16;
 
-    // Columns
+    // Columns. The trigger column holds Transport | MIDI and the Repeat switch; the start bar
+    // field sits in its hint line, so the timing row keeps its width.
     constexpr int knobGap = 4;
-    constexpr int lengthWidth = 104;
-    constexpr int triggerWidth = 184;
-    constexpr int tempoWidth = 112;
-    constexpr int bpmWidth = 68;
+    constexpr int lengthWidth = 96;
+    constexpr int triggerWidth = 124;
+    constexpr int repeatGap = 6;
+    constexpr int repeatWidth = 78;
+    constexpr int tempoWidth = 108;
+    constexpr int bpmWidth = 56;
     constexpr int columnGap = 16;
+    constexpr int startBarWidth = 40;
+    constexpr int startBarHeight = 20;
+    constexpr int startBarGap = 5;
+    constexpr float startBarTextSize = 12.0f;   // as the knobs' values in the same line
     constexpr int previewWidth = 56;
     constexpr int previewSize = 44;
     constexpr int previewGap = 12;
@@ -39,20 +46,27 @@ namespace
         return 0;
     }
 
+    juce::Font hintFont()
+    {
+        return fonts::ui (theme::labelSize);
+    }
+
     void drawHint (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> column,
                    juce::Colour colour, juce::Justification justification = juce::Justification::centredLeft)
     {
-        g.setFont (fonts::ui (theme::labelSize));
+        g.setFont (hintFont());
         g.setColour (colour);
         g.drawText (text, column.getX(), hintTop, column.getWidth(), hintHeight, justification, true);
     }
+
+    constexpr const char* startBarLead = "Plays once from bar";
 } // namespace
 
 //==============================================================================
 PreviewButton::PreviewButton() : juce::Button ("Preview")
 {
     setClickingTogglesState (false);
-    setTooltip ("Preview: play the drawing on a loop, even while the DAW is stopped");
+    setTooltip ("Preview: play the drawing from its start, even while the DAW is stopped (once, or on a loop with Repeat)");
     setComponentID ("preview");
 }
 
@@ -138,6 +152,24 @@ Footer::Footer (FreqArtProcessor& p, int inspectorLeftEdge)
     triggerAttachment = std::make_unique<ChoiceSegments> (trigger, parameter (processor, params::id::trigger));
     addAndMakeVisible (trigger);
 
+    repeat.setComponentID ("repeat");
+    repeat.setTitle ("Repeat");
+    repeat.setTooltip ("Repeat: loop the drawing while the DAW plays (Transport) or while a note is held (MIDI). "
+                       "Off: it plays once.");
+    repeatAttachment = std::make_unique<juce::ButtonParameterAttachment> (parameter (processor, params::id::repeat), repeat);
+    addAndMakeVisible (repeat);
+
+    NumberField::Options barOptions;
+    barOptions.format = [] (double v) { return juce::String (juce::roundToInt (v)); };
+    barOptions.dragUnitsPerPixel = 0.25;
+    barOptions.snap = 1.0;
+    barOptions.editOnSingleClick = true;
+    barOptions.textSize = startBarTextSize;
+    startBar = std::make_unique<NumberField> (parameter (processor, params::id::startBar), barOptions);
+    startBar->setComponentID ("start-bar");
+    startBar->setTitle ("Start bar");
+    addChildComponent (*startBar);
+
     tempoSource.setComponentID ("tempo-source");
     tempoSource.setTitle ("Tempo");
     tempoAttachment = std::make_unique<ChoiceSegments> (tempoSource, parameter (processor, params::id::tempoSource));
@@ -173,14 +205,24 @@ juce::String Footer::lengthHint() const
     return formatNumber (seconds, seconds < 10.0 ? 2 : 1) + " s per pass";
 }
 
-juce::String Footer::triggerHint() const
+bool Footer::showsStartBar() const
 {
-    switch (choiceIndex (processor, params::id::trigger))
-    {
-        case 1:  return "Each note plays it once";
-        case 2:  return "Loops on its own";
-        default: return "Plays with the DAW from bar 1";
-    }
+    return processor.getSinglePassStartBar() > 0;
+}
+
+juce::String Footer::getTriggerHint() const
+{
+    const auto repeats = choiceIndex (processor, params::id::repeat) != 0;
+
+    if (choiceIndex (processor, params::id::trigger) == 1)
+        return repeats ? "Loops while a note is held" : "Each note plays it once";
+
+    if (! repeats)
+        return juce::String (startBarLead) + " " + juce::String (processor.getSinglePassStartBar());
+
+    const auto lengths = params::lengthNames();
+    return "Repeats every " + lengths[juce::jlimit (0, lengths.size() - 1, choiceIndex (processor, params::id::length))]
+         + " from bar 1";
 }
 
 juce::String Footer::tempoHint() const
@@ -198,7 +240,13 @@ void Footer::refresh()
     const auto followHost = choiceIndex (processor, params::id::tempoSource) == 0;
     bpm->setFollowing (followHost, followHost ? formatNumber (processor.getEffectiveTempo(), 2) : juce::String());
 
-    const auto hints = lengthHint() + "|" + triggerHint() + "|" + tempoHint() + "|" + (previewing ? "1" : "0");
+    // The start bar field is the bar number in "Plays once from bar [N]".
+    const auto withStartBar = showsStartBar();
+
+    if (startBar->isVisible() != withStartBar)
+        startBar->setVisible (withStartBar);
+
+    const auto hints = lengthHint() + "|" + getTriggerHint() + "|" + tempoHint() + "|" + (previewing ? "1" : "0");
 
     if (hints != shownHints)
     {
@@ -230,7 +278,8 @@ void Footer::paint (juce::Graphics& g)
     caption ("Preview", previewColumn, juce::Justification::centred);
 
     drawHint (g, lengthHint(), lengthColumn, theme::textFaint);
-    drawHint (g, triggerHint(), triggerColumn, theme::textFaint);
+    drawHint (g, showsStartBar() ? juce::String (startBarLead) : getTriggerHint(), triggerColumn.withRight (repeat.getRight()),
+              theme::textFaint);
     drawHint (g, tempoHint(), tempoColumn.getUnion (bpmColumn), theme::textFaint);
 
     const auto previewing = processor.isPreviewing();
@@ -262,14 +311,21 @@ void Footer::resized()
 
     lengthColumn = column (lengthWidth);
     triggerColumn = column (triggerWidth);
+    x -= columnGap - repeatGap;   // Repeat belongs to Trigger: closer
+    const auto repeatColumn = column (repeatWidth);
     tempoColumn = column (tempoWidth);
     x -= columnGap - 8;   // the BPM field belongs to Tempo: closer
     bpmColumn = column (bpmWidth);
 
     length.setBounds (lengthColumn);
     trigger.setBounds (triggerColumn);
+    repeat.setBounds (repeatColumn);
     tempoSource.setBounds (tempoColumn);
     bpm->setBounds (bpmColumn);
+
+    // Right after "Plays once from bar", centred on the hint line.
+    startBar->setBounds (triggerColumn.getX() + textWidth (hintFont(), startBarLead) + startBarGap,
+                         hintTop + (hintHeight - startBarHeight) / 2, startBarWidth, startBarHeight);
 
     // Preview and Export line up with the inspector above them.
     outputDividerX = inspectorLeft;

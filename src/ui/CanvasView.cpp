@@ -100,6 +100,7 @@ struct CanvasView::Impl
         scale = processor.getScale();
         lengthIndex = currentLengthIndex();
         timeSignature = processor.getTimeSignature();
+        firstBar = processor.getSinglePassStartBar();
     }
 
     // ---- geometry ------------------------------------------------------------------------
@@ -490,17 +491,19 @@ struct CanvasView::Impl
 
     void pollParameters()
     {
-        // The length and the host's time signature change no plan, and a scale change shows
-        // before the new plan arrives.
+        // The length, the host's time signature and where in the song the drawing plays change
+        // no plan, and a scale change shows before the new plan arrives.
         const auto newLength = currentLengthIndex();
         const auto newScale = processor.getScale();
         const auto newSignature = processor.getTimeSignature();
+        const auto newFirstBar = processor.getSinglePassStartBar();
 
-        if (newLength != lengthIndex || newScale != scale || newSignature != timeSignature)
+        if (newLength != lengthIndex || newScale != scale || newSignature != timeSignature || newFirstBar != firstBar)
         {
             lengthIndex = newLength;
             scale = newScale;
             timeSignature = newSignature;
+            firstBar = newFirstBar;
             owner.repaint();
         }
     }
@@ -539,7 +542,7 @@ struct CanvasView::Impl
             g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
             g.drawImage (picture, a);
 
-            const auto marks = axes::timeMarks (lengthIndex, timeSignature.numerator, timeSignature.denominator, a.getWidth());
+            const auto marks = axes::timeMarks (lengthIndex, timeSignature.numerator, timeSignature.denominator, a.getWidth(), firstBar);
             axes::drawFrequencyGrid (g, a, scale, juce::Colours::white.withAlpha (0.06f));
             axes::drawTimeGrid (g, a, marks, juce::Colours::white.withAlpha (0.09f), juce::Colours::white.withAlpha (0.035f));
 
@@ -709,7 +712,7 @@ struct CanvasView::Impl
 
         if (g.clipRegionIntersects (timeAxis.getSmallestIntegerContainer()))
             axes::drawTimeLabels (g, timeAxis, a, axes::timeMarks (lengthIndex, timeSignature.numerator,
-                                                                    timeSignature.denominator, a.getWidth()));
+                                                                    timeSignature.denominator, a.getWidth(), firstBar));
     }
 
     void paintBrushCursor (juce::Graphics& g)
@@ -782,6 +785,7 @@ struct CanvasView::Impl
     FrequencyScale scale;
     int lengthIndex = params::defaultLengthIndex;
     juce::AudioPlayHead::TimeSignature timeSignature;  // the host's, for the bar and beat grid
+    int firstBar = 0;   // the song's bar the drawing plays at (a single Transport pass), else 0
 
     bool playheadShown = false;
     float playheadX = 0.0f;

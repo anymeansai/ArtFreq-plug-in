@@ -25,11 +25,11 @@ any analyser with a scrolling spectrogram) on the output and the drawing scrolls
 5. **The engine** (`dsp/ArtEngine.h`) plays the plan on the audio thread: one sine per line,
    amplitudes interpolated across columns, click-free fades on start/stop/retrigger/bypass,
    crossfades when the plan changes.
-6. **The tracker** (`dsp/PlayheadTracker.h`) decides the position in the drawing: follow the
-   DAW transport (loop every length, starting on the host's bar lines, in its time signature;
-   tempo changes and ramps bend the position, only relocations jump), play once per MIDI note
-   (ended early by All Notes Off, All Sound Off or the DAW stopping), or free loop; tempo from
-   the host or typed in.
+6. **The tracker** (`dsp/PlayheadTracker.h`) decides the position in the drawing (see
+   [Trigger](#trigger)): follow the DAW transport (once, from a bar of the song, or with Repeat
+   looping every length on the host's bar lines; tempo changes and ramps bend the position, only
+   relocations jump), or play per MIDI note (once, or with Repeat looping while a note is held);
+   tempo from the host or typed in. Nothing plays by itself: without the DAW, only Preview does.
 
 Why sound and not MIDI: a spectrogram shows the frequencies present at each moment. MIDI notes
 can only make the few pitches of a synth patch, on a semitone grid, with harmonics drawn on top;
@@ -54,7 +54,9 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | density | Density | 16..1024 lines | 256 | no |
 | contrast | Contrast | 12..72 dB | 40 dB | no |
 | length | Length | 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars, 16 bars, 32 bars | 4 bars | yes |
-| trigger | Trigger | Transport, MIDI note, Free loop | Transport | yes |
+| trigger | Trigger | Transport, MIDI note | Transport | yes |
+| repeat | Repeat | Off, On | Off | yes |
+| startBar | Start bar | 1..999 | 1 | yes |
 | tempoSource | Tempo | Host, Manual | Host | yes |
 | bpm | BPM | 20..300 | 120 | yes |
 | scale | Analyser scale | Log, Linear, Mel | Log | no |
@@ -67,12 +69,57 @@ wall-clock time, not in step with the audio): automated, they would land late, a
 different on every faster-than-real-time bounce. So, like the analyser settings, they are not
 automation targets.
 
+Repeat and Start bar were added after 0.1 (parameter version hint 2). A saved parameter tree
+that lacks a parameter loads it at its default (Repeat off, bar 1), not at whatever the instance
+had; FreqArt 0.1's third trigger, "Free loop" (index 2, or its name), loads as Transport with
+Repeat on, the nearest thing left (a plain clamp to the two choices would make it MIDI note).
+Host automation lanes recorded on the old three-choice Trigger cannot be rewritten: there,
+Free loop now reads as MIDI note.
+
 State = APVTS tree + document tree + editor size, saved as XML in binary (`copyXmlToBinary`).
 Neither the drawing nor the editor size is a parameter, so edits, undo/redo and resizes tell the
 host the project changed (`updateHostDisplay` with `nonParameterStateChanged`); loading state
 does not. Each picture is PNG-encoded once and its text kept while any document or undo step
 still holds the picture (a loaded picture keeps the text it was loaded from), and a load keeps
 the loaded tree as the state to save, so saving after an edit or a load encodes nothing again.
+
+## Trigger
+
+When the drawing plays is the Trigger (Transport | MIDI note) and Repeat (off by default). The
+producer's rule: nothing plays by itself, and loops only while something is playing.
+
+| | Repeat off | Repeat on |
+| --- | --- | --- |
+| **Transport** | Once: from the start of bar *Start bar* to *Length* later, following the DAW's timeline. Start the DAW inside it and it plays from there; before and after it is silent; a DAW loop over it plays it each time round. | Loops every *Length*, on the host's bar lines (bar 1, 1 + Length, ...), while the DAW plays. |
+| **MIDI note** | Each note-on plays it once from the start (a new one restarts it); note-offs are ignored. | A note-on starts it (a new one restarts it) and it loops while any key is down; letting go of the last fades it out. |
+
+- Bar N is the DAW's bar N, on the host's ppq, also with a typed-in tempo (which then only sets
+  how fast the pass plays from where the DAW reaches its start bar); the pass lasts Length in the
+  start bar's time signature. VST3 gives no bar numbers, so the tracker keeps the pass's place in
+  the song. When playback starts or moves to before it, bar N is (N - 1) x quarterNotesPerBar
+  quarter notes from the song start in the current signature (assumed constant from the song
+  start), moved to the nearest of the host's bar lines (`ppqPositionOfLastBarStart`; the earlier
+  one half way), so it is always on a bar line, and the DAW's bar N after a shorter odd bar. While
+  the song plays towards it the bars still to go are counted in the bar it is in, so a signature
+  change on the way (an odd bar, a new section) moves it with the bars; from its start on it stays
+  put, so a change at, inside or after it moves nothing and a DAW loop over it plays the same pass
+  (also after moving back into bars already counted). Only starting the DAW between a signature
+  change and the start bar, without having played through the change, places it by the
+  assumption.
+- The edges of a single pass fade like a gate: the 5 ms fade-in starts at the pass's first
+  sample, and the gate closes 5 ms (and a sample) before its end so the fade-out ends with the
+  drawing, as a bounce and a MIDI one-shot do. A relocation into the middle fades the old sound
+  out first.
+- All Notes Off, All Sound Off and the DAW stopping end a MIDI pass either way and forget the keys
+  held (so a missed note-off cannot keep a later note looping); notes while the DAW is stopped
+  still play.
+- **Preview** (the footer's play button) plays from the start whatever the trigger: with Repeat
+  on a loop until pressed again, without it once, after which the button turns itself off (the
+  audio thread clears the press it played, never a newer one).
+- **Bounce WAV** always renders one pass.
+- Changing Trigger, Repeat or the start bar while playing moves to wherever the new setting puts
+  the position, with a jump fade when it does not follow on (turning Repeat off inside the single
+  pass, at the same place as the loop, carries on seamlessly).
 
 ## Interface
 
@@ -118,7 +165,7 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 |            |                                                      |                  |
 |            |  time axis 22 (bars/beats)                           |                  |
 +-------------------------------------------------------------------+------------------+
-| Footer 112: DENSITY  CONTRAST  LEVEL | LENGTH  TRIGGER  TEMPO [Host|Manual] BPM | PREVIEW | EXPORT |
+| Footer 112: DENSITY CONTRAST LEVEL | LENGTH TRIGGER [Repeat] TEMPO [Host|Manual] BPM | PREVIEW | EXPORT |
 +--------------------------------------------------------------------------------------+
 ```
 
@@ -130,7 +177,9 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   Faint frequency grid lines (from `gridFrequencies`) and bar/beat lines.
 - Hz labels on the left axis; bar/beat labels along the bottom (e.g. "1", "2", "3", "4" for
   4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
-  bar in 3/4, six eighths in 6/8).
+  bar in 3/4, six eighths in 6/8). When the drawing plays once at a bar of the song (Transport,
+  Repeat off) they are the song's bars: "9", "10", "11", "12" for 4 bars from bar 9 (under a bar,
+  the beats of that bar: "9", "9.2").
 - Playhead: a 2 px accent2 vertical line at the play position while sounding.
 - **Select tool**: click an object to select it (the selected object if the point is inside it,
   else the top-most whose rectangle contains the point); selected object shows its rectangle
@@ -179,9 +228,19 @@ while visible.
 
 - Three rotary knobs with value read-outs: Density ("256 lines"), Contrast ("40 dB"),
   Level ("-6.0 dB"). Drag, Shift = fine, double-click = default, double-click value = type.
-- Length combo; Trigger segmented (Transport | MIDI | Loop); Tempo segmented (Host | Manual)
-  with a BPM field (editable when Manual; shows the host tempo greyed when Host).
-- Preview: a round play/stop button (accent2 when on). Plays the drawing on a loop.
+- Length combo; Trigger segmented (Transport | MIDI) with a Repeat switch beside it (a
+  one-segment control with a repeat icon, lit like a chosen segment when on); Tempo segmented
+  (Host | Manual) with a BPM field (editable when Manual; shows the host tempo greyed when Host).
+  Columns at 100 %: Length 96, Trigger 124 + 6 + Repeat 78, Tempo 108 + 8 + BPM 56, 16 apart,
+  ending 24 before the Preview column.
+- The hint line under each column says what it does: "8 s per pass"; under Trigger "Plays once
+  from bar [1]", "Repeats every 4 bars from bar 1", "Each note plays it once" or "Loops while a
+  note is held"; "From the DAW" / "Typed in". In "Plays once from bar [1]" the number is the
+  start bar field (shown only for Transport without Repeat): the BPM field's look at 20 px tall
+  with 12 px mono figures, as the knobs' values in the same line; drag up/down (Shift = fine),
+  click to type, Enter commits, Esc cancels, out-of-range values clamp to 1..999.
+- Preview: a round play/stop button (accent2 when on). Plays the drawing from its start, on a
+  loop with Repeat, else once (then it turns itself off).
 - Export: "Bounce WAV" button renders one pass in the background; then a draggable chip
   "FreqArt.wav  (drag into your DAW)" plus "Save..." (async FileChooser). Every bounce is a new
   file, FreqArt-<uuid>.wav in a FreqArt folder in the temp directory, so no bounce (of this
@@ -206,7 +265,8 @@ Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawin
 
 Short numbered steps: put FreqArt on an instrument track; open a spectrogram (MiniMeters) on the
 output; match scale/range in Settings; add text/image/paint; choose a band and density; press
-play in the DAW (or Preview); Trigger modes explained; bounce to WAV. Plus tips: highs show the
+play in the DAW (or Preview, once or on a loop); Trigger modes and Repeat explained (nothing
+plays by itself); bounce to WAV. Plus tips: highs show the
 sharpest detail; the lowest octaves are coarse in every analyser; raise Density for solid
 shapes, lower for a scan-line look.
 
@@ -216,12 +276,22 @@ shapes, lower for a scan-line look.
 background, transparency, outline); text rendering coverage; compositor placement; plan
 (frequencies, spacing, normalisation, contrast, slope); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
-speed); tracker (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and
-their end, all-offs and stop, free loop, preview, jumps); end-to-end: a canvas rendered to audio
-and analysed back must correlate with the canvas; processor (state round trip, process with
-MIDI, panic, bypass fades, time signature, level/clipper bound); WAV export (and cancelling it);
+speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass from a
+start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
+a host loop over it, the host's meter and tempo, time-signature changes before, at, inside and
+after it and odd bars, a typed-in tempo starting on the DAW's bar, its fades through the engine;
+MIDI one-shots and their end, hold-to-loop with overlapping notes and releases, all-offs and stop;
+preview once and looping; jumps); end-to-end: a canvas rendered to audio and analysed back must
+correlate with the canvas; processor (state round trip, defaults, states from before Repeat and
+the Free-loop migration, a single pass and a held MIDI loop through the processor, a single pass
+through time-signature changes and at a typed tempo, preview following Repeat, process with MIDI,
+panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (and
+cancelling it);
 the editor, driven with synthetic events (bounce files, undo steps of wheel and arrow gestures,
 clicking and placing objects, the live view's span, unreadable pictures; under a virtual display
 on Linux).
 
-`FreqArtSnapshot <dir>` renders the editor in its main states to PNG.
+`FreqArtSnapshot <dir>` renders the editor in its main states to PNG (Repeat, MIDI with Repeat,
+a start bar and typing one among them, and the window at 75, 100, 150 and 200 %), and checks the
+footer's controls by driving them: Trigger, Repeat, the start bar field (drag, type, Enter, Esc,
+clamping), the hint line, Preview stopping by itself without Repeat, and the layout.

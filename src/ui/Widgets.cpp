@@ -109,7 +109,7 @@ void SegmentedControl::setSelectedIndex (int index, juce::NotificationType notif
 namespace
 {
     /** Segment rectangles: each wide enough for its text, the spare width shared out evenly, so
-        "Transport | MIDI | Loop" does not squeeze "Transport" while short labels stay even. */
+        "Transport | MIDI" does not squeeze "Transport" while short labels stay even. */
     std::vector<juce::Rectangle<float>> segmentRects (const juce::StringArray& options, juce::Rectangle<float> area, int height)
     {
         std::vector<juce::Rectangle<float>> rects;

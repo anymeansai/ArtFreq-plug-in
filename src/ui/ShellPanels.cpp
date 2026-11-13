@@ -362,7 +362,8 @@ namespace
                               "analyser will show." } },
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
                                                        "in the panel on the right. Density sets how many lines draw it." } },
-            { "6", { "Press play in your DAW.", "Or press Preview to hear the drawing on a loop while the DAW is stopped." } },
+            { "6", { "Press play in your DAW.", "Or press Preview to hear the drawing while the DAW is stopped "
+                                                "(once, or on a loop with Repeat)." } },
             { "7", { "Bounce to WAV.", "Export renders one pass. Drag the file into your DAW, or save it." } },
         };
         return steps;
@@ -371,9 +372,11 @@ namespace
     const std::vector<Paragraph>& triggerModes()
     {
         static const std::vector<Paragraph> modes {
-            { "Transport.", "Follows the DAW: the drawing loops every Length, lined up with bar 1, while the DAW plays." },
-            { "MIDI note.", "Each note plays the drawing once from the start; a new note restarts it." },
-            { "Free loop.", "Plays and loops on its own, whatever the DAW does." },
+            { "Transport.", "Plays once with the DAW, from the bar set under Trigger. With Repeat it loops "
+                            "every Length." },
+            { "MIDI note.", "Each note plays the drawing once from the start. With Repeat it loops while a "
+                            "note is held." },
+            { "Nothing plays by itself.", "Stop the DAW and it stops; Preview plays it without the DAW." },
         };
         return modes;
     }
