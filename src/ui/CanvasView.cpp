@@ -91,6 +91,7 @@ struct CanvasView::Impl
         plan = processor.getCurrentPlan();
         scale = processor.getScale();
         lengthIndex = currentLengthIndex();
+        timeSignature = processor.getTimeSignature();
     }
 
     // ---- geometry ------------------------------------------------------------------------
@@ -438,14 +439,17 @@ struct CanvasView::Impl
 
     void pollParameters()
     {
-        // The length changes no plan, and a scale change shows before the new plan arrives.
+        // The length and the host's time signature change no plan, and a scale change shows
+        // before the new plan arrives.
         const auto newLength = currentLengthIndex();
         const auto newScale = processor.getScale();
+        const auto newSignature = processor.getTimeSignature();
 
-        if (newLength != lengthIndex || newScale != scale)
+        if (newLength != lengthIndex || newScale != scale || newSignature != timeSignature)
         {
             lengthIndex = newLength;
             scale = newScale;
+            timeSignature = newSignature;
             owner.repaint();
         }
     }
@@ -484,7 +488,7 @@ struct CanvasView::Impl
             g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
             g.drawImage (picture, a);
 
-            const auto marks = axes::timeMarks (lengthIndex, a.getWidth());
+            const auto marks = axes::timeMarks (lengthIndex, timeSignature.numerator, timeSignature.denominator, a.getWidth());
             axes::drawFrequencyGrid (g, a, scale, juce::Colours::white.withAlpha (0.06f));
             axes::drawTimeGrid (g, a, marks, juce::Colours::white.withAlpha (0.09f), juce::Colours::white.withAlpha (0.035f));
 
@@ -653,7 +657,8 @@ struct CanvasView::Impl
             axes::drawFrequencyLabels (g, frequencyAxis, a, scale);
 
         if (g.clipRegionIntersects (timeAxis.getSmallestIntegerContainer()))
-            axes::drawTimeLabels (g, timeAxis, a, axes::timeMarks (lengthIndex, a.getWidth()));
+            axes::drawTimeLabels (g, timeAxis, a, axes::timeMarks (lengthIndex, timeSignature.numerator,
+                                                                    timeSignature.denominator, a.getWidth()));
     }
 
     void paintBrushCursor (juce::Graphics& g)
@@ -725,6 +730,7 @@ struct CanvasView::Impl
     std::shared_ptr<const ArtPlan> plan;  // kept alive while it is shown
     FrequencyScale scale;
     int lengthIndex = params::defaultLengthIndex;
+    juce::AudioPlayHead::TimeSignature timeSignature;  // the host's, for the bar and beat grid
 
     bool playheadShown = false;
     float playheadX = 0.0f;

@@ -104,23 +104,32 @@ void drawFrequencyLabels (juce::Graphics& g, juce::Rectangle<float> axis, juce::
 
 }
 
-std::vector<TimeMark> timeMarks (int lengthIndex, float width)
+std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator, float width)
 {
     std::vector<TimeMark> marks;
 
-    const auto quarters = params::lengthInQuarterNotes (lengthIndex, 4.0);
+    if (numerator <= 0 || denominator <= 0)
+        numerator = denominator = 4;
+
+    // The bar as the processor plays it (the length helper keeps it within limits), in quarter
+    // notes, and the drawing's length in them.
+    constexpr int oneBar = 2;   // "1 bar" in params::lengthNames()
+    const auto bar = params::lengthInQuarterNotes (oneBar, static_cast<double> (numerator) * 4.0 / static_cast<double> (denominator));
+    const auto quarters = params::lengthInQuarterNotes (lengthIndex, bar);
 
     if (! (quarters > 0.0) || ! (width > 0.0f))
         return marks;
 
-    // A bar of 4/4 and its beats, or (under a bar) a beat and its sixteenths.
-    const auto underABar = quarters < 4.0;
-    const auto major = underABar ? 1.0 : 4.0;
-    const auto minor = underABar ? 0.25 : 1.0;
-    const auto numMajor = juce::jmax (1, juce::roundToInt (quarters / major));
-    const auto minorPerMajor = juce::roundToInt (major / minor);
-    const auto majorSpacing = width / static_cast<float> (numMajor);
-    const auto minorSpacing = majorSpacing / static_cast<float> (minorPerMajor);
+    // A bar and its beats, or (under a bar) a quarter-note beat and its sixteenths. Laid out in
+    // quarter notes, so a length that is not whole bars ("2 beats" in 3/8) ends on a short bar.
+    constexpr auto slack = 1.0e-9;
+    const auto underABar = quarters < bar - slack;
+    const auto major = underABar ? 1.0 : bar;
+    const auto minor = underABar ? 0.25 : bar / static_cast<double> (numerator);
+    const auto numMajor = juce::jmax (1, static_cast<int> (std::ceil (quarters / major - slack)));
+    const auto minorPerMajor = juce::jmax (1, juce::roundToInt (major / minor));
+    const auto majorSpacing = width * static_cast<float> (major / quarters);
+    const auto minorSpacing = width * static_cast<float> (minor / quarters);
 
     // Label every bar, or every 2nd, 4th, ... bar when they would crowd.
     auto labelEvery = 1;
@@ -134,7 +143,7 @@ std::vector<TimeMark> timeMarks (int lengthIndex, float width)
     {
         // When bars are thinned out, only the labelled ones get the stronger line.
         TimeMark mark;
-        mark.fraction = static_cast<double> (m) / static_cast<double> (numMajor);
+        mark.fraction = static_cast<double> (m) * major / quarters;
         mark.major = m % labelEvery == 0;
 
         if (mark.major)
@@ -147,9 +156,13 @@ std::vector<TimeMark> timeMarks (int lengthIndex, float width)
 
         for (int k = 1; k < minorPerMajor; ++k)
         {
+            const auto at = static_cast<double> (m) * major + static_cast<double> (k) * minor;
+
+            if (at >= quarters - slack)
+                break;   // the short last bar ends here
+
             TimeMark sub;
-            sub.fraction = (static_cast<double> (m) + static_cast<double> (k) / static_cast<double> (minorPerMajor))
-                         / static_cast<double> (numMajor);
+            sub.fraction = at / quarters;
 
             if (labelMinor)
                 sub.label = juce::String (m + 1) + "." + juce::String (k + 1);

@@ -2,13 +2,18 @@
 // loop and the preview, and when that position jumps.
 
 #include "TestFramework.h"
+#include "TestPlans.h"
 
 #include "dsp/PlayheadTracker.h"
 
 #include <cmath>
+#include <functional>
 #include <limits>
+#include <tuple>
+#include <utility>
 #include <vector>
 
+using freqart::ArtEngine;
 using freqart::HostTiming;
 using freqart::PlaySegment;
 using freqart::PlayheadTracker;
@@ -76,6 +81,48 @@ juce::MidiBuffer notesAt (std::initializer_list<int> samples)
         midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), sample);
 
     return midi;
+}
+
+/** A host playing through a tempo map: each block reports the tempo at its first sample and the
+    ppq counted sample by sample (as hosts with tempo tracks do, without splitting blocks at
+    tempo changes), from ppq 8. `relocateAt` moves the song on by a quarter note at that block.
+    Checks every block follows the host's ppq and returns how many after the first are jumps. */
+int jumpsThroughTempoMap (const std::function<double (int64_t sample)>& tempoAt, int numBlocks, int blockLength,
+                          int relocateAt = -1)
+{
+    PlayheadTracker tracker;
+    tracker.prepare (sampleRate);
+    const auto settings = settingsFor (TriggerMode::transport);
+    auto ppq = 8.0;
+    auto jumps = 0;
+    auto follows = true;
+
+    for (int b = 0; b < numBlocks; ++b)
+    {
+        const auto start = static_cast<int64_t> (b) * blockLength;
+
+        if (b == relocateAt)
+            ppq += 1.0;
+
+        HostTiming timing;
+        timing.isPlaying = true;
+        timing.bpm = tempoAt (start);
+        timing.ppqPosition = ppq;
+        timing.timeInSeconds = static_cast<double> (start) / sampleRate;
+
+        const auto segments = run (tracker, timing, settings, blockLength);
+        follows = follows && segments.size() == 1 && segments[0].playing
+                  && std::abs (segments[0].fraction - std::fmod (ppq, 16.0) / 16.0) < 1.0e-9;
+
+        if (b > 0 && segments[0].jump)
+            ++jumps;
+
+        for (int i = 0; i < blockLength; ++i)
+            ppq += tempoAt (start + i) / 60.0 / sampleRate;
+    }
+
+    CHECK (follows);
+    return jumps;
 }
 
 } // namespace
@@ -206,12 +253,17 @@ FREQART_TEST (trackerRelocationIsAJump)
     CHECK (segments[0].jump);
     CHECK_NEAR (segments[0].fraction, 10.0 / 16.0, 1.0e-12);
 
-    // Within two samples of where it should be: not a jump (hosts round). Three: a jump.
+    // Within 5 ms of where it should be: not a jump (hosts round, and some report the ppq
+    // unevenly). Further: a jump.
     auto ppq = 10.0 + blockQuarterNotes (120.0) + 1.5 * qnPerSample;
     segments = run (tracker, playingAt (ppq), settings);
     CHECK (! segments[0].jump);
 
-    ppq += blockQuarterNotes (120.0) + 3.0 * qnPerSample;
+    ppq += blockQuarterNotes (120.0) - 200.0 * qnPerSample;
+    segments = run (tracker, playingAt (ppq), settings);
+    CHECK (! segments[0].jump);
+
+    ppq += blockQuarterNotes (120.0) + 480.0 * qnPerSample;
     segments = run (tracker, playingAt (ppq), settings);
     CHECK (segments[0].jump);
 
@@ -223,6 +275,171 @@ FREQART_TEST (trackerRelocationIsAJump)
     const auto loop = run (tracker, playingAt (ppq + blockQuarterNotes (120.0)), settingsFor (TriggerMode::freeLoop, 8.0));
     CHECK (! loop[0].jump);
     CHECK_NEAR (loop[0].fraction, segments[0].fraction + block * rateFor (120.0, 8.0), 1.0e-12);
+}
+
+FREQART_TEST (trackerTempoChangesAreNotJumps)
+{
+    // A tempo change inside a block (the host reports it with the next block), small and large.
+    CHECK (jumpsThroughTempoMap ([] (int64_t s) { return s < 20 * 512 + 100 ? 120.0 : 100.0; }, 60, 512) == 0);
+    CHECK (jumpsThroughTempoMap ([] (int64_t s) { return s < 20 * 2048 + 10 ? 120.0 : 60.0; }, 60, 2048) == 0);
+    CHECK (jumpsThroughTempoMap ([] (int64_t s) { return s < 20 * 512 + 300 ? 120.0 : 121.0; }, 60, 512) == 0);
+
+    // A steep ramp, 120 to 180 over 4 s, in large blocks.
+    const auto ramp = [] (int64_t s) { return 120.0 + 60.0 * juce::jlimit (0.0, 1.0, static_cast<double> (s) / (4.0 * sampleRate)); };
+    CHECK (jumpsThroughTempoMap (ramp, 110, 2048) == 0);
+
+    // Host tempos outside 20..400: the drawing moves at the host's rate.
+    CHECK (jumpsThroughTempoMap ([] (int64_t) { return 450.0; }, 100, 512) == 0);
+    CHECK (jumpsThroughTempoMap ([] (int64_t) { return 15.0; }, 100, 512) == 0);
+
+    PlayheadTracker fast;
+    fast.prepare (sampleRate);
+    const auto segments = run (fast, playingAt (2.0, 450.0), settingsFor (TriggerMode::transport));
+    CHECK_NEAR (segments[0].fractionPerSample, rateFor (450.0, 16.0), 1.0e-15);
+
+    // A real relocation is still a jump, ramp or not.
+    CHECK (jumpsThroughTempoMap (ramp, 110, 2048, 50) == 1);
+    CHECK (jumpsThroughTempoMap ([] (int64_t) { return 120.0; }, 60, 512, 30) == 1);
+}
+
+FREQART_TEST (trackerManualTempoChangesWhilePlaying)
+{
+    // Transport with a typed-in tempo, a minute into the song: changing the BPM while playing
+    // (automation, or dragging the field) bends the position instead of jumping it.
+    PlayheadTracker tracker;
+    tracker.prepare (sampleRate);
+    auto settings = settingsFor (TriggerMode::transport);
+    settings.useHostTempo = false;
+    settings.manualBpm = 120.0;
+
+    auto seconds = 60.0;
+    const auto at = [&seconds] { return playingAt (seconds * 2.0, 120.0); };
+
+    auto segments = run (tracker, at(), settings);
+    CHECK_NEAR (segments[0].fraction, std::fmod (120.0, 16.0) / 16.0, 1.0e-9);   // anchored to the time
+
+    auto jumps = 0;
+    auto bends = true;
+
+    for (int b = 0; b < 300; ++b)
+    {
+        const auto expected = segments[0].fraction + block * segments[0].fractionPerSample;
+        seconds += block / sampleRate;
+        settings.manualBpm += b < 200 ? 0.02 : 0.0;
+
+        if (b == 250)
+            settings.manualBpm += 1.0;   // and a step
+
+        segments = run (tracker, at(), settings);
+        jumps += segments[0].jump ? 1 : 0;
+        bends = bends && std::abs (segments[0].fraction - (expected - std::floor (expected))) < 1.0e-9
+                && std::abs (segments[0].fractionPerSample - rateFor (settings.manualBpm, 16.0)) < 1.0e-15;
+    }
+
+    CHECK (jumps == 0);
+    CHECK (bends);
+
+    // Stopping and playing on from the same place continues; a relocation re-anchors (a jump).
+    seconds += block / sampleRate;
+    HostTiming stopped = at();
+    stopped.isPlaying = false;
+    run (tracker, stopped, settings);
+    CHECK (! run (tracker, at(), settings)[0].jump);
+
+    seconds = 30.0;
+    segments = run (tracker, at(), settings);
+    CHECK (segments[0].jump);
+    CHECK_NEAR (segments[0].fraction, std::fmod (30.0 * settings.manualBpm / 60.0, 16.0) / 16.0, 1.0e-9);
+}
+
+FREQART_TEST (trackerStartsOnTheHostsBarLines)
+{
+    // A song of one 4/4 bar, then 3/4 bars from ppq 4 (or a 2/4 pickup bar, then 4/4), played
+    // in 32-sample blocks at 120 BPM with the host reporting where each bar starts.
+    struct Meter { double from, quarterNotesPerBar; };
+
+    const auto play = [] (std::vector<Meter> meters, double barsPerLength, std::vector<double> barStarts)
+    {
+        PlayheadTracker tracker;
+        tracker.prepare (sampleRate);
+        auto jumps = 0;
+        std::vector<double> positionsAtBars;
+
+        for (int b = 0; b < 16 * 750; ++b)   // 16 quarter notes of 24000 samples
+        {
+            const auto ppq = b * 32.0 / 24000.0;
+            auto meter = meters.front();
+
+            for (const auto& m : meters)
+                if (ppq >= m.from - 1.0e-9)
+                    meter = m;
+
+            auto barStart = meter.from;
+
+            while (barStart + meter.quarterNotesPerBar <= ppq + 1.0e-9)
+                barStart += meter.quarterNotesPerBar;
+
+            auto timing = playingAt (ppq);
+            timing.ppqPositionOfLastBarStart = barStart;
+
+            auto settings = settingsFor (TriggerMode::transport, barsPerLength * meter.quarterNotesPerBar);
+            settings.quarterNotesPerBar = meter.quarterNotesPerBar;
+
+            if (barsPerLength < 1.0)
+                settings.lengthQuarterNotes = 1.0;   // "1 beat"
+
+            const auto segments = run (tracker, timing, settings, 32);
+            jumps += b > 0 && segments[0].jump ? 1 : 0;
+
+            for (const auto bar : barStarts)
+                if (std::abs (ppq - bar) < 1.0e-6)
+                    positionsAtBars.push_back (segments[0].fraction);
+        }
+
+        return std::make_pair (jumps, positionsAtBars);
+    };
+
+    // (A host's ppq can be a hair short of the bar start it reports: 0.9999... is 0.)
+    const auto near = [] (double position, double target)
+    {
+        const auto difference = position - target;
+        return std::abs (difference - std::round (difference)) < 1.0e-6;
+    };
+
+    // "1 bar": every bar starts the drawing, before and after the change, which is seamless.
+    auto [jumps, positions] = play ({ { 0.0, 4.0 }, { 4.0, 3.0 } }, 1.0, { 4.0, 7.0, 10.0, 13.0 });
+    CHECK (jumps == 0);
+    CHECK (positions.size() == 4);
+
+    for (const auto position : positions)
+        CHECK (near (position, 0.0));
+
+    // "4 bars": bar lines land on the drawing's bar lines.
+    std::tie (jumps, positions) = play ({ { 0.0, 4.0 }, { 4.0, 3.0 } }, 4.0, { 4.0, 7.0, 10.0, 13.0 });
+    CHECK (jumps == 0);
+    CHECK (positions.size() == 4);
+
+    for (size_t i = 0; i < positions.size(); ++i)
+        CHECK (near (positions[i], 0.25 * static_cast<double> ((i + 1) % 4)));
+
+    // A 2/4 pickup bar: the 4/4 bars still start on the drawing's bar lines.
+    std::tie (jumps, positions) = play ({ { 0.0, 2.0 }, { 2.0, 4.0 } }, 1.0, { 2.0, 6.0, 10.0, 14.0 });
+    CHECK (jumps == 0);
+
+    for (const auto position : positions)
+        CHECK (near (position, 0.0));
+
+    std::tie (jumps, positions) = play ({ { 0.0, 2.0 }, { 2.0, 4.0 } }, 4.0, { 6.0, 10.0, 14.0 });
+
+    for (const auto position : positions)
+        CHECK (near (position * 4.0, std::round (position * 4.0)));
+
+    // "1 beat" in 7/8 (bars of 3.5 quarter notes): each bar starts it again.
+    std::tie (jumps, positions) = play ({ { 0.0, 3.5 } }, 0.0, { 3.5, 7.0, 10.5, 14.0 });
+    CHECK (positions.size() == 4);
+
+    for (const auto position : positions)
+        CHECK (near (position, 0.0));
 }
 
 FREQART_TEST (trackerStoppedIsNotPlaying)
@@ -280,7 +497,9 @@ FREQART_TEST (trackerMidiOneShot)
     CHECK_NEAR (segments[1].fraction, 0.0, 1.0e-15);
     CHECK_NEAR (segments[1].fractionPerSample, rate, 1.0e-15);
 
-    // It plays to the end of the drawing, then stops, splitting that block.
+    // It plays until the gate's fade-out just fits before the end of the drawing, then stops,
+    // splitting that block.
+    const auto fade = ArtEngine::gateFadeSeconds * sampleRate;
     auto played = segments[1].length;
     auto endChecked = false;
 
@@ -299,17 +518,120 @@ FREQART_TEST (trackerMidiOneShot)
 
             if (segment.start + segment.length < block)
             {
-                // The last playing sample is before 1, the next would be at or past it.
-                CHECK_LESS (segment.fraction + (segment.length - 1) * rate, 1.0);
-                CHECK_GREATER (segment.fraction + segment.length * rate, 1.0 - 1.0e-9);
+                // The fade-out after the last playing sample ends before 1, and only just.
+                CHECK_LESS (segment.fraction + (segment.length + fade) * rate, 1.0);
+                CHECK_GREATER (segment.fraction + (segment.length + fade + 3.0) * rate, 1.0);
+                CHECK (segment.once);
                 endChecked = true;
             }
         }
     }
 
     CHECK (endChecked);
-    CHECK_NEAR (played, 24000, 1);
+    CHECK_NEAR (played, 24000 - fade, 2);
     CHECK (! segments.back().playing);
+}
+
+FREQART_TEST (trackerMidiOneShotEndsWithTheDrawing)
+{
+    // A one-shot through the engine, 1 bar at 120 (96000 samples), with sound only at the very
+    // start of the drawing: nothing of that start comes back at the end, neither while the last
+    // column plays nor during the fade-out after it.
+    const auto settings = settingsFor (TriggerMode::midiNote, 4.0);
+    const auto passSamples = 96000;
+    const auto atStart = test::makePlan ({ 5000.0f }, [] (int column, int) { return column < 20 ? 0.3f : 0.0f; });
+    const auto everywhere = test::makeConstantPlan ({ 5000.0f }, 0.3f);
+
+    const auto playOnce = [&] (const freqart::ArtPlan& plan)
+    {
+        PlayheadTracker tracker;
+        tracker.prepare (sampleRate);
+        ArtEngine engine;
+        engine.prepare (sampleRate, block);
+        engine.setPlan (&plan);
+
+        std::vector<float> out;
+        PlaySegment segments[PlayheadTracker::maxSegments];
+
+        for (int start = 0; start < passSamples + 12000; start += block)
+        {
+            const auto midi = start == 0 ? notesAt ({ 0 }) : juce::MidiBuffer();
+            const auto count = tracker.process ({}, midi, block, settings, segments);
+            std::vector<float> chunk (static_cast<size_t> (block));
+            engine.render (chunk.data(), block, segments, count);
+            out.insert (out.end(), chunk.begin(), chunk.end());
+        }
+
+        CHECK (! engine.isSounding());
+        return out;
+    };
+
+    const auto start = playOnce (*atStart);
+    CHECK_GREATER (test::peak (start, 0, 1500), 0.25);
+    CHECK (test::peak (start, 3000) <= 0.0);
+
+    // Sound up to the end: it fades out with the drawing, without a step, and is gone at its end.
+    const auto full = playOnce (*everywhere);
+    const auto fade = static_cast<size_t> (ArtEngine::gateFadeSeconds * sampleRate);
+    CHECK_GREATER (test::peak (full, passSamples - fade - 200, passSamples - fade - 2), 0.28);
+    CHECK (test::peak (full, passSamples) <= 0.0);
+    const auto fadeSlope = 1.5 / (ArtEngine::gateFadeSeconds * sampleRate) * 0.3;
+    CHECK_LESS (test::largestStep (full, 1000), test::sineStepBound ({ 5000.0f }, { 0.3f }, sampleRate) + fadeSlope + 1.0e-4);
+}
+
+FREQART_TEST (trackerMidiPassEndsOnAllOffAndStop)
+{
+    const auto settings = settingsFor (TriggerMode::midiNote);   // 4 bars: 8 s at 120
+    HostTiming stopped;
+    stopped.bpm = 120.0;
+
+    const auto stillPlaying = [&] (PlayheadTracker& tracker, const HostTiming& timing)
+    {
+        auto playing = false;
+
+        for (int b = 0; b < 20; ++b)
+            for (const auto& segment : run (tracker, timing, settings))
+                playing = playing || segment.playing;
+
+        return playing;
+    };
+
+    // All Notes Off and All Sound Off end the pass where they are; a plain note-off does not.
+    for (const auto& message : { juce::MidiMessage::allNotesOff (1), juce::MidiMessage::allSoundOff (16) })
+    {
+        PlayheadTracker tracker;
+        tracker.prepare (sampleRate);
+        run (tracker, stopped, settings, block, notesAt ({ 0 }));
+
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOff (1, 60), 100);
+        midi.addEvent (message, 200);
+        const auto segments = run (tracker, stopped, settings, block, midi);
+        CHECK (covers (segments, block));
+        CHECK (segments.size() == 2);
+        CHECK (segments[0].playing && segments[0].length == 200);
+        CHECK (! segments[1].playing);
+        CHECK (! stillPlaying (tracker, stopped));
+
+        // A note afterwards plays again.
+        const auto again = run (tracker, stopped, settings, block, notesAt ({ 50 }));
+        CHECK (again.size() == 2 && again[1].playing && again[1].jump);
+    }
+
+    // The transport stopping ends a pass; notes while it stays stopped still play.
+    PlayheadTracker tracker;
+    tracker.prepare (sampleRate);
+    const auto playing = playingAt (8.0);
+    run (tracker, playing, settings, block, notesAt ({ 0 }));
+    CHECK (run (tracker, playing, settings)[0].playing);
+
+    auto segments = run (tracker, stopped, settings);
+    CHECK (segments.size() == 1 && ! segments[0].playing);
+    CHECK (! stillPlaying (tracker, stopped));
+
+    segments = run (tracker, stopped, settings, block, notesAt ({ 0 }));
+    CHECK (segments[0].playing);
+    CHECK (stillPlaying (tracker, stopped));
 }
 
 FREQART_TEST (trackerMidiRetrigger)

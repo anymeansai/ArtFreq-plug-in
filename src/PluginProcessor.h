@@ -106,6 +106,10 @@ public:
     double getEffectiveTempo() const noexcept;
     double getLengthSeconds() const noexcept;
 
+    /** The host's time signature as the audio thread last saw it (4/4 until a host gives one):
+        the length in bars and the canvas's bar and beat grid follow it. */
+    juce::AudioPlayHead::TimeSignature getTimeSignature() const noexcept { return timeSignature.load(); }
+
     LiveAnalyzer& getAnalyzer() noexcept { return analyzer; }
 
     /** The output level as a linear gain (for the WAV export). */
@@ -129,6 +133,7 @@ private:
     TrackerSettings currentTrackerSettings() const noexcept;
     void renderChunk (float* out, int numSamples, const HostTiming& timing, const juce::MidiBuffer& midi,
                       const TrackerSettings& settings) noexcept;
+    void writeOutput (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept;
 
     juce::AudioProcessorValueTreeState parameters;
 
@@ -161,7 +166,9 @@ private:
     std::atomic<double> playPosition { 0.0 };
     std::atomic<bool> sounding { false };
     std::atomic<double> effectiveTempo { 120.0 };
-    std::atomic<double> quarterNotesPerBar { 4.0 };
+    std::atomic<juce::AudioPlayHead::TimeSignature> timeSignature { juce::AudioPlayHead::TimeSignature {} };
+    static_assert (std::atomic<juce::AudioPlayHead::TimeSignature>::is_always_lock_free,
+                   "the audio thread stores the time signature: it must not lock");
 
     // audio thread
     ArtEngine engine;
