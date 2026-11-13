@@ -31,6 +31,12 @@ struct PlanSettings
     float slopeDbPerOctave = 0.0f;  // tilt of the user's analyser, compensated (pivot 1 kHz)
     float minLineSpacingHz = 25.0f; // closer lines beat audibly and visibly: they are merged
     float maxFrequencyHz = 20000.0f;// lines above this are dropped (kept below Nyquist by the engine too)
+
+    // How the low end is drawn. 0 = separate lines at least minLineSpacingHz apart (the lows
+    // show as stripes). Other values are reserved for the "smooth lows" prototypes that
+    // FreqArtLab (tools/LowsLab.cpp) compares; buildPlan ignores it for now, and the
+    // processor always leaves it at 0 (it only compares it, so a change would rebuild the plan).
+    int lowMethod = 0;
 };
 
 struct ArtPlan

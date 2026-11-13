@@ -16,7 +16,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(FREQART_BUILD_TESTS "Build the test runner" ON)
-option(FREQART_BUILD_TOOLS "Build the headless UI snapshot tool" ON)
+option(FREQART_BUILD_TOOLS "Build the headless UI snapshot tool and the lows lab" ON)
 option(FREQART_COPY_PLUGIN_AFTER_BUILD "Copy the built plug-in into the user's VST3 folder" OFF)
 option(FREQART_ENABLE_LTO "Enable link-time optimisation in Release builds" ON)
 
@@ -174,6 +174,28 @@ if(FREQART_BUILD_TOOLS)
         ${FREQART_STANDALONE_DEFINITIONS}
         JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries(FreqArtSnapshot
+        PRIVATE
+            FreqArtAssets
+            ${FREQART_JUCE_MODULES}
+        PUBLIC
+            FreqArtBuildFlags)
+
+    # The lows lab: renders test drawings through the real plan and engine, analyses the sound
+    # like a spectrogram would and measures how the 30 Hz - 2 kHz part of it looks (PNGs and
+    # metrics), so different ways of drawing the lows can be compared by numbers.
+    juce_add_console_app(FreqArtLab PRODUCT_NAME "FreqArtLab")
+    target_sources(FreqArtLab PRIVATE
+        tools/LowsLab.cpp
+        ${FREQART_PLUGIN_SOURCES}
+        ${FREQART_CORE_SOURCES}
+        ${FREQART_DSP_SOURCES}
+        ${FREQART_UI_SOURCES})
+    target_include_directories(FreqArtLab PRIVATE src)
+    target_compile_definitions(FreqArtLab PRIVATE
+        ${FREQART_COMMON_DEFINITIONS}
+        ${FREQART_STANDALONE_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(FreqArtLab
         PRIVATE
             FreqArtAssets
             ${FREQART_JUCE_MODULES}
