@@ -46,6 +46,10 @@ public:
     /** Asks the inspector to put the keyboard focus in the text field (after "Add text"). */
     std::function<void()> focusTextField;
 
+    /** Shows a short message over the canvas for a few seconds (a picture that could not be
+        read). Set by the editor. */
+    std::function<void (const juce::String&)> showNotice;
+
 private:
     Tool tool = Tool::select;
     float brushSize = 16.0f;

@@ -2,9 +2,19 @@
 
 #include "core/Compositor.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <limits>
+#include <utility>
+
+// On a Mac, JUCE decodes pictures with macOS itself (ImageIO, through CoreImage), which reads
+// more than PNG, JPEG and GIF; elsewhere JUCE's own decoders read only those three.
+#if JUCE_MAC && USE_COREGRAPHICS_RENDERING && JUCE_USE_COREIMAGE_LOADER
+ #define FREQART_READS_PICTURES_WITH_MACOS 1
+#else
+ #define FREQART_READS_PICTURES_WITH_MACOS 0
+#endif
 
 namespace freqart::ui::actions
 {
@@ -14,6 +24,17 @@ namespace
     constexpr float defaultEnd = 0.96f;
     constexpr float droppedSpan = 0.4f;       // a dropped picture covers 40 % of the length
     constexpr double bandTolerance = 0.01;    // bandOf: 1 % of the canvas height
+    constexpr float placementStep = 0.04f;    // newObjectPlacement: how far each fallback start moves
+    constexpr int maxPlacementSteps = 11;     // ... up to 48 % of the length
+    constexpr float overlapTolerance = 1.0e-4f;   // rectangles that only touch do not overlap
+
+   #if FREQART_READS_PICTURES_WITH_MACOS
+    constexpr const char* pictureExtensions = "png;jpg;jpeg;gif;heic;heif;webp;tif;tiff;bmp";
+    constexpr const char* pictureNames = "PNG, JPEG, GIF, HEIC, WebP, TIFF or BMP";
+   #else
+    constexpr const char* pictureExtensions = "png;jpg;jpeg;gif";
+    constexpr const char* pictureNames = "PNG, JPEG or GIF";
+   #endif
 
     const juce::Identifier chooserProperty { "freqartImageChooser" };
 
@@ -59,15 +80,87 @@ namespace
 
         return best;
     }
+
+    /** Gives `object` the place newObjectPlacement found. */
+    void placeNewObject (ArtObject& object, const FreqArtProcessor& processor)
+    {
+        const auto place = newObjectPlacement (processor.getDocument(), processor.getScale());
+        object.startTime = place.startTime;
+        object.endTime = place.endTime;
+        object.lowHz = place.lowHz;
+        object.highHz = place.highHz;
+    }
 } // namespace
 
 //==============================================================================
+ArtObject newObjectPlacement (const ArtDocument& document, const FrequencyScale& scale)
+{
+    const auto spot = [&scale] (Band band, float start, float end)
+    {
+        const auto range = bandRange (band, scale);
+        ArtObject place;
+        place.startTime = start;
+        place.endTime = end;
+        place.lowHz = static_cast<float> (range.low);
+        place.highHz = static_cast<float> (range.high);
+        return place;
+    };
+
+    const auto isFree = [&document, &scale] (const ArtObject& place)
+    {
+        const auto r = objectRectNorm (place, scale);
+
+        for (const auto& object : document.objects)
+        {
+            const auto overlap = r.getIntersection (objectRectNorm (object, scale));
+
+            if (overlap.getWidth() > overlapTolerance && overlap.getHeight() > overlapTolerance)
+                return false;
+        }
+
+        return true;
+    };
+
+    // Across the length first (the mid band, where the default text sits, then the high band,
+    // which shows the sharpest detail), then half the length.
+    const auto middle = (defaultStart + defaultEnd) * 0.5f;
+    const std::array<Band, 3> bands { Band::mid, Band::high, Band::low };
+
+    for (const auto band : bands)
+        if (const auto place = spot (band, defaultStart, defaultEnd); isFree (place))
+            return place;
+
+    for (const auto band : bands)
+        for (const auto& [start, end] : { std::pair (defaultStart, middle - 0.02f), std::pair (middle + 0.02f, defaultEnd) })
+            if (const auto place = spot (band, start, end); isFree (place))
+                return place;
+
+    // Everything is taken: never exactly on top of another object, so each can still be told
+    // apart and clicked (its left edge shows). The start moves along, up to the middle.
+    for (const auto band : bands)
+    {
+        for (int step = 1; step <= maxPlacementSteps; ++step)
+        {
+            const auto place = spot (band, defaultStart + placementStep * static_cast<float> (step), defaultEnd);
+            const auto taken = std::any_of (document.objects.begin(), document.objects.end(), [&place] (const ArtObject& object)
+            {
+                return std::abs (object.startTime - place.startTime) < placementStep * 0.5f
+                    && juce::approximatelyEqual (object.lowHz, place.lowHz)
+                    && juce::approximatelyEqual (object.highHz, place.highHz);
+            });
+
+            if (! taken)
+                return place;
+        }
+    }
+
+    return spot (Band::mid, defaultStart, defaultEnd);
+}
+
 void addText (FreqArtProcessor& processor, EditorState& state)
 {
-    const auto band = bandRange (Band::mid, processor.getScale());
-    auto object = ArtDocument::makeTextObject ("Text", static_cast<float> (band.low), static_cast<float> (band.high));
-    object.startTime = defaultStart;
-    object.endTime = defaultEnd;
+    auto object = ArtDocument::makeTextObject ("Text", 0.0f, 1.0f);
+    placeNewObject (object, processor);
 
     addAndSelect (processor, state, object);
 
@@ -78,8 +171,9 @@ void addText (FreqArtProcessor& processor, EditorState& state)
 void chooseImage (FreqArtProcessor& processor, EditorState& state, juce::Component& owner, bool replaceSelected)
 {
     juce::ReferenceCountedObjectPtr<ChooserHolder> holder (new ChooserHolder());
+    const auto patterns = "*." + juce::String (pictureExtensions).replace (";", ";*.");
     holder->chooser = std::make_unique<juce::FileChooser> (replaceSelected ? "Replace the picture" : "Add a picture",
-                                                           juce::File(), "*.png;*.jpg;*.jpeg;*.gif");
+                                                           juce::File(), patterns);
 
     // Replacing the property deletes a chooser opened earlier from the same component.
     owner.getProperties().set (chooserProperty, juce::var (holder.get()));
@@ -98,10 +192,13 @@ void chooseImage (FreqArtProcessor& processor, EditorState& state, juce::Compone
         if (file == juce::File())
             return;
 
-        const auto image = prepareImportedImage (loadImageFile (file));
+        const auto image = readPicture (file);
 
         if (! image.isValid())
+        {
+            reportUnreadablePicture (state, file);
             return;
+        }
 
         if (replaceSelected)
         {
@@ -119,10 +216,8 @@ void chooseImage (FreqArtProcessor& processor, EditorState& state, juce::Compone
             }
         }
 
-        const auto band = bandRange (Band::mid, processor.getScale());
-        auto object = ArtDocument::makeImageObject (image, static_cast<float> (band.low), static_cast<float> (band.high));
-        object.startTime = defaultStart;
-        object.endTime = defaultEnd;
+        auto object = ArtDocument::makeImageObject (image, 0.0f, 1.0f);
+        placeNewObject (object, processor);
         addAndSelect (processor, state, object);
     });
 }
@@ -130,7 +225,7 @@ void chooseImage (FreqArtProcessor& processor, EditorState& state, juce::Compone
 bool addImageFile (FreqArtProcessor& processor, EditorState& state, const juce::File& file,
                    juce::Point<float> normPosition)
 {
-    const auto image = prepareImportedImage (loadImageFile (file));
+    const auto image = readPicture (file);
 
     if (! image.isValid())
         return false;
@@ -146,6 +241,42 @@ bool addImageFile (FreqArtProcessor& processor, EditorState& state, const juce::
 
     addAndSelect (processor, state, object);
     return true;
+}
+
+bool isPictureFile (const juce::File& file)
+{
+    return file.hasFileExtension (pictureExtensions);
+}
+
+juce::String pictureFormatNames()
+{
+    return pictureNames;
+}
+
+juce::Image readPicture (const juce::File& file)
+{
+    auto image = loadImageFile (file);
+
+   #if FREQART_READS_PICTURES_WITH_MACOS
+    // JUCE passes a file to macOS's decoder only once its first bytes say PNG, JPEG or GIF.
+    // macOS reads the rest too (HEIC, WebP, TIFF, BMP, or a picture saved under the wrong
+    // extension), and on a Mac every JUCE decoder is that same decoder, so hand it over directly.
+    if (! image.isValid() && file.existsAsFile())
+    {
+        juce::FileInputStream stream (file);
+
+        if (stream.openedOk())
+            image = juce::PNGImageFormat().decodeImage (stream);
+    }
+   #endif
+
+    return prepareImportedImage (image);
+}
+
+void reportUnreadablePicture (EditorState& state, const juce::File& file)
+{
+    if (state.showNotice != nullptr)
+        state.showNotice ("Could not read " + file.getFileName() + ". Try a PNG or JPEG.");
 }
 
 void deleteSelected (FreqArtProcessor& processor, EditorState& state)

@@ -6,6 +6,8 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <functional>
+
 namespace freqart
 {
 
@@ -21,9 +23,13 @@ struct ExportSettings
 /** Renders the plan from position 0 to 1 over `seconds` with ArtEngine (gate on from the first
     sample, so the first 5 ms fade in, and a 5 ms fade-out at the end), applies `gain` and the
     same safety clipper as the plug-in (softClip), and writes a WAV file. Overwrites `target`.
-    Returns false and fills `error` on failure. Safe to call from a background thread. */
+    Returns false and fills `error` on failure. Safe to call from a background thread.
+
+    `shouldCancel`, if given, is asked once per block; when it returns true the render stops,
+    returns false (error "Cancelled") and leaves `target` as it was. */
 bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
-                      const juce::File& target, juce::String& error);
+                      const juce::File& target, juce::String& error,
+                      const std::function<bool()>& shouldCancel = nullptr);
 
 /** The plug-in's safety clipper: transparent below 0.89 (-1 dBFS), then a smooth curve that
     never exceeds 1.0 in magnitude. */

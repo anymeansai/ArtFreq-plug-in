@@ -42,6 +42,56 @@ namespace
 
     constexpr float helpDim = 0.55f;
     constexpr int refreshHz = 30;
+    constexpr int noticeMilliseconds = 6000;
+    constexpr int noticeHeight = 32;
+
+    //==============================================================================
+    /** A short message at the bottom of the canvas (a picture that could not be read), gone
+        after a few seconds. Clicks pass through to whatever is under it. */
+    class Notice final : public juce::Component,
+                         private juce::Timer
+    {
+    public:
+        Notice()
+        {
+            setInterceptsMouseClicks (false, false);
+            setComponentID ("notice");
+        }
+
+        void show (const juce::String& text)
+        {
+            message = text;
+            setTitle (text);   // what a screen reader (and a test) reads
+            setVisible (true);
+            repaint();
+            startTimer (noticeMilliseconds);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto font = fonts::ui (theme::controlSize, fonts::UiWeight::medium);
+            const auto bounds = getLocalBounds().toFloat();
+            const auto width = juce::jmin (bounds.getWidth(), juce::GlyphArrangement::getStringWidth (font, message) + 36.0f);
+            const auto pill = juce::Rectangle<float> (width, bounds.getHeight()).withCentre (bounds.getCentre()).reduced (0.5f);
+
+            g.setColour (theme::panel.withAlpha (0.96f));
+            g.fillRoundedRectangle (pill, 8.0f);
+            g.setColour (theme::danger.withAlpha (0.8f));
+            g.drawRoundedRectangle (pill, 8.0f, 1.0f);
+            g.setColour (theme::text);
+            g.setFont (font);
+            g.drawText (message, pill.reduced (12.0f, 0.0f), juce::Justification::centred, true);
+        }
+
+    private:
+        void timerCallback() override
+        {
+            stopTimer();
+            setVisible (false);
+        }
+
+        juce::String message;
+    };
 
     //==============================================================================
     /** The whole interface at its design size (1120 x 720). The editor scales it to the window. */
@@ -76,6 +126,7 @@ namespace
             addChildComponent (liveView);
             addAndMakeVisible (inspector);
             addAndMakeVisible (footer);
+            addChildComponent (notice);
             addChildComponent (scrim);
             addChildComponent (settings);
             addChildComponent (help);
@@ -102,6 +153,7 @@ namespace
             toolbar.clearButton.onClick = [this] { ui::actions::clearDrawing (processor, state); };
 
             state.focusTextField = [this] { inspector.focusTextField(); };
+            state.showNotice = [this] (const juce::String& text) { notice.show (text); };
 
             // Panels
             scrim.onClick = [this] { closePanels(); };
@@ -134,6 +186,7 @@ namespace
             state.removeChangeListener (this);
             processor.removeChangeListener (this);
             state.focusTextField = nullptr;
+            state.showNotice = nullptr;
         }
 
         //==============================================================================
@@ -164,6 +217,12 @@ namespace
                                   .withTrimmedBottom (layout::canvasBottom);
             canvas.setBounds (view);
             liveView.setBounds (view);
+
+            // Over the bottom of the drawing, clear of its axes.
+            notice.setBounds (view.withTrimmedLeft (ui::CanvasView::axisWidth)
+                                  .withTrimmedBottom (ui::CanvasView::axisHeight + 14)
+                                  .removeFromBottom (noticeHeight)
+                                  .reduced (16, 0));
 
             scrim.setBounds (getLocalBounds());
             layoutPanels();
@@ -247,6 +306,12 @@ namespace
             }
 
             return false;
+        }
+
+        /** Keys going up or down anywhere in the window: letting go of the arrows ends a nudge. */
+        void handleKeyStateChange (bool isKeyDown)
+        {
+            canvas.keyStateChanged (isKeyDown);
         }
 
         //==============================================================================
@@ -399,6 +464,7 @@ namespace
         ui::LiveView liveView;
         ui::Inspector inspector;
         ui::shell::Footer footer;
+        Notice notice;
         ui::shell::Scrim scrim;
         ui::shell::SettingsPanel settings;
         ui::shell::HelpPanel help;
@@ -482,6 +548,12 @@ struct FreqArtEditor::Impl final : private juce::KeyListener
     bool keyPressed (const juce::KeyPress& key, juce::Component*) override
     {
         return content.handleKey (key);
+    }
+
+    bool keyStateChanged (bool isKeyDown, juce::Component*) override
+    {
+        content.handleKeyStateChange (isKeyDown);
+        return false;
     }
 
     FreqArtEditor& editor;

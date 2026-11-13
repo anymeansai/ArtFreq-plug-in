@@ -12,7 +12,21 @@ namespace
 {
     constexpr int framesPerSecond = 60;        // while showing
     constexpr int pollsPerSecond = 4;          // while visible but not on screen (e.g. minimised)
-    constexpr double visibleSeconds = 6.0;
+
+    // How much the view shows: one pass of the drawing and a quarter more, so the whole drawing
+    // is on screen for a while each pass, in whole seconds (a tempo that wobbles does not redraw
+    // it), within limits that keep it readable.
+    constexpr double spanPerPass = 1.25;
+    constexpr double shortestSpan = 4.0;
+    constexpr double longestSpan = 20.0;
+
+    double spanForPass (double passSeconds)
+    {
+        if (! (passSeconds > 0.0))
+            return shortestSpan;
+
+        return juce::jlimit (shortestSpan, longestSpan, std::ceil (passSeconds * spanPerPass - 0.05));
+    }
 
     // The colour window, in dBFS as the analyser reads them (a full-scale sine is 0 dB). Tuned
     // so FreqArt's usual output (Level -6 dB, a few hundred lines) reads like the canvas: its
@@ -44,6 +58,7 @@ struct LiveView::Impl
     {
         scale = processor.getScale();
         slope = slopeOf (processor);
+        span = spanForPass (processor.getLengthSeconds());
     }
 
     juce::Rectangle<float> area() const
@@ -53,20 +68,57 @@ struct LiveView::Impl
 
     // ---- the analysed columns --------------------------------------------------------------
 
-    /** Makes room for visibleSeconds of columns at a sample rate (clearing the history if the
-        rate changed). */
+    /** Makes room for `span` seconds of columns at a sample rate. Another rate clears the
+        history; another span keeps the newest columns that still fit. */
     void prepareHistory (double sampleRate)
     {
-        if (juce::exactlyEqual (sampleRate, historyRate) && capacity > 0)
+        const auto needed = static_cast<int> (std::ceil (span * sampleRate / LiveAnalyzer::hopSize)) + 2;
+
+        if (juce::exactlyEqual (sampleRate, historyRate) && capacity == needed)
             return;
 
+        const auto bins = static_cast<size_t> (LiveAnalyzer::numBins);
+        std::vector<float> kept;
+        auto keptCount = 0;
+
+        if (juce::exactlyEqual (sampleRate, historyRate) && capacity > 0)
+        {
+            keptCount = juce::jmin (filled, needed);
+            kept.resize (static_cast<size_t> (keptCount) * bins);
+
+            for (int i = 0; i < keptCount; ++i)   // oldest first
+            {
+                const auto* source = column (columnIndexForAge (keptCount - 1 - i));
+                std::copy (source, source + bins, kept.begin() + static_cast<std::ptrdiff_t> (static_cast<size_t> (i) * bins));
+            }
+        }
+
         historyRate = sampleRate;
-        capacity = static_cast<int> (std::ceil (visibleSeconds * sampleRate / LiveAnalyzer::hopSize)) + 2;
-        history.assign (static_cast<size_t> (capacity) * static_cast<size_t> (LiveAnalyzer::numBins), -140.0f);
+        capacity = needed;
+        history.assign (static_cast<size_t> (capacity) * bins, -140.0f);
         peaks.assign (static_cast<size_t> (capacity), -140.0f);
-        filled = 0;
-        writeIndex = 0;
+        std::copy (kept.begin(), kept.end(), history.begin());
+        filled = keptCount;
+        writeIndex = keptCount % capacity;
+        newColumns.clear();
         imageDirty = true;
+    }
+
+    /** Follows the drawing's length (and the tempo): returns true if the span changed. */
+    bool updateSpan()
+    {
+        const auto newSpan = spanForPass (processor.getLengthSeconds());
+
+        if (juce::exactlyEqual (newSpan, span))
+            return false;
+
+        span = newSpan;
+
+        if (capacity > 0)
+            prepareHistory (historyRate);
+
+        imageDirty = true;
+        return true;
     }
 
     float* column (int index) noexcept
@@ -223,7 +275,7 @@ struct LiveView::Impl
 
     float pixelsPerColumn() const
     {
-        const auto columnsVisible = visibleSeconds * historyRate / LiveAnalyzer::hopSize;
+        const auto columnsVisible = span * historyRate / LiveAnalyzer::hopSize;
         return static_cast<float> (image.getWidth() / columnsVisible);
     }
 
@@ -352,12 +404,13 @@ struct LiveView::Impl
             return;
 
         auto& analyzer = processor.getAnalyzer();
+        const auto spanChanged = updateSpan();
         prepareHistory (analyzer.getSampleRate());
 
         const auto newScale = processor.getScale();
         const auto newSlope = slopeOf (processor);
 
-        if (newScale != scale || ! juce::exactlyEqual (newSlope, slope))
+        if (spanChanged || newScale != scale || ! juce::exactlyEqual (newSlope, slope))
         {
             scale = newScale;
             slope = newSlope;
@@ -414,7 +467,10 @@ struct LiveView::Impl
         if (imageDirty || ! image.isValid() || image.getWidth() != width || image.getHeight() != height)
         {
             if (capacity == 0)
+            {
+                updateSpan();
                 prepareHistory (processor.getAnalyzer().getSampleRate());
+            }
 
             rebuildImage (width, height);
             signalShown = hasSignal();
@@ -444,29 +500,43 @@ struct LiveView::Impl
 
     float xForSecondsAgo (double seconds, juce::Rectangle<float> a) const
     {
-        return a.getRight() - static_cast<float> (seconds / visibleSeconds) * a.getWidth();
+        return a.getRight() - static_cast<float> (seconds / span) * a.getWidth();
+    }
+
+    /** Seconds between grid lines and labels: 1, 2 or 5, whichever leaves room for a label. */
+    int secondsStep (juce::Rectangle<float> a) const
+    {
+        const auto pixelsPerSecond = a.getWidth() / static_cast<float> (span);
+
+        for (const auto step : { 1, 2, 5 })
+            if (pixelsPerSecond * static_cast<float> (step) >= 56.0f)
+                return step;
+
+        return 10;
     }
 
     void paintSecondsGrid (juce::Graphics& g, juce::Rectangle<float> a)
     {
         g.setColour (juce::Colours::white.withAlpha (0.035f));
+        const auto step = secondsStep (a);
 
-        for (int s = 1; s < static_cast<int> (visibleSeconds); ++s)
+        for (int s = step; s < static_cast<int> (span); s += step)
             g.fillRect (std::floor (xForSecondsAgo (s, a)), a.getY(), 1.0f, a.getHeight());
     }
 
     void paintSecondsAxis (juce::Graphics& g, juce::Rectangle<float> axis, juce::Rectangle<float> a)
     {
         g.setFont (axes::labelFont());
+        const auto step = secondsStep (a);
 
-        for (int s = 0; s <= static_cast<int> (visibleSeconds); ++s)
+        for (int s = 0; s <= static_cast<int> (span); s += step)
         {
             const auto x = std::floor (xForSecondsAgo (s, a));
             g.setColour (theme::line);
             g.fillRect (x, axis.getY(), 1.0f, 4.0f);
 
-            if (s == static_cast<int> (visibleSeconds))
-                continue;  // the left edge: no room for a label
+            if (x < a.getX() + 40.0f)
+                continue;  // at the left edge: no room for a label
 
             const auto label = s == 0 ? juce::String ("now") : "-" + juce::String (s) + " s";
             g.setColour (s == 0 ? theme::textDim : axes::labelColour());
@@ -519,38 +589,56 @@ struct LiveView::Impl
         analyzer->prepare (sampleRate);
         analyzer->setActive (true);
 
+        updateSpan();
         prepareHistory (sampleRate);
 
-        // One pass of the drawing ends exactly at "now". A drawing longer than the view is played
-        // faster, so the snapshot shows all of it, as the canvas does.
-        const auto passSeconds = juce::jlimit (0.5, visibleSeconds * 0.95, processor.getLengthSeconds());
+        // One pass of the drawing at its real speed, ending exactly at "now", after silence if
+        // the time is longer than the pass: what the view shows once the DAW has played it.
+        const auto passSeconds = processor.getLengthSeconds();
         const auto fractionPerSample = 1.0 / (passSeconds * sampleRate);
         const auto totalSamples = static_cast<int> (seconds * sampleRate);
-        auto fraction = 1.0 - std::fmod (static_cast<double> (totalSamples) * fractionPerSample, 1.0);
+        const auto passStart = static_cast<int64_t> (totalSamples) - static_cast<int64_t> (std::llround (passSeconds * sampleRate));
         const auto gain = processor.getOutputGain();
 
         std::vector<float> block (static_cast<size_t> (blockSize));
+        auto started = false;
 
         for (int done = 0; done < totalSamples; done += blockSize)
         {
             const auto n = juce::jmin (blockSize, totalSamples - done);
+            const auto silent = static_cast<int> (juce::jlimit (static_cast<int64_t> (0), static_cast<int64_t> (n), passStart - done));
 
-            PlaySegment segment;
-            segment.start = 0;
-            segment.length = n;
-            segment.playing = true;
-            segment.fraction = fraction - std::floor (fraction);
-            segment.fractionPerSample = fractionPerSample;
-            segment.jump = done == 0;
+            PlaySegment segments[2];
+            auto count = 0;
 
-            engine->render (block.data(), n, &segment, 1);
+            if (silent > 0)
+            {
+                auto& quiet = segments[count++];
+                quiet.start = 0;
+                quiet.length = silent;
+                quiet.playing = false;
+                quiet.fractionPerSample = fractionPerSample;
+            }
+
+            if (silent < n)
+            {
+                auto& playing = segments[count++];
+                playing.start = silent;
+                playing.length = n - silent;
+                playing.playing = true;
+                playing.fraction = static_cast<double> (done + silent - passStart) * fractionPerSample;
+                playing.fractionPerSample = fractionPerSample;
+                playing.jump = ! started;
+                started = true;
+            }
+
+            engine->render (block.data(), n, segments, count);
 
             for (int i = 0; i < n; ++i)
                 block[static_cast<size_t> (i)] *= gain;
 
             analyzer->push (block.data(), n);
             analyzer->process ([this] (const float* magnitudesDb, int numBins) { addColumn (magnitudesDb, numBins); });
-            fraction += fractionPerSample * n;
         }
 
         scrollInNewColumns();
@@ -564,6 +652,7 @@ struct LiveView::Impl
     FreqArtProcessor& processor;
     FrequencyScale scale;
     float slope = 0.0f;
+    double span = shortestSpan;    // seconds across the view (spanForPass)
     bool active = false;
     bool signalShown = false;
 
@@ -621,6 +710,11 @@ void LiveView::visibilityChanged()
 void LiveView::parentHierarchyChanged()
 {
     impl->updateActive();
+}
+
+double LiveView::getVisibleSeconds() const
+{
+    return spanForPass (impl->processor.getLengthSeconds());
 }
 
 void LiveView::fillFromPlanForSnapshot (double seconds)

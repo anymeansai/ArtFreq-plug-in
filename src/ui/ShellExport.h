@@ -21,10 +21,17 @@ public:
     explicit ExportPanel (FreqArtProcessor& processor);
     ~ExportPanel() override;
 
-    /** Where bounces go: <temp>/FreqArt/FreqArt.wav. */
-    static juce::File getBounceFile();
+    /** Where bounces go: <temp>/FreqArt. Every bounce is a file of its own there
+        (FreqArt-<uuid>.wav), so no later bounce, from this instance or another, ever replaces
+        a file that was handed out. */
+    static juce::File getBounceFolder();
 
-    /** Renders the current plan to getBounceFile() in the background (no-op while busy). */
+    /** The finished bounce that the chip and "Save..." hand out (none before the first one). */
+    juce::File getBounceFile() const;
+
+    /** Renders the current plan to a new file in getBounceFolder() in the background (no-op
+        while busy). When it is done it replaces the previous bounce, whose file is deleted
+        unless it was dragged out of the window. */
     void startBounce();
 
     bool isBouncing() const noexcept;
@@ -53,6 +60,7 @@ private:
     juce::String hintText() const;
     void updateVisibility();
     void saveCopy();
+    void discardBounceFile();
 
     FreqArtProcessor& processor;
     IconButton bounceButton;
@@ -60,6 +68,11 @@ private:
     ShellButton saveButton { "Save..." };
     std::unique_ptr<juce::FileChooser> chooser;
     std::unique_ptr<Job> job;
+
+    // The finished file, and whether it was dragged out (a DAW may then be reading it where it
+    // is, so it is never deleted from here: the clean-up at start removes it after a day).
+    juce::File bounceFile;
+    bool bounceDraggedOut = false;
 
     // What the finished file was rendered from, to tell when it no longer matches.
     uint64_t bouncedPlanVersion = 0;

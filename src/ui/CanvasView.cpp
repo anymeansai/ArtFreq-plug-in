@@ -42,7 +42,15 @@ namespace
 
     bool isImageFile (const juce::String& path)
     {
-        return juce::File (path).hasFileExtension ("png;jpg;jpeg;gif");
+        return actions::isPictureFile (juce::File (path));
+    }
+
+    bool isArrowKeyDown()
+    {
+        return juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::leftKey)
+            || juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::rightKey)
+            || juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::upKey)
+            || juce::KeyPress::isKeyCurrentlyDown (juce::KeyPress::downKey);
     }
 
     /** jlimit that tolerates an empty range (the result is then `low`). */
@@ -146,6 +154,17 @@ struct CanvasView::Impl
                 return &*it;
 
         return nullptr;
+    }
+
+    /** What a click at a point takes hold of: the selected object if the point is on it (so an
+        object partly under another can be moved and edited once selected), else objectAt. */
+    const ArtObject* objectToGrab (juce::Point<float> p) const
+    {
+        if (const auto* selected = selectedObject(); selected != nullptr && state.getTool() == Tool::select
+                                                     && screenRectOf (*selected).expanded (objectHitSlop).contains (p))
+            return selected;
+
+        return objectAt (p);
     }
 
     /** The handle of the selected object under a point, or -1. */
@@ -407,7 +426,7 @@ struct CanvasView::Impl
             return;
         }
 
-        const auto* object = objectAt (p);
+        const auto* object = objectToGrab (p);
         setHovered (object != nullptr ? object->id : juce::Uuid::null());
         owner.setMouseCursor (object != nullptr ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     }
@@ -801,8 +820,11 @@ struct CanvasView::Impl
     juce::String strokeKey;
     juce::Point<float> lastStrokePoint;
 
+    // Arrow-key nudges: one undo step per gesture (see keyPressed).
     double lastNudgeTime = -1.0e9;
     int nudgeSession = 0;
+    bool nudging = false;
+    juce::Uuid nudgeObject = juce::Uuid::null();
 };
 
 //==============================================================================
@@ -824,6 +846,10 @@ CanvasView::~CanvasView()
     stopTimer();
     impl->processor.removeChangeListener (this);
     impl->state.removeChangeListener (this);
+
+    // The processor outlives the editor: an edit made in the next one must not join this one's
+    // last undo step (the keys are counted from 1 again there).
+    impl->processor.endCoalescing();
 }
 
 juce::Rectangle<float> CanvasView::getDrawingArea() const
@@ -864,7 +890,7 @@ void CanvasView::mouseDown (const juce::MouseEvent& e)
     d.dragMode = Impl::DragMode::none;
     d.dragStartMouse = e.position;
     d.scale = d.processor.getScale();  // what the drag converts with, from start to end
-    ++d.nudgeSession;
+    d.nudging = false;
 
     if (e.mods.isPopupMenu())
         return;
@@ -888,7 +914,7 @@ void CanvasView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    if (const auto* object = d.objectAt (e.position))
+    if (const auto* object = d.objectToGrab (e.position))
     {
         d.state.setSelected (object->id);
         d.rememberDragStart (*object);
@@ -1008,7 +1034,7 @@ bool CanvasView::keyPressed (const juce::KeyPress& key)
     if (object == nullptr || d.dragMode != Impl::DragMode::none)
         return object != nullptr;
 
-    // One screen pixel per press (ten with Shift); presses in quick succession are one undo step.
+    // One screen pixel per press (ten with Shift).
     const auto step = mods.isShiftDown() ? 10.0f : 1.0f;
     const auto a = getDrawingArea();
     const auto deltaNorm = juce::Point<float> ((right ? step : left ? -step : 0.0f) / juce::jmax (1.0f, a.getWidth()),
@@ -1016,14 +1042,28 @@ bool CanvasView::keyPressed (const juce::KeyPress& key)
 
     const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
 
-    if (now - d.lastNudgeTime > nudgeSessionGap)
+    // A nudge gesture (an arrow held down, repeating) is one undo step. It ends when the arrows
+    // are let go (keyStateChanged), on a click, on another object or after a pause; any other
+    // edit in between also starts a new step, as its own key ends the coalescing.
+    if (! d.nudging || object->id != d.nudgeObject || now - d.lastNudgeTime > nudgeSessionGap)
         ++d.nudgeSession;
 
+    d.nudging = true;
+    d.nudgeObject = object->id;
     d.lastNudgeTime = now;
     d.scale = d.processor.getScale();
     d.rememberDragStart (*object);
     d.applyPlacement (d.movedRect (deltaNorm), "canvas-nudge-" + juce::String (d.nudgeSession));
     return true;
+}
+
+bool CanvasView::keyStateChanged (bool)
+{
+    // Letting go of the arrows ends the nudge gesture: the next press is another undo step.
+    if (impl->nudging && ! isArrowKeyDown())
+        impl->nudging = false;
+
+    return false;
 }
 
 //==============================================================================
@@ -1057,9 +1097,22 @@ void CanvasView::filesDropped (const juce::StringArray& files, int x, int y)
     const auto n = d.toNorm ({ static_cast<float> (x), static_cast<float> (y) });
     const auto position = juce::Point<float> (juce::jlimit (0.0f, 1.0f, n.x), juce::jlimit (0.0f, 1.0f, n.y));
 
+    juce::File unreadable;
+
     for (const auto& file : files)
-        if (isImageFile (file) && actions::addImageFile (d.processor, d.state, juce::File (file), position))
-            break;  // one picture per drop: several would land on top of each other
+    {
+        if (! isImageFile (file))
+            continue;
+
+        if (actions::addImageFile (d.processor, d.state, juce::File (file), position))
+            return;  // one picture per drop: several would land on top of each other
+
+        if (unreadable == juce::File())
+            unreadable = juce::File (file);
+    }
+
+    if (unreadable != juce::File())
+        actions::reportUnreadablePicture (d.state, unreadable);
 }
 
 //==============================================================================
@@ -1073,7 +1126,10 @@ void CanvasView::changeListenerCallback (juce::ChangeBroadcaster* source)
         return;
     }
 
-    // The tool, the brush or the selection changed.
+    // The tool, the brush or the selection changed. Another selection ends a nudge gesture.
+    if (d.state.getSelected() != d.nudgeObject)
+        d.nudging = false;
+
     const auto mouse = getMouseXYRelative().toFloat();
     d.updateHover (mouse, isMouseOver());
     repaint();

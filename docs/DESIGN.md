@@ -132,22 +132,32 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
   bar in 3/4, six eighths in 6/8).
 - Playhead: a 2 px accent2 vertical line at the play position while sounding.
-- **Select tool**: click an object to select it (top-most whose rectangle contains the point);
-  selected object shows its rectangle (1 px accent) and 8 handles; drag inside to move, drag a
-  handle to resize, click empty canvas to deselect. Delete/Backspace removes the selected object.
-  Arrow keys nudge (Shift = 10x). Objects' rectangles are drawn as faint dashed outlines when not
-  selected, so they can be found even when quiet.
+- **Select tool**: click an object to select it (the selected object if the point is inside it,
+  else the top-most whose rectangle contains the point); selected object shows its rectangle
+  (1 px accent) and 8 handles; drag inside to move, drag a handle to resize, click empty canvas to
+  deselect. Delete/Backspace removes the selected object. Arrow keys nudge (Shift = 10x); a held
+  arrow is one undo step, which ends when the keys are let go, on a click, on another object or
+  after a 1 s pause. Objects' rectangles are drawn as faint dashed outlines when not selected, so
+  they can be found even when quiet.
+- New text and pictures ("Add text", "Add image...") go where no object is yet: the mid band
+  across the length (4 % to 96 %), else the high or low band, else half the length in one of
+  them; if all of that is taken, never exactly on top of another object (the start moves along).
 - **Brush / Erase**: paint with the toolbar's Size (2..64 px, screen), Softness (0..100 %),
   Strength (0..100 %). A circular cursor preview shows the brush. One stroke = one undo step.
 - Drop an image file onto the canvas to add it as a picture where it was dropped (in the band
-  under the cursor).
+  under the cursor). Pictures: PNG, JPEG, GIF, and on a Mac also HEIC, WebP, TIFF and BMP (macOS
+  decodes them). A file that cannot be read shows a short message over the bottom of the canvas
+  for a few seconds.
 - Empty state (no objects, nothing painted): centred hint "Add text, drop an image, or paint
   with the brush".
 
 ### Live view
 
 A scrolling spectrogram of FreqArt's own output (`LiveAnalyzer`), right to left, same scale,
-range, slope and colour map as the canvas, ~6 seconds visible. A small "LIVE" badge in accent2.
+range, slope and colour map as the canvas. It shows one pass of the drawing and a quarter more
+(whole seconds, 4 to 20 s; it follows the length and the tempo), so the whole drawing is on screen
+for a while each pass; seconds are labelled every 1, 2 or 5 s, as room allows. A small "LIVE" badge
+in accent2.
 Shown instead of the canvas when "Live" is selected in the header. Turns the analyser on only
 while visible.
 
@@ -158,8 +168,8 @@ while visible.
 - Text selected: title "Text"; multi-line text field (live updates, one undo step per typing
   session); Font (combo of art fonts); Style (segmented Solid | Outline); **Band** (segmented
   Low | Mid | High | Full, highlights the matching band if the object sits exactly on it);
-  Position: "Fill length" button (sets time 4 %..96 %); Intensity slider (0..100 %);
-  Delete button.
+  Position: "Fill length" button (sets time 4 %..96 %); Intensity slider (0..100 %; a drag, or a
+  run of mouse-wheel steps without a 1 s pause, is one undo step); Delete button.
 - Image selected: title "Image"; thumbnail of the processed result; Mode (segmented Auto |
   Original | Negative | Outline, with Auto showing what it picked, e.g. "Auto (Negative)");
   Clean-up slider (0..90 %); Band; Fill length; Intensity; "Replace..."; Delete.
@@ -173,8 +183,12 @@ while visible.
   with a BPM field (editable when Manual; shows the host tempo greyed when Host).
 - Preview: a round play/stop button (accent2 when on). Plays the drawing on a loop.
 - Export: "Bounce WAV" button renders one pass in the background; then a draggable chip
-  "FreqArt.wav  (drag into your DAW)" plus "Save..." (async FileChooser). The file lives in a
-  FreqArt folder in the temp directory.
+  "FreqArt.wav  (drag into your DAW)" plus "Save..." (async FileChooser). Every bounce is a new
+  file, FreqArt-<uuid>.wav in a FreqArt folder in the temp directory, so no bounce (of this
+  instance or another) replaces a file already handed out. The previous bounce is deleted when the
+  next one finishes and when the window closes, unless it was dragged out (a DAW may read it where
+  it is); FreqArt-*.wav files a day old are deleted when an editor opens. Closing the window stops
+  a running bounce (the render checks once per block) instead of waiting for it.
 
 ### Header
 
@@ -205,6 +219,9 @@ background, transparency, outline); text rendering coverage; compositor placemen
 speed); tracker (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and
 their end, all-offs and stop, free loop, preview, jumps); end-to-end: a canvas rendered to audio
 and analysed back must correlate with the canvas; processor (state round trip, process with
-MIDI, panic, bypass fades, time signature, level/clipper bound); WAV export.
+MIDI, panic, bypass fades, time signature, level/clipper bound); WAV export (and cancelling it);
+the editor, driven with synthetic events (bounce files, undo steps of wheel and arrow gestures,
+clicking and placing objects, the live view's span, unreadable pictures; under a virtual display
+on Linux).
 
 `FreqArtSnapshot <dir>` renders the editor in its main states to PNG.

@@ -36,7 +36,8 @@ float softClip (float x) noexcept
 }
 
 bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
-                      const juce::File& target, juce::String& error)
+                      const juce::File& target, juce::String& error,
+                      const std::function<bool()>& shouldCancel)
 {
     if (! (settings.sampleRate >= 8000.0 && settings.sampleRate <= 384000.0))
     {
@@ -123,6 +124,13 @@ bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
 
     for (int64_t done = 0; done < totalSamples;)
     {
+        // A long render can be stopped (the editor closing): the temporary file goes with it.
+        if (shouldCancel != nullptr && shouldCancel())
+        {
+            error = "Cancelled";
+            return false;
+        }
+
         const auto blockLength = static_cast<int> (std::min (static_cast<int64_t> (exportBlockSize), totalSamples - done));
         PlaySegment segments[2];
         int numSegments = 0;

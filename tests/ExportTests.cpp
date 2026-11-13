@@ -159,6 +159,33 @@ FREQART_TEST (exportReportsErrors)
     CHECK (! scratch.folder.getChildFile ("b.wav").exists());
 }
 
+FREQART_TEST (exportCanBeCancelled)
+{
+    // Closing the editor stops a long bounce: the render asks once per block, stops, and leaves
+    // the target as it was (no half file, no temporary file).
+    ScratchFolder scratch;
+    const auto plan = test::makeConstantPlan ({ 1000.0f }, 0.1f);
+    const auto target = scratch.folder.getChildFile ("Long.wav");
+    target.replaceWithText ("an earlier file");
+
+    ExportSettings settings;
+    settings.seconds = 600.0;
+
+    auto asked = 0;
+    juce::String error;
+    CHECK (! freqart::renderPlanToWav (*plan, settings, target, error, [&asked] { return ++asked > 3; }));
+    CHECK (error == "Cancelled");
+    CHECK (asked == 4);
+    CHECK (target.loadFileAsString() == "an earlier file");
+    CHECK (scratch.folder.getNumberOfChildFiles (juce::File::findFiles) == 1);
+
+    // Never cancelled: as without it.
+    settings.seconds = 0.25;
+    error.clear();
+    CHECK (freqart::renderPlanToWav (*plan, settings, target, error, [] { return false; }));
+    CHECK (error.isEmpty() && load (target).audio.getNumSamples() == 12000);
+}
+
 FREQART_TEST (exportSoftClipShape)
 {
     // Transparent up to 0.89.

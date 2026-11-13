@@ -20,6 +20,21 @@ namespace
     {
         return formatNumber (seconds, seconds < 10.0 ? 2 : 1) + " s";
     }
+
+    // The chip's name for the file, whatever the file itself is called.
+    constexpr const char* chipName = "FreqArt.wav";
+    constexpr const char* bouncePattern = "FreqArt-*.wav";
+
+    /** Bounces are kept for dragging (a DAW may read one where it is) and a crash can leave one
+        behind, so the folder is swept when an editor opens: anything a day old goes. */
+    void removeStaleBounces()
+    {
+        const auto cutoff = juce::Time::getCurrentTime() - juce::RelativeTime::days (1.0);
+
+        for (const auto& file : ExportPanel::getBounceFolder().findChildFiles (juce::File::findFiles, false, bouncePattern))
+            if (file.getLastModificationTime() < cutoff)
+                file.deleteFile();
+    }
 } // namespace
 
 //==============================================================================
@@ -37,30 +52,26 @@ struct ExportPanel::Job final : public juce::Thread
 
     ~Job() override
     {
-        // The render cannot be interrupted; it is short for any usual length.
+        stop();
+    }
+
+    /** Asks a running render to stop (it then leaves no file) and waits for the thread, so
+        closing the editor during a long bounce does not hang the host. */
+    void stop()
+    {
+        signalThreadShouldExit();
         waitForThreadToExit (-1);
     }
 
     void run() override
     {
+        // A new file of its own: renderPlanToWav writes a temporary file beside it and moves it
+        // into place only when it is complete.
         juce::String error;
-        auto ok = target.getParentDirectory().createDirectory().wasOk();
+        const auto ok = renderPlanToWav (*plan, settings, target, error, [this] { return threadShouldExit(); });
 
-        if (! ok)
-        {
-            error = "Cannot create " + target.getParentDirectory().getFullPathName();
-        }
-        else
-        {
-            // Write next to the target and swap it in, so a file a DAW is still reading from an
-            // earlier drag is never seen half-written.
-            juce::TemporaryFile temp (target);
-            ok = renderPlanToWav (*plan, settings, temp.getFile(), error)
-              && temp.overwriteTargetFileWithTemporary();
-
-            if (! ok && error.isEmpty())
-                error = "Cannot write " + target.getFullPathName();
-        }
+        if (! ok && error.isEmpty())
+            error = "Cannot write " + target.getFullPathName();
 
         succeeded = ok;
         errorText = error;
@@ -83,11 +94,12 @@ class ExportPanel::Chip final : public juce::Component,
                                 public juce::SettableTooltipClient
 {
 public:
-    Chip()
+    explicit Chip (ExportPanel& ownerToUse)
+        : owner (ownerToUse)
     {
         setMouseCursor (juce::MouseCursor::DraggingHandCursor);
         setTooltip ("Drag into your DAW (or onto the desktop)");
-        setTitle ("FreqArt.wav");
+        setTitle (chipName);
         setComponentID ("export-chip");
     }
 
@@ -106,7 +118,7 @@ public:
 
         g.setColour (theme::text);
         g.setFont (fonts::ui (12.0f, fonts::UiWeight::medium));
-        g.drawText (getBounceFile().getFileName(), getLocalBounds().withTrimmedLeft (28).withTrimmedRight (4),
+        g.drawText (chipName, getLocalBounds().withTrimmedLeft (28).withTrimmedRight (4),
                     juce::Justification::centredLeft, true);
     }
 
@@ -118,11 +130,14 @@ public:
         if (dragging || e.getDistanceFromDragStart() < 4)
             return;
 
-        const auto file = getBounceFile();
+        const auto file = owner.bounceFile;
 
         if (! file.existsAsFile())
             return;
 
+        // From now on the file may be in use outside (and the drag itself reads it), so the
+        // panel never deletes it.
+        owner.bounceDraggedOut = true;
         dragging = true;
         juce::DragAndDropContainer::performExternalDragDropOfFiles ({ file.getFullPathName() }, false, this,
                                                                    [safe = juce::Component::SafePointer<Chip> (this)]
@@ -139,6 +154,7 @@ public:
     }
 
 private:
+    ExportPanel& owner;
     bool dragging = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Chip)
@@ -148,8 +164,10 @@ private:
 ExportPanel::ExportPanel (FreqArtProcessor& p)
     : processor (p),
       bounceButton ("Bounce WAV", icons::download(), "Bounce WAV"),
-      chip (std::make_unique<Chip>())
+      chip (std::make_unique<Chip> (*this))
 {
+    removeStaleBounces();
+
     saveButton.setButtonText ("Save" + ellipsis());
     saveButton.setTooltip ("Save a copy of the bounce");
     saveButton.setComponentID ("export-save");
@@ -169,15 +187,39 @@ ExportPanel::ExportPanel (FreqArtProcessor& p)
 
 ExportPanel::~ExportPanel()
 {
-    // Waits for a running render (the thread only touches its own copy of everything).
-    job.reset();
+    if (job != nullptr)
+    {
+        // Stops a running render (it leaves no file) and waits for the thread, which only
+        // touches its own copy of everything. A bounce that finished but was never shown has
+        // not been handed out either.
+        job->stop();
+
+        if (job->succeeded)
+            job->target.deleteFile();
+
+        job.reset();
+    }
+
+    discardBounceFile();
 }
 
-juce::File ExportPanel::getBounceFile()
+juce::File ExportPanel::getBounceFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::tempDirectory)
-        .getChildFile ("FreqArt")
-        .getChildFile ("FreqArt.wav");
+    return juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("FreqArt");
+}
+
+juce::File ExportPanel::getBounceFile() const
+{
+    return bounceFile;
+}
+
+void ExportPanel::discardBounceFile()
+{
+    if (bounceFile != juce::File() && ! bounceDraggedOut)
+        bounceFile.deleteFile();
+
+    bounceFile = juce::File();
+    bounceDraggedOut = false;
 }
 
 void ExportPanel::startBounce()
@@ -206,7 +248,8 @@ void ExportPanel::startBounce()
     fileReady = false;
     lastError.clear();
 
-    job = std::make_unique<Job> (std::move (plan), settings, getBounceFile());
+    const auto target = getBounceFolder().getChildFile ("FreqArt-" + juce::Uuid().toString() + ".wav");
+    job = std::make_unique<Job> (std::move (plan), settings, target);
     job->startThread (juce::Thread::Priority::low);
 
     updateVisibility();
@@ -244,6 +287,14 @@ void ExportPanel::refresh()
     if (job != nullptr && job->done.load (std::memory_order_acquire))
     {
         job->waitForThreadToExit (-1);
+
+        // The new file takes over the chip; the one before goes (unless it was dragged out).
+        if (job->succeeded)
+        {
+            discardBounceFile();
+            bounceFile = job->target;
+        }
+
         fileReady = job->succeeded;
         lastError = job->errorText;
         job.reset();
@@ -260,7 +311,7 @@ void ExportPanel::refresh()
                           && plan->version == bouncedPlanVersion
                           && std::abs (processor.getLengthSeconds() - bouncedSeconds) < 1.0e-6
                           && std::abs (processor.getOutputGain() - bouncedGain) < 1.0e-6f
-                          && getBounceFile().existsAsFile();
+                          && bounceFile.existsAsFile();
 
         if (! current)
         {
@@ -320,7 +371,7 @@ void ExportPanel::updateVisibility()
 
 void ExportPanel::saveCopy()
 {
-    const auto source = getBounceFile();
+    const auto source = bounceFile;
 
     if (! source.existsAsFile())
         return;

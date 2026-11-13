@@ -381,7 +381,7 @@ void checkInteractions (freqart::FreqArtEditor& editor, freqart::FreqArtProcesso
     key (juce::KeyPress (juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier, 0));
     check (std::abs ((object (textId).startTime - text0.startTime) - 11.0f / w) < 1.0e-4f, "arrows nudge 1 px, Shift+arrow 10 px");
     undo();
-    check (samePlacement (object (textId), text0), "quick nudges are one undo step");
+    check (samePlacement (object (textId), text0), "a held arrow (its repeats) is one undo step");
 
     // ---- a drag in progress shows the frequency range -------------------------------------------
     {
@@ -819,7 +819,7 @@ int main (int argc, char* argv[])
         if (auto* live = find<ui::LiveView> (*editor, "live-view"))
         {
             check (live->isVisible(), "the live view is shown");
-            live->fillFromPlanForSnapshot (6.0);
+            live->fillFromPlanForSnapshot (live->getVisibleSeconds());
         }
 
         save ("live", pixelScale);
@@ -847,8 +847,6 @@ int main (int argc, char* argv[])
         // ---- export -------------------------------------------------------------------------------
         if (auto* exporter = find<ui::shell::ExportPanel> (*editor, "export"))
         {
-            exporter->getBounceFile().deleteFile();
-
             if (auto* bounce = find<juce::Button> (*editor, "bounce"))
             {
                 check (bounce->isEnabled(), "Bounce WAV is enabled for a drawing");
@@ -867,6 +865,13 @@ int main (int argc, char* argv[])
             pump (80);
             exporter->refresh();
             check (! exporter->hasCurrentFile(), "changing the drawing retires the bounce");
+
+            // The next bounce is a file of its own; the one before (never dragged out) goes.
+            const auto first = exporter->getBounceFile();
+            exporter->startBounce();
+            check (exporter->waitForBounce (60000) && exporter->hasCurrentFile(), "a second bounce finishes");
+            check (exporter->getBounceFile().existsAsFile() && exporter->getBounceFile() != first && ! first.exists(),
+                   "every bounce has its own file, and replaces the one before");
         }
 
         // ---- window sizes -------------------------------------------------------------------------
