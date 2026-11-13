@@ -201,4 +201,22 @@ if(FREQART_BUILD_TOOLS)
             ${FREQART_JUCE_MODULES}
         PUBLIC
             FreqArtBuildFlags)
+
+    # The carving lab: plays songs through a spectral carving engine with FreqArt drawings and
+    # measures what an analyser shows (tools/CarveLab.cpp). Needs no processor or editor.
+    juce_add_console_app(FreqArtCarveLab PRODUCT_NAME "FreqArtCarveLab")
+    target_sources(FreqArtCarveLab PRIVATE
+        tools/CarveLab.cpp
+        ${FREQART_CORE_SOURCES}
+        ${FREQART_DSP_SOURCES})
+    target_include_directories(FreqArtCarveLab PRIVATE src)
+    target_compile_definitions(FreqArtCarveLab PRIVATE
+        ${FREQART_COMMON_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(FreqArtCarveLab
+        PRIVATE
+            FreqArtAssets
+            ${FREQART_JUCE_MODULES}
+        PUBLIC
+            FreqArtBuildFlags)
 endif()

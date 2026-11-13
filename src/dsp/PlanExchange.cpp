@@ -16,12 +16,15 @@ namespace freqart
 //  - The audio thread reports the OLDER of its two plans as one atomic value, so the collector
 //    can never see half of a report (a new current version with a stale fading one).
 
-static_assert (std::atomic<ArtPlan*>::is_always_lock_free && std::atomic<uint64_t>::is_always_lock_free,
+static_assert (std::atomic<ArtPlan*>::is_always_lock_free && std::atomic<MaskPlan*>::is_always_lock_free
+                   && std::atomic<uint64_t>::is_always_lock_free,
                "the audio thread must never wait for the exchange");
 
-PlanExchange::~PlanExchange() = default;
+template <typename Plan>
+VersionedExchange<Plan>::~VersionedExchange() = default;
 
-void PlanExchange::publish (std::shared_ptr<ArtPlan> plan)
+template <typename Plan>
+void VersionedExchange<Plan>::publish (std::shared_ptr<Plan> plan)
 {
     if (plan == nullptr)
         return;
@@ -38,7 +41,8 @@ void PlanExchange::publish (std::shared_ptr<ArtPlan> plan)
                 kept.skipped = true;
 }
 
-std::shared_ptr<const ArtPlan> PlanExchange::latest() const
+template <typename Plan>
+std::shared_ptr<const Plan> VersionedExchange<Plan>::latest() const
 {
     if (alive.empty())
         return {};
@@ -46,7 +50,8 @@ std::shared_ptr<const ArtPlan> PlanExchange::latest() const
     return alive.back().plan;
 }
 
-void PlanExchange::collectGarbage()
+template <typename Plan>
+void VersionedExchange<Plan>::collectGarbage()
 {
     if (alive.size() < 2)
         return;
@@ -66,13 +71,15 @@ void PlanExchange::collectGarbage()
     alive.erase (std::remove_if (alive.begin(), alive.end(), unreachable), alive.end());
 }
 
-const ArtPlan* PlanExchange::acquire() noexcept
+template <typename Plan>
+const Plan* VersionedExchange<Plan>::acquire() noexcept
 {
     // Acquire: everything the message thread wrote into the plan is visible from here on.
     return pending.exchange (nullptr, std::memory_order_acq_rel);
 }
 
-void PlanExchange::reportInUse (uint64_t currentVersion, uint64_t fadingVersion) noexcept
+template <typename Plan>
+void VersionedExchange<Plan>::reportInUse (uint64_t currentVersion, uint64_t fadingVersion) noexcept
 {
     // The older of the two (0 means "none"). The audio thread only moves forward, so this never
     // goes down; a report of no plans at all keeps the previous value rather than claiming that
@@ -87,5 +94,8 @@ void PlanExchange::reportInUse (uint64_t currentVersion, uint64_t fadingVersion)
 
     audioHasReported.store (true, std::memory_order_release);
 }
+
+template class VersionedExchange<ArtPlan>;
+template class VersionedExchange<MaskPlan>;
 
 } // namespace freqart
