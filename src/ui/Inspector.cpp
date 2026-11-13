@@ -3,6 +3,8 @@
 #include "Actions.h"
 #include "CanvasPlanImage.h"
 #include "LayerList.h"
+#include "Parameters.h"
+#include "ShellControls.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "core/Compositor.h"
@@ -25,6 +27,8 @@ namespace
     constexpr int thumbnailSource = 384;  // the thumbnail is worked out from a copy this size at most
     constexpr int headingHeight = 34;     // a section title with its divider
     constexpr int hintHeight = 16;
+    constexpr int lowsGap = 13;           // above the Lows row, with a divider in it
+    constexpr int lowsControlWidth = 168;
     constexpr int brushSectionHeight = headingHeight + 4 + 3 * (labelHeight + controlHeight + sectionGap);
 
     constexpr float fillStart = 0.04f;    // "Fill length"
@@ -84,6 +88,15 @@ namespace
 
     private:
         bool wheelMoving = false;
+    };
+
+    /** Lows (Smooth | Stripes) at the foot of the layer list: a segmented control that also
+        explains itself in a tooltip. */
+    class LowsControl final : public SegmentedControl,
+                              public juce::SettableTooltipClient
+    {
+    public:
+        LowsControl() : SegmentedControl (params::lowEndNames()) {}
     };
 
     /** "< Layers" in an object's title row: back to the list of layers. */
@@ -200,6 +213,15 @@ struct Inspector::Impl
 
         backButton.onClick = [this] { state.showLayerList (true); };
 
+        // Lows: how the whole drawing's low end plays. It belongs to the drawing rather than to
+        // an object or to the analyser match, so it stays at the foot of the layer list.
+        lowsControl.setTitle ("Lows");
+        lowsControl.setTooltip ("Lows: how the crowded low end plays (below about 2 kHz on a log scale). "
+                                "Smooth: sines gliding upwards keep shapes filled at every analyser FFT size. "
+                                "Stripes: separate lines 25 Hz apart, which long FFTs show as stripes (an effect).");
+        lowsAttachment = std::make_unique<shell::ChoiceSegments> (lowsControl,
+                                                                  *processor.getParameters().getParameter (params::id::lowEnd));
+
         // ---- text ----
         textField.setMultiLine (true, true);
         textField.setReturnKeyStartsNewLine (true);
@@ -270,6 +292,7 @@ struct Inspector::Impl
 
         // Ids for the snapshot tool and tests, which drive the inspector like a user would.
         layerList.setComponentID ("layer-list");
+        lowsControl.setComponentID ("lows");
         backButton.setComponentID ("inspector-layers");
         addTextButton.setComponentID ("inspector-add-text");
         addImageButton.setComponentID ("inspector-add-image");
@@ -293,8 +316,8 @@ struct Inspector::Impl
 
     std::vector<juce::Component*> allControls()
     {
-        return { &layerList, &backButton, &addTextButton, &addImageButton, &sizeSlider, &softnessSlider, &strengthSlider,
-                 &textField, &fontBox, &styleControl, &bandControl, &fillButton, &intensitySlider,
+        return { &layerList, &lowsControl, &backButton, &addTextButton, &addImageButton, &sizeSlider, &softnessSlider,
+                 &strengthSlider, &textField, &fontBox, &styleControl, &bandControl, &fillButton, &intensitySlider,
                  &deleteButton, &modeControl, &cleanupSlider, &replaceButton };
     }
 
@@ -431,6 +454,7 @@ struct Inspector::Impl
         const auto image = mode == Mode::image;
 
         layerList.setVisible (layers);
+        lowsControl.setVisible (layers);
         backButton.setVisible (! layers);
         addTextButton.setVisible (layers);
         addImageButton.setVisible (layers);
@@ -645,6 +669,7 @@ struct Inspector::Impl
         timeReadoutArea = {};
         modeCaptionArea = {};
         hintArea = {};
+        lowsRow = {};
 
         auto area = owner.getLocalBounds().reduced (pad);
         const auto titleRow = area.removeFromTop (titleHeight);
@@ -664,6 +689,12 @@ struct Inspector::Impl
 
         if (mode == Mode::layers)
         {
+            // Lows at the foot, always in the same place; the list and what follows it take the
+            // room above.
+            lowsRow = area.removeFromBottom (controlHeight);
+            area.removeFromBottom (lowsGap);
+            lowsControl.setBounds (lowsRow.withTrimmedLeft (lowsRow.getWidth() - lowsControlWidth));
+
             auto row = area.removeFromTop (controlHeight);
             const auto half = (row.getWidth() - 8) / 2;
             addTextButton.setBounds (row.removeFromLeft (half));
@@ -800,6 +831,13 @@ struct Inspector::Impl
         if (! shortcutsArea.isEmpty())
             paintShortcuts (g);
 
+        if (! lowsRow.isEmpty())
+        {
+            g.setColour (theme::line);
+            g.fillRect (lowsRow.getX(), lowsRow.getY() - lowsGap / 2 - 1, lowsRow.getWidth(), 1);
+            shell::drawCaps (g, "Lows", lowsRow.withRight (lowsControl.getX() - 8), juce::Justification::centredLeft, theme::textDim);
+        }
+
         if (! timeReadoutArea.isEmpty())
         {
             // "4% – 50% of the length": the numbers in mono, the words quieter.
@@ -893,7 +931,7 @@ struct Inspector::Impl
     bool hintShown = false;
 
     juce::String title { "Layers" }, readout, timeReadout;
-    juce::Rectangle<int> titleArea, hintArea, thumbnailArea, timeReadoutArea, shortcutsArea;
+    juce::Rectangle<int> titleArea, hintArea, thumbnailArea, timeReadoutArea, shortcutsArea, lowsRow;
 
     struct Shortcut
     {
@@ -939,6 +977,8 @@ struct Inspector::Impl
 
     // Controls
     LayerList layerList;
+    LowsControl lowsControl;
+    std::unique_ptr<shell::ChoiceSegments> lowsAttachment;
     LayersBackButton backButton;
     IconButton addTextButton, addImageButton;
     juce::Slider sizeSlider, softnessSlider, strengthSlider;

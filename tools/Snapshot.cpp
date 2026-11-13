@@ -28,6 +28,8 @@
 //   freqart-layers-hidden.png    the hidden object selected from the list (its outline on the canvas)
 //   freqart-layers-drag.png      a row being dragged to another place in the list
 //   freqart-layers-menu.png      an object's right-click menu on the canvas
+//   freqart-lows-brush.png       Lows (Smooth) at the foot of the panel, under the brush settings
+//   freqart-lows-stripes.png     the rich drawing with Lows on Stripes (the layers PNGs are Smooth)
 //   freqart-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
 //   freqart-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
 //   freqart-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
@@ -39,16 +41,34 @@
 //   freqart-150.png              window at 150 %, one image pixel per logical pixel
 //   freqart-200.png              window at 200 %, one image pixel per logical pixel
 //
+// and for FreqArt FX (the effect variant: the same editor with Mode and Depth in the header)
+//
+//   freqart-fx-default.png       a fresh FreqArt FX (Carve: the default drawing dark in the song)
+//   freqart-fx-carve.png         the rich drawing in Carve: dark shapes on the stand-in song, the
+//                                export saying "Bounce the track in your DAW"
+//   freqart-fx-carve-draw.png    Carve + Draw: the sines bright in a hole a little wider than them
+//   freqart-fx-stencil.png       Stencil: the drawing filled with the song, the rest dark
+//   freqart-fx-draw.png          Draw: the sines on top of the song, Depth greyed, Bounce WAV back
+//   freqart-fx-shallow.png       Carve at a Depth of -24 dB, typed into the field
+//   freqart-fx-live.png          the live view: a stand-in song carved by the real processor
+//   freqart-fx-help.png          FreqArt FX's help panel
+//   freqart-fx-tooltip.png       the Mode control's tooltip
+//   freqart-fx-75.png, -100.png, -200.png   window sizes, one image pixel per logical pixel
+//
 // All but the last two are rendered at <pixel-scale> image pixels per logical pixel (default 2, as
 // on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
 // WAV file of the right length, named on the chip, which says "Updating..." after a change until
 // a new file takes its place), that the window size is remembered, and drives the editor with
 // synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar,
 // the footer's Trigger, Repeat, start bar and Preview, the layer list, picking overlapping
-// objects), checking what each does to the drawing or the settings and that undo takes it back.
+// objects, Lows), checking what each does to the drawing or the settings and that undo takes it back.
 // It exits with 1 if a file cannot be written or a check fails. At the end it puts the window on
 // the (virtual) desktop to check the live view's own timer: the analyser on while shown,
 // scrolling, off when hidden.
+//
+// For FreqArt FX it checks the header's layout at every size, Mode and Depth driven with the
+// mouse and the keyboard (and what they grey and show), the export's hint, Preview and a carve
+// through the processor.
 //
 // On Linux run it under a virtual display:  xvfb-run -a FreqArtSnapshot out
 
@@ -1039,6 +1059,95 @@ int countDifferentPixels (const juce::Image& a, const juce::Image& b)
     return count;
 }
 
+/** Lows (Smooth | Stripes) at the foot of the layer list: where it sits (with the keys and with
+    the brush settings), what it does to the plan and the canvas, and that it makes way for an
+    object's settings. */
+void checkLows (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor, juce::Component& content,
+                const juce::Uuid& imageId, const std::function<void (const juce::String&, bool)>& save)
+{
+    using namespace freqart;
+
+    auto* lows = find<ui::SegmentedControl> (editor, "lows");
+    auto* canvas = find<ui::CanvasView> (editor, "canvas");
+    auto* inspector = lows != nullptr ? lows->getParentComponent() : nullptr;
+
+    if (lows == nullptr || canvas == nullptr || inspector == nullptr)
+        return;
+
+    const auto value = [&] { return processor.getParameters().getRawParameterValue (params::id::lowEnd)->load(); };
+    const auto planHasComb = [&]
+    {
+        processor.rebuildPlanIfNeeded();
+        const auto plan = processor.getCurrentPlan();
+        return plan != nullptr && plan->combLines > 0;
+    };
+    const auto at = [lows] (float across) { return juce::Point<float> (static_cast<float> (lows->getWidth()) * across,
+                                                                       static_cast<float> (lows->getHeight()) * 0.5f); };
+
+    // At the foot of the panel, inside its margins, below everything else shown there.
+    const auto laidOut = [&]
+    {
+        auto ok = lows->isVisible() && lows->getBottom() == inspector->getHeight() - 16 && lows->getRight() == inspector->getWidth() - 16
+               && lows->getWidth() >= 150 && lows->getHeight() == 28;
+
+        for (auto* child : inspector->getChildren())
+            if (child != lows && child->isVisible())
+                ok = ok && child->getBottom() <= lows->getY() - 12;
+
+        return ok;
+    };
+
+    editor.selectObject (juce::Uuid::null());
+    pump (40);
+
+    check (lows->getOptions() == juce::StringArray { "Smooth", "Stripes" } && lows->getSelectedIndex() == 0
+           && juce::exactlyEqual (value(), 0.0f) && planHasComb(),
+           "Lows, under the layer list, is on Smooth in a new instance: the plan has the rising comb");
+
+    if (auto* tip = dynamic_cast<juce::TooltipClient*> (lows))
+        check (tip->getTooltip().contains ("Smooth") && tip->getTooltip().contains ("Stripes"), "Lows explains both in its tooltip");
+    else
+        check (false, "Lows has a tooltip");
+
+    check (laidOut(), "Lows sits at the foot of the layer list, clear of the list and its hint");
+
+    content.keyPressed (juce::KeyPress ('b', juce::ModifierKeys(), 'b'));
+    pump (30);
+    check (laidOut() && findComponentWithId (*inspector, "inspector-strength") != nullptr
+               && findComponentWithId (*inspector, "inspector-strength")->isVisible(),
+           "... and clear of the brush settings");
+    save ("lows-brush", true);
+    content.keyPressed (juce::KeyPress ('v', juce::ModifierKeys(), 'v'));
+    pump (30);
+
+    // Stripes: lines, which the canvas shows as scan lines in the lows.
+    const auto smoothCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
+    clickOn (*lows, at (0.75f));
+    pump (60);
+    check (juce::exactlyEqual (value(), 1.0f) && lows->getSelectedIndex() == 1 && ! planHasComb(),
+           "clicking Stripes plays the lows as separate lines");
+    pump (60);
+    const auto stripesCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
+    check (countDifferentPixels (smoothCanvas, stripesCanvas) > 2000, "... and the canvas shows them as stripes");
+    save ("lows-stripes", true);
+
+    // An object's settings take the panel; Lows comes back with the list.
+    editor.selectObject (imageId);
+    pump (30);
+    check (! lows->isVisible(), "selecting an object shows its settings in Lows' place");
+    editor.selectObject (juce::Uuid::null());
+    pump (30);
+    check (laidOut() && lows->getSelectedIndex() == 1, "... and Lows is back, as it was, with the list");
+
+    // The parameter, changed elsewhere (a host, a loaded state), moves the control too.
+    setParameter (processor, params::id::lowEnd, 0.0f);
+    pump (60);
+    check (lows->getSelectedIndex() == 0 && planHasComb(), "Lows follows the parameter back to Smooth");
+    pump (60);
+    check (countDifferentPixels (smoothCanvas, canvas->createComponentSnapshot (canvas->getLocalBounds())) == 0,
+           "... and the canvas shows the filled band again");
+}
+
 bool checkWav (const juce::File& file, double expectedSeconds)
 {
     juce::AudioFormatManager formats;
@@ -1055,6 +1164,321 @@ bool checkWav (const juce::File& file, double expectedSeconds)
 }
 
 } // namespace
+
+//==============================================================================
+// FreqArt FX
+
+/** A host transport for the effect's offline runs. */
+struct SnapshotPlayHead final : public juce::AudioPlayHead
+{
+    juce::Optional<PositionInfo> getPosition() const override { return info; }
+    PositionInfo info;
+};
+
+/** A stand-in for a song, stereo at 48 kHz: pink noise, a kick on every beat at 120 BPM, a hat on
+    the off-beats and held chords. */
+std::vector<std::vector<float>> makeSong (double seconds)
+{
+    const auto total = static_cast<int> (seconds * 48000.0);
+    std::vector<std::vector<float>> song (2, std::vector<float> (static_cast<size_t> (total), 0.0f));
+    juce::Random random (11);
+    float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f;
+    constexpr double chords[4][3] { { 220.0, 261.6, 329.6 }, { 174.6, 220.0, 261.6 }, { 196.0, 246.9, 293.7 }, { 164.8, 207.7, 246.9 } };
+
+    for (int i = 0; i < total; ++i)
+    {
+        const auto t = i / 48000.0;
+        const auto white = random.nextFloat() * 2.0f - 1.0f;
+
+        // Pink noise (Paul Kellet's economy filter).
+        b0 = 0.99765f * b0 + white * 0.0990460f;
+        b1 = 0.96300f * b1 + white * 0.2965164f;
+        b2 = 0.57000f * b2 + white * 1.0526913f;
+        auto x = 0.012f * (b0 + b1 + b2 + white * 0.1848f);
+
+        const auto beat = t * 2.0;
+        const auto sinceBeat = (beat - std::floor (beat)) / 2.0;
+        const auto sinceOffBeat = (beat + 0.5 - std::floor (beat + 0.5)) / 2.0;
+        const auto kickPhase = juce::MathConstants<double>::twoPi * (45.0 * sinceBeat + 75.0 * (1.0 - std::exp (-sinceBeat * 30.0)) / 30.0);
+        x += static_cast<float> (0.2 * std::exp (-sinceBeat * 9.0) * std::sin (kickPhase));
+        x += 0.06f * white * static_cast<float> (std::exp (-sinceOffBeat * 60.0));
+
+        for (const auto hz : chords[static_cast<int> (t / 2.0) % 4])
+            x += static_cast<float> (0.01 * std::sin (juce::MathConstants<double>::twoPi * hz * t));
+
+        song[0][static_cast<size_t> (i)] = x;
+        song[1][static_cast<size_t> (i)] = x;
+    }
+
+    return song;
+}
+
+/** Plays `song` through an effect processor from the song's start, the DAW playing at 120 BPM;
+    returns its output as one channel. */
+std::vector<float> carveSong (freqart::FreqArtProcessor& effect, const std::vector<std::vector<float>>& song)
+{
+    SnapshotPlayHead head;
+    effect.setPlayHead (&head);
+
+    constexpr int blockSize = 512;
+    const auto total = static_cast<int> (song[0].size());
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    std::vector<float> out;
+    out.reserve (song[0].size());
+
+    for (int start = 0; start < total; start += blockSize)
+    {
+        const auto length = juce::jmin (blockSize, total - start);
+        buffer.setSize (2, length, false, false, true);
+
+        for (int channel = 0; channel < 2; ++channel)
+            buffer.copyFrom (channel, 0, song[static_cast<size_t> (channel)].data() + start, length);
+
+        const auto seconds = start / 48000.0;
+        head.info = {};
+        head.info.setIsPlaying (true);
+        head.info.setBpm (120.0);
+        head.info.setPpqPosition (seconds * 2.0);
+        head.info.setTimeInSeconds (seconds);
+        head.info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
+
+        effect.processBlock (buffer, midi);
+
+        for (int i = 0; i < length; ++i)
+            out.push_back (0.5f * (buffer.getSample (0, i) + buffer.getSample (1, i)));
+    }
+
+    effect.setPlayHead (nullptr);
+    return out;
+}
+
+/** FreqArt FX's editor: the header's Mode and Depth, what they show and grey, the canvas in each
+    mode, the export's hint, the live view of a carved song, the help, the window sizes. */
+void checkEffect (const juce::File& outputDir, float pixelScale)
+{
+    using namespace freqart;
+
+    FreqArtProcessor processor (FreqArtProcessor::Variant::effect);
+    processor.setPlayConfigDetails (2, 2, 48000.0, 512);
+    processor.prepareToPlay (48000.0, 512);
+
+    check (processor.getName() == "FreqArt FX" && processor.isEffect(), "FreqArt FX is the effect");
+    check (processor.getLatencySamples() == 4096, "FreqArt FX reports its latency");
+
+    const std::unique_ptr<FreqArtEditor> editor (dynamic_cast<FreqArtEditor*> (processor.createEditor()));
+
+    if (editor == nullptr)
+    {
+        check (false, "FreqArt FX makes a FreqArtEditor");
+        return;
+    }
+
+    const auto save = [&] (const juce::String& name, float scale, bool settle = true)
+    {
+        processor.rebuildPlanIfNeeded();
+
+        if (settle)
+            pump (60);
+
+        const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
+        const auto file = outputDir.getChildFile ("freqart-fx-" + name + ".png");
+
+        if (writePng (image, file))
+            std::cout << file.getFullPathName() << std::endl;
+        else
+            check (false, "write " + file.getFullPathName());
+    };
+
+    pump (150);
+
+    auto* mode = find<ui::SegmentedControl> (*editor, "mode");
+    auto* depth = find<ui::shell::NumberField> (*editor, "depth");
+    auto* header = findComponentWithId (*editor, "header");
+    auto* view = findComponentWithId (*editor, "view-switch");
+    auto* controls = findComponentWithId (*editor, "effect-controls");
+    auto* undo = findComponentWithId (*editor, "undo");
+    auto* exporter = find<ui::shell::ExportPanel> (*editor, "export");
+    auto* bounce = find<juce::Button> (*editor, "bounce");
+
+    if (mode == nullptr || depth == nullptr || header == nullptr || view == nullptr || controls == nullptr || undo == nullptr
+        || exporter == nullptr || bounce == nullptr)
+        return;
+
+    // The header: Canvas | Live beside the wordmark, Mode and Depth after it, clear of undo.
+    check (controls->getParentComponent() == header && controls->isVisible(), "Mode and Depth are in the header");
+    check (view->getRight() < controls->getX() && controls->getRight() < undo->getX()
+               && mode->getRight() <= controls->getWidth() && depth->getRight() <= controls->getWidth(),
+           "the header's controls do not overlap");
+    check (mode->getSelectedIndex() == 0 && processor.getEffectMode() == EffectMode::carve, "a new FreqArt FX carves");
+    check (depth->isEnabled(), "Depth can be changed in Carve");
+
+    for (auto* id : { "density", "contrast", "level" })
+        if (auto* knob = findComponentWithId (*editor, id))
+            check (! knob->isEnabled(), juce::String (id) + " is greyed in Carve (it shapes the sines only)");
+
+    check (exporter->isAskingForDawBounce() && ! bounce->isVisible(), "Carve: the export asks for a bounce in the DAW");
+    save ("default", pixelScale);
+
+    juce::Uuid textId, imageId;
+    makeRichDrawing (processor, textId, imageId);
+    pump (100);
+    save ("carve", pixelScale);
+
+    // Mode, clicked: the segments sit at about these fractions of its width.
+    const auto clickMode = [&] (float fraction)
+    {
+        clickOn (*mode, { mode->getWidth() * fraction, mode->getHeight() * 0.5f });
+        pump (60);
+    };
+
+    clickMode (0.39f);
+    check (processor.getEffectMode() == EffectMode::carveDraw && mode->getSelectedIndex() == 1, "clicking Carve + Draw chooses it");
+    check (depth->isEnabled() && ! exporter->isAskingForDawBounce() && bounce->isVisible(), "Carve + Draw: Depth on, Bounce WAV back");
+
+    for (auto* id : { "density", "contrast", "level" })
+        if (auto* knob = findComponentWithId (*editor, id))
+            check (knob->isEnabled(), juce::String (id) + " can be changed in Carve + Draw");
+
+    save ("carve-draw", pixelScale);
+
+    clickMode (0.69f);
+    check (processor.getEffectMode() == EffectMode::stencil, "clicking Stencil chooses it");
+    check (exporter->isAskingForDawBounce(), "Stencil: the export asks for a bounce in the DAW");
+    save ("stencil", pixelScale);
+
+    clickMode (0.9f);
+    check (processor.getEffectMode() == EffectMode::draw, "clicking Draw chooses it");
+    check (! depth->isEnabled(), "Depth is greyed in Draw, which carves nothing");
+    check (bounce->isVisible() && bounce->isEnabled(), "Draw: Bounce WAV bounces the sines");
+    save ("draw", pixelScale);
+
+    // The canvas shows each mode differently (and not as the instrument does).
+    clickMode (0.1f);
+    check (processor.getEffectMode() == EffectMode::carve, "clicking Carve chooses it");
+    auto* canvas = findComponentWithId (*editor, "canvas");
+
+    if (canvas != nullptr)
+    {
+        const auto carved = canvas->createComponentSnapshot (canvas->getLocalBounds());
+        setParameter (processor, params::id::mode, 2.0f);
+        pump (80);
+        const auto stencilled = canvas->createComponentSnapshot (canvas->getLocalBounds());
+        check (countDifferentPixels (carved, stencilled) > 20000, "the canvas shows Carve and Stencil differently");
+        setParameter (processor, params::id::mode, 0.0f);
+        pump (80);
+    }
+
+    // Depth: dragged up it carves less, typed it takes the value, Esc leaves it.
+    const auto before = processor.getDepthDb();
+    dragOn (*depth, { 30.0f, 14.0f }, { 30.0f, -10.0f });
+    check (processor.getDepthDb() > before + 5.0f, "dragging Depth up carves less deeply");
+
+    depth->showEditor();
+    pump (30);
+
+    if (auto* field = dynamic_cast<juce::TextEditor*> (depth->getChildComponent (0)))
+    {
+        field->setText ("-24", juce::dontSendNotification);
+        field->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    }
+
+    pump (60);
+    check (std::abs (processor.getDepthDb() + 24.0f) < 0.05f, "a typed Depth is taken: " + juce::String (processor.getDepthDb()));
+    save ("shallow", pixelScale);
+    setParameter (processor, params::id::depth, params::defaultDepthDb);
+    pump (60);
+
+    // The Mode control explains the modes.
+    if (auto* tips = find<juce::TooltipWindow> (*editor, "tooltips"))
+    {
+        if (auto* client = dynamic_cast<juce::TooltipClient*> (mode))
+        {
+            check (client->getTooltip().contains ("Stencil"), "the Mode control's tooltip explains the modes");
+            tips->displayTip (mode->localPointToGlobal (juce::Point<int> (mode->getWidth() / 2, mode->getHeight())), client->getTooltip());
+            save ("tooltip", pixelScale);
+            tips->hideTip();
+        }
+    }
+
+    // Preview runs the pass on the audio coming in, with the DAW stopped.
+    {
+        processor.setPreview (true);
+        const auto song = makeSong (1.0);
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+        auto changed = 0.0f;
+
+        for (int start = 0; start + 512 <= 48000; start += 512)
+        {
+            for (int channel = 0; channel < 2; ++channel)
+                buffer.copyFrom (channel, 0, song[static_cast<size_t> (channel)].data() + start, 512);
+
+            processor.processBlock (buffer, midi);
+
+            if (start >= 4096 + 8192)
+                for (int i = 0; i < 512; ++i)
+                    changed = std::max (changed, std::abs (buffer.getSample (0, i) - song[0][static_cast<size_t> (start + i - 4096)]));
+        }
+
+        check (processor.isSounding() && changed > 0.01f, "Preview carves the audio coming in");
+        processor.setPreview (false);
+
+        // The host carries on: the pass stops, and with it the playhead.
+        for (int i = 0; i < 8; ++i)
+            processor.processBlock (buffer, midi);
+
+        check (! processor.isSounding(), "Preview off stops the pass");
+        pump (60);
+    }
+
+    // The live view: a stand-in song through a second FreqArt FX with this one's state.
+    editor->showLiveView (true);
+
+    if (auto* live = find<ui::LiveView> (*editor, "live-view"))
+    {
+        FreqArtProcessor second (FreqArtProcessor::Variant::effect);
+        juce::MemoryBlock state;
+        processor.getStateInformation (state);
+        second.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+        second.setPlayConfigDetails (2, 2, 48000.0, 512);
+        second.prepareToPlay (48000.0, 512);
+        second.rebuildPlanIfNeeded();
+
+        const auto seconds = live->getVisibleSeconds();
+        const auto song = makeSong (seconds);
+        const auto carved = carveSong (second, song);
+        check (second.getDocument().objects.size() == processor.getDocument().objects.size(), "the state carries the drawing");
+
+        // The pass (the first 8 s) is carved: the output differs from the song played late.
+        auto changed = 0.0f;
+
+        for (size_t i = 4096 + 48000; i < 4096 + 6 * 48000 && i < carved.size(); ++i)
+            changed = std::max (changed, std::abs (carved[i] - song[0][i - 4096]));
+
+        check (changed > 0.05f, "the processor carves the song");
+        live->fillFromAudioForSnapshot (carved, 48000.0);
+    }
+
+    save ("live", pixelScale);
+    editor->showLiveView (false);
+
+    editor->showHelp (true);
+    save ("help", pixelScale);
+    editor->showHelp (false);
+
+    // Window sizes: the header holds together from 75 to 200 %.
+    for (const auto& [scale, name] : { std::pair<float, const char*> { 1.0f, "100" }, { 2.0f, "200" }, { 0.75f, "75" } })
+    {
+        setWindowScale (*editor, scale);
+        pump (60);
+        check (view->getRight() < controls->getX() && controls->getRight() < undo->getX(),
+               "the header's controls do not overlap at " + juce::String (name) + " %");
+        save (name, 1.0f);
+    }
+
+    processor.releaseResources();
+}
 
 int main (int argc, char* argv[])
 {
@@ -1192,6 +1616,8 @@ int main (int argc, char* argv[])
         checkFooter (*editor, processor, [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
         checkLayers (*editor, processor, textId, imageId,
                      [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
+        checkLows (*editor, processor, *content, imageId,
+                   [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
 
         // ---- the look of standard controls: a menu, a tooltip, typing a value --------------------------
         if (auto* length = find<juce::ComboBox> (*editor, "length"))
@@ -1380,6 +1806,10 @@ int main (int argc, char* argv[])
     // Deliver anything still queued before JUCE shuts down.
     pump (50);
     processor.releaseResources();
+
+    // ---- FreqArt FX: the same editor on the effect ----------------------------------------------
+    checkEffect (outputDir, pixelScale);
+    pump (50);
 
     if (failed)
         std::cerr << "Some checks failed" << std::endl;

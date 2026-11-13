@@ -85,6 +85,7 @@ namespace
         __m128 v;
 
         static Float4 load (const float* p) noexcept           { return { _mm_loadu_ps (p) }; }
+        static Float4 fill (float x) noexcept                  { return { _mm_set1_ps (x) }; }
         void store (float* p) const noexcept                   { _mm_storeu_ps (p, v); }
         Float4 operator+ (Float4 o) const noexcept             { return { _mm_add_ps (v, o.v) }; }
         Float4 operator- (Float4 o) const noexcept             { return { _mm_sub_ps (v, o.v) }; }
@@ -96,6 +97,7 @@ namespace
         float32x4_t v;
 
         static Float4 load (const float* p) noexcept           { return { vld1q_f32 (p) }; }
+        static Float4 fill (float x) noexcept                  { return { vdupq_n_f32 (x) }; }
         void store (float* p) const noexcept                   { vst1q_f32 (p, v); }
         Float4 operator+ (Float4 o) const noexcept             { return { vaddq_f32 (v, o.v) }; }
         Float4 operator- (Float4 o) const noexcept             { return { vsubq_f32 (v, o.v) }; }
@@ -107,6 +109,7 @@ namespace
         float v[4];
 
         static Float4 load (const float* p) noexcept           { return { { p[0], p[1], p[2], p[3] } }; }
+        static Float4 fill (float x) noexcept                  { return { { x, x, x, x } }; }
         void store (float* p) const noexcept                   { for (int k = 0; k < 4; ++k) p[k] = v[k]; }
         Float4 operator+ (Float4 o) const noexcept             { return { { v[0] + o.v[0], v[1] + o.v[1], v[2] + o.v[2], v[3] + o.v[3] } }; }
         Float4 operator- (Float4 o) const noexcept             { return { { v[0] - o.v[0], v[1] - o.v[1], v[2] - o.v[2], v[3] - o.v[3] } }; }
@@ -170,6 +173,18 @@ namespace
                 const auto rotated = r[j] * c[j] - m[j] * s[j];
                 m[j] = r[j] * s[j] + m[j] * c[j];
                 r[j] = rotated;
+            }
+        }
+
+        /** Turns every step by the same small angle: the frequencies all rise by the same amount
+            each sample (the rising comb's glide). */
+        void glide (Float4 glideCos, Float4 glideSin) noexcept
+        {
+            for (size_t j = 0; j < registers; ++j)
+            {
+                const auto turned = c[j] * glideCos - s[j] * glideSin;
+                s[j] = c[j] * glideSin + s[j] * glideCos;
+                c[j] = turned;
             }
         }
     };
@@ -268,6 +283,71 @@ namespace
         }
     }
 
+    /** runLanes for the rising comb: the same, with every sine's frequency rising by one glide
+        step per sample. */
+    template <size_t registers>
+    void runGlidingLanes (int count, const uint16_t* lines, float* re, float* im, const float* cosStep, const float* sinStep,
+                          const float* amp, const float* step, float glideCos, float glideSin, float* laneSums, int numSamples) noexcept
+    {
+        constexpr auto size = Oscillators<registers>::size;
+        const auto gc = Float4::fill (glideCos);
+        const auto gs = Float4::fill (glideSin);
+
+        for (int group = 0; group < count; group += static_cast<int> (size))
+        {
+            Oscillators<registers> z;
+            z.load (lines + group, re, im, cosStep, sinStep);
+
+            Float4 a[registers], d[registers];
+
+            for (size_t j = 0; j < registers; ++j)
+            {
+                a[j] = Float4::load (amp + group + 4 * j);
+                d[j] = Float4::load (step + group + 4 * j);
+            }
+
+            auto* sums = laneSums;
+
+            for (int i = 0; i < numSamples; ++i, sums += 4)
+            {
+                auto total = a[0] * z.m[0];
+                a[0] = a[0] + d[0];
+
+                for (size_t j = 1; j < registers; ++j)
+                {
+                    total = total + a[j] * z.m[j];
+                    a[j] = a[j] + d[j];
+                }
+
+                (Float4::load (sums) + total).store (sums);
+                z.rotate();
+                z.glide (gc, gs);
+            }
+
+            z.store (lines + group, re, im);
+        }
+    }
+
+    /** A complex number of length 1, multiplied out by hand: std::complex's multiplication
+        checks for infinities on every call, which costs more than the multiplication. */
+    struct Phasor
+    {
+        double re = 1.0, im = 0.0;
+
+        static Phasor at (double radians) noexcept      { return { std::cos (radians), std::sin (radians) }; }
+        Phasor operator* (Phasor o) const noexcept      { return { re * o.re - im * o.im, re * o.im + im * o.re }; }
+        Phasor& operator*= (Phasor o) noexcept          { return *this = *this * o; }
+    };
+
+    bool hasComb (const ArtPlan* plan) noexcept
+    {
+        return plan != nullptr && plan->combLines >= 2 && plan->combLines <= plan->numLines && plan->combSines > 0
+            && plan->combActive.size() >= static_cast<size_t> (plan->numColumns)
+            && std::isfinite (plan->combGridHz) && plan->combGridHz > 0.0f && std::isfinite (plan->combGridLowHz)
+            && std::isfinite (plan->combEdgeHz) && plan->combEdgeHz >= 0.0f
+            && std::isfinite (plan->combSlope) && plan->combSlope > 0.0f;
+    }
+
     void addLanes (const float* laneSums, float* sum, int numSamples) noexcept
     {
         for (int i = 0; i < numSamples; ++i, laneSums += 4)
@@ -314,6 +394,28 @@ void ArtEngine::prepare (double newSampleRate, int maxBlockSize)
     initialRe[static_cast<size_t> (dummyLine)] = 1.0f;
     initialIm[static_cast<size_t> (dummyLine)] = 0.0f;
 
+    // The comb's sines start from phases of their own, unrelated to the lines'.
+    const auto combSlots = static_cast<size_t> (maxCombSines + 1);
+    combInitialRe.assign (combSlots, 1.0f);
+    combInitialIm.assign (combSlots, 0.0f);
+
+    for (int sine = 0; sine < maxCombSines; ++sine)
+    {
+        const auto phase = initialPhase (sine + 0x5A17);
+        combInitialRe[static_cast<size_t> (sine)] = static_cast<float> (std::cos (phase));
+        combInitialIm[static_cast<size_t> (sine)] = static_cast<float> (std::sin (phase));
+    }
+
+    combWork.assign (combSlots + static_cast<size_t> (lanes), static_cast<uint16_t> (maxCombSines));
+    combAmp.assign (combSlots + static_cast<size_t> (lanes), 0.0f);
+    combStep.assign (combSlots + static_cast<size_t> (lanes), 0.0f);
+    combRe.assign (combSlots, 0.0f);
+    combIm.assign (combSlots, 0.0f);
+    combRe[static_cast<size_t> (maxCombSines)] = 1.0f;
+    combCos.assign (combSlots, 1.0f);
+    combSin.assign (combSlots, 0.0f);
+    combSum.assign (static_cast<size_t> (chunkSize), 0.0f);
+
     const auto workSize = static_cast<size_t> (maxLines + lanes);
     workLines.assign (workSize, static_cast<uint16_t> (dummyLine));
     workAmp.assign (workSize, 0.0f);
@@ -344,6 +446,7 @@ void ArtEngine::reset() noexcept
     jumpPending = false;
     position = 0.0;
     rate = 0.0;
+    combClock = 0;
 
     fadingPlan = nullptr;
     fadingSharesBank = false;
@@ -530,6 +633,7 @@ void ArtEngine::applySegment (const PlaySegment& segment) noexcept
 
 void ArtEngine::moveOn (int numSamples) noexcept
 {
+    combClock += numSamples;
     const auto next = position + rate * numSamples;
 
     if (once && next >= 1.0)
@@ -631,6 +735,9 @@ int ArtEngine::renderChunk (float* out, int maxSamples) noexcept
             std::fill (fadingSum, fadingSum + n, 0.0f);
     }
 
+    // The rising comb: its crossfades are in its amplitudes, so it is added after the mix.
+    const auto combSounds = renderComb (heard, fadingOut, n);
+
     if (! fading)
     {
         for (int i = 0; i < n; ++i)
@@ -662,6 +769,10 @@ int ArtEngine::renderChunk (float* out, int maxSamples) noexcept
             out[i] = gain[static_cast<size_t> (i)] * (incoming * sum[i] + outgoing * fadingSum[i]);
         }
     }
+
+    if (combSounds)
+        for (int i = 0; i < n; ++i)
+            out[i] += gain[static_cast<size_t> (i)] * combSum[static_cast<size_t> (i)];
 
     // Move on.
     moveOn (n);
@@ -800,6 +911,230 @@ void ArtEngine::synthesise (const ArtPlan* plan, const ArtPlan* second, Bank& ba
                           laneSums.data(), laneSums2.data(), numSamples);
     addLanes (laneSums.data(), sum, numSamples);
     addLanes (laneSums2.data(), secondSum, numSamples);
+}
+
+bool ArtEngine::renderComb (const ArtPlan* heard, const ArtPlan* fadingOut, int numSamples) noexcept
+{
+    const auto fading = planFadeRemaining > 0;
+    const auto heardComb = hasComb (heard);
+    const auto fadingComb = fading && hasComb (fadingOut);
+
+    if (! heardComb && ! fadingComb)
+        return false;
+
+    // The comb's crossfade gains, as renderChunk's for the lines, at the chunk's start and end
+    // (the chunk never runs past the end of the crossfade).
+    const auto done = planFadeLength - planFadeRemaining;
+    const auto t0 = fading ? static_cast<float> (done) / static_cast<float> (planFadeLength) : 1.0f;
+    const auto t1 = fading ? static_cast<float> (std::min (planFadeLength, done + numSamples)) / static_cast<float> (planFadeLength) : 1.0f;
+    const auto quarter = static_cast<float> (twoPi * 0.25);
+    const auto incoming = [&] (float t) { return ! fading ? 1.0f : (fadingSharesBank ? t : std::sin (t * quarter)); };
+    const auto outgoing = [&] (float t) { return fadingSharesBank ? 1.0f - t : std::cos (t * quarter); };
+
+    std::fill (laneSums.begin(), laneSums.begin() + static_cast<std::ptrdiff_t> (numSamples * 4), 0.0f);
+    auto sounding = false;
+
+    const auto run = [&] (const ArtPlan& plan, int count)
+    {
+        if (count <= 0)
+            return;
+
+        // The sines' steps turn by this much each sample, so that their frequencies rise by the
+        // slope (Hz per second) divided by the sample rate.
+        const auto turn = twoPi * static_cast<double> (plan.combSlope) / (sampleRate * sampleRate);
+        runGlidingLanes<static_cast<size_t> (lanes / 4)> (count, combWork.data(), combRe.data(), combIm.data(),
+                                                          combCos.data(), combSin.data(), combAmp.data(), combStep.data(),
+                                                          static_cast<float> (std::cos (turn)), static_cast<float> (std::sin (turn)),
+                                                          laneSums.data(), numSamples);
+        sounding = true;
+    };
+
+    if (heardComb)
+    {
+        // A crossfade between plans of one layout plays both on the same sines.
+        const auto* second = fadingComb && fadingSharesBank ? fadingOut : nullptr;
+        run (*heard, gatherComb (*heard, incoming (t0), incoming (t1), second, outgoing (t0), outgoing (t1), numSamples));
+    }
+
+    if (fadingComb && ! (heardComb && fadingSharesBank))
+        run (*fadingOut, gatherComb (*fadingOut, outgoing (t0), outgoing (t1), nullptr, 0.0f, 0.0f, numSamples));
+
+    if (sounding)
+        addLanes (laneSums.data(), combSum.data(), numSamples);
+
+    return sounding;
+}
+
+int ArtEngine::gatherComb (const ArtPlan& plan, float weightStart, float weightEnd,
+                           const ArtPlan* second, float secondStart, float secondEnd, int numSamples) noexcept
+{
+    // A plan's grid at the column being played and the next, and how far between them the chunk
+    // starts and ends (it never crosses a column boundary).
+    struct View
+    {
+        const float* here = nullptr;
+        const float* next = nullptr;
+        float start = 0.0f, end = 0.0f;
+        bool active = false;
+    };
+
+    const auto viewOf = [this, numSamples] (const ArtPlan& p)
+    {
+        View v;
+        const auto columns = p.numColumns;
+        const auto x = position * columns;
+        const auto c = juce::jlimit (0, columns - 1, static_cast<int> (std::floor (x)));
+        const auto next = c + 1 < columns ? c + 1 : (once ? c : 0);
+        const auto lines = static_cast<size_t> (p.numLines);
+
+        v.here = p.amplitudes.data() + static_cast<size_t> (c) * lines;
+        v.next = p.amplitudes.data() + static_cast<size_t> (next) * lines;
+        v.start = static_cast<float> (juce::jlimit (0.0, 1.0, x - c));
+        v.end = static_cast<float> (juce::jlimit (0.0, 1.0, x - c + rate * columns * numSamples));
+        v.active = p.combActive[static_cast<size_t> (c)] != 0;
+        return v;
+    };
+
+    // The amplitude at a frequency: interpolated between the grid lines around it, fading to
+    // silence over combEdgeHz beyond the top of the grid. At the bottom it fades in over
+    // combEdgeHz too, from silence, which must hold wherever a sine can first be heard:
+    // - a sine that passes the top during a chunk wraps round unheard, and is next played up to
+    //   one chunk's glide (1 Hz at 48 kHz) above the bottom of the glide;
+    // - the glide may start below 0 Hz (an analyser low end under 12.5 Hz), where sines are not
+    //   played at all;
+    // - nothing is played below lowestPlayedHz.
+    // A sine coming on at a level of its own there would click, every 0.1 s. Where that puts the
+    // fade-in above the bottom of the grid (always for an analyser low end under 17.5 Hz), the
+    // lowest grid lines fade in too: a quicker fade-in, a fraction of a cycle down there, would
+    // leave content below 5 Hz.
+    const auto gridLines = plan.combLines;
+    const auto gridLow = static_cast<double> (plan.combGridLowHz);
+    const auto gridHz = static_cast<double> (plan.combGridHz);
+    const auto gridHigh = gridLow + (gridLines - 1) * gridHz;
+    const auto edgeHz = std::max (1.0e-3, static_cast<double> (plan.combEdgeHz));
+    const auto chunkGlideHz = static_cast<double> (plan.combSlope) * chunkSize / sampleRate;
+    const auto fadeInLow = std::max (std::max (gridLow - edgeHz, 0.0) + chunkGlideHz, static_cast<double> (lowestPlayedHz));
+    const auto fadeInHigh = fadeInLow + edgeHz;  // at or above gridLow
+
+    const auto gridAt = [=] (const View& v, float between, double hz)
+    {
+        const auto lerp = [between] (float here, float next) { return here + (next - here) * between; };
+
+        if (hz < gridLow)
+            return lerp (v.here[0], v.next[0]);
+
+        if (hz >= gridHigh)
+        {
+            const auto last = static_cast<size_t> (gridLines - 1);
+            return hz < gridHigh + edgeHz ? lerp (v.here[last], v.next[last]) * static_cast<float> (1.0 - (hz - gridHigh) / edgeHz) : 0.0f;
+        }
+
+        const auto u = (hz - gridLow) / gridHz;
+        const auto k = std::min (gridLines - 2, static_cast<int> (u));
+        const auto f = static_cast<float> (u - k);
+        const auto line = static_cast<size_t> (k);
+        const auto here = v.here[line] + (v.here[line + 1] - v.here[line]) * f;
+        const auto next = v.next[line] + (v.next[line + 1] - v.next[line]) * f;
+        return here + (next - here) * between;
+    };
+
+    const auto amplitudeAt = [=] (const View& v, float between, double hz)
+    {
+        if (! (hz > fadeInLow))
+            return 0.0f;
+
+        const auto a = gridAt (v, between, hz);
+        return hz < fadeInHigh ? a * static_cast<float> ((hz - fadeInLow) / edgeHz) : a;
+    };
+
+    const auto first = viewOf (plan);
+    const auto other = second != nullptr ? viewOf (*second) : View {};
+    const auto heardHere = first.active && (weightStart > 0.0f || weightEnd > 0.0f);
+    const auto otherHere = other.active && (secondStart > 0.0f || secondEnd > 0.0f);
+    int count = 0;
+
+    if (heardHere || otherHere)
+    {
+        // Sine j starts j / sines of the way up the glide, and has moved on by the glide so far;
+        // one sine at most has passed the top and wrapped round to the bottom.
+        //
+        // A sine's phase is a function of time alone: its own starting phase plus what it has
+        // gathered since it last left the bottom of the glide. Offset o Hz above the bottom, it
+        // left o / slope seconds ago, and has turned by 2 pi (bottom o + o^2 / 2) / slope since.
+        // So where the blocks and chunks fall cannot change the sound (a phase carried from chunk
+        // to chunk would come out of each wrap wherever the chunk happened to end). The sines'
+        // steps and phases are worked out by turning from one sine's to the next, in double
+        // precision: a cosine and a sine per sine and chunk would cost more than the comb's
+        // synthesis itself.
+        const auto sines = std::min (plan.combSines, maxCombSines);
+        const auto slope = static_cast<double> (plan.combSlope);
+        const auto bottom = gridLow - edgeHz;
+        const auto length = gridHigh + edgeHz - bottom;
+        const auto spacing = length / sines;
+        const auto start = slope * (static_cast<double> (combClock) / sampleRate);
+        const auto glideHz = slope * numSamples / sampleRate;
+        const auto limit = nyquistGuard * sampleRate;
+        const auto radiansPerHz = twoPi / sampleRate;
+        const auto phaseAt = [=] (double o) { return twoPi * (bottom + 0.5 * o) * o / slope; };
+        const auto phaseTurnAt = [=] (double o) { return twoPi * (bottom + o + 0.5 * spacing) * spacing / slope; };
+
+        auto offset = std::fmod (start, length);
+        auto step = Phasor::at ((bottom + offset) * radiansPerHz);
+        auto phase = Phasor::at (phaseAt (offset));
+        auto phaseTurn = Phasor::at (phaseTurnAt (offset));
+        const auto stepTurn = Phasor::at (spacing * radiansPerHz);
+        const auto phaseTurnTurn = Phasor::at (twoPi * spacing * spacing / slope);
+
+        for (int j = 0; j < sines; ++j, offset += spacing, step *= stepTurn, phase *= phaseTurn, phaseTurn *= phaseTurnTurn)
+        {
+            if (offset >= length)
+            {
+                offset -= length;
+                step = Phasor::at ((bottom + offset) * radiansPerHz);
+                phase = Phasor::at (phaseAt (offset));
+                phaseTurn = Phasor::at (phaseTurnAt (offset));
+            }
+
+            const auto hz = bottom + offset;
+            auto a0 = heardHere ? weightStart * amplitudeAt (first, first.start, hz) : 0.0f;
+            auto a1 = heardHere ? weightEnd * amplitudeAt (first, first.end, hz + glideHz) : 0.0f;
+
+            if (otherHere)
+            {
+                a0 += secondStart * amplitudeAt (other, other.start, hz);
+                a1 += secondEnd * amplitudeAt (other, other.end, hz + glideHz);
+            }
+
+            // (A sine at or below 0 Hz is silent for the whole chunk: the fade-in starts more
+            // than one chunk's glide above 0 Hz.)
+            if (! (a0 > 0.0f || a1 > 0.0f) || ! (hz > 0.0 && hz < limit))
+                continue;
+
+            const auto k = static_cast<size_t> (count++);
+            const auto sine = static_cast<size_t> (j);
+            const auto now = phase * Phasor { static_cast<double> (combInitialRe[sine]), static_cast<double> (combInitialIm[sine]) };
+            combWork[k] = static_cast<uint16_t> (j);
+            combAmp[k] = a0;
+            combStep[k] = (a1 - a0) / static_cast<float> (numSamples);
+            combRe[sine] = static_cast<float> (now.re);
+            combIm[sine] = static_cast<float> (now.im);
+            combCos[sine] = static_cast<float> (step.re);
+            combSin[sine] = static_cast<float> (step.im);
+        }
+    }
+
+    if (count == 0)
+        return 0;
+
+    // Pad to whole groups with the silent dummy sine.
+    while (count % lanes != 0)
+    {
+        const auto k = static_cast<size_t> (count++);
+        combWork[k] = static_cast<uint16_t> (maxCombSines);
+        combAmp[k] = combStep[k] = 0.0f;
+    }
+
+    return count;
 }
 
 } // namespace freqart

@@ -1,7 +1,7 @@
 #pragma once
 
-// The header bar: wordmark, Canvas | Live, undo / redo, help and settings.
-// See docs/DESIGN.md, "Header".
+// The header bar: wordmark, Canvas | Live, undo / redo, help and settings; in FreqArt FX also
+// the effect's Mode and Depth. See docs/DESIGN.md, "Header".
 
 #include "Widgets.h"
 
@@ -13,7 +13,12 @@ namespace freqart::ui::shell
 class Header final : public juce::Component
 {
 public:
-    Header();
+    /** forEffect: FreqArt FX's header ("FreqArt FX", room for the effect's controls). */
+    explicit Header (bool forEffect = false);
+
+    /** FreqArt FX: puts the effect's Mode and Depth in the header, between Canvas | Live (which
+        then moves next to the wordmark) and undo / redo. */
+    void setEffectControls (juce::Component* controls, int idealWidth);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -25,6 +30,11 @@ public:
     IconButton settingsButton;
 
 private:
+    int bylineRight() const;
+
+    const bool effect;
+    juce::Component* effectControls = nullptr;
+    int effectControlsWidth = 0;
     juce::Rectangle<int> logoArea;
     int dividerX = 0;
 

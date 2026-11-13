@@ -3,6 +3,7 @@
 #include "Actions.h"
 #include "CanvasView.h"
 #include "EditorState.h"
+#include "EffectControls.h"
 #include "Inspector.h"
 #include "LiveView.h"
 #include "LookAndFeel.h"
@@ -102,12 +103,14 @@ namespace
     public:
         explicit Content (FreqArtProcessor& p)
             : processor (p),
+              header (p.isEffect()),
               toolbar (state),
               canvas (p, state),
               liveView (p),
               inspector (p, state),
               footer (p, layout::inspectorLeft),
-              settings (p)
+              settings (p),
+              help (p.isEffect())
         {
             setOpaque (true);
             setWantsKeyboardFocus (true);
@@ -130,6 +133,13 @@ namespace
             addChildComponent (scrim);
             addChildComponent (settings);
             addChildComponent (help);
+
+            // FreqArt FX: Mode and Depth in the header.
+            if (processor.isEffect())
+            {
+                effectControls = std::make_unique<ui::shell::EffectControls> (processor);
+                header.setEffectControls (effectControls.get(), ui::shell::EffectControls::getIdealWidth());
+            }
 
             // Header
             header.viewSwitch.onChange = [this] (int index) { setLiveView (index == 1); };
@@ -456,6 +466,9 @@ namespace
         void timerCallback() override
         {
             footer.refresh();
+
+            if (effectControls != nullptr)
+                effectControls->refresh();
         }
 
         FreqArtProcessor& processor;
@@ -471,6 +484,7 @@ namespace
         ui::shell::Scrim scrim;
         ui::shell::SettingsPanel settings;
         ui::shell::HelpPanel help;
+        std::unique_ptr<ui::shell::EffectControls> effectControls;   // FreqArt FX only
         std::unique_ptr<juce::TooltipWindow> tooltips;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Content)

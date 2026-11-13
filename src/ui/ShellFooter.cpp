@@ -138,6 +138,16 @@ Footer::Footer (FreqArtProcessor& p, int inspectorLeftEdge)
     contrast.setTooltip ("Contrast: how far the quietest drawn parts sit below the loudest (dB)");
     level.setTooltip ("Level: the output level");
 
+    // In the effect these three shape the drawing's sines, which only the Draw modes play.
+    if (processor.isEffect())
+    {
+        density.setTooltip ("Density (Carve + Draw and Draw): how many lines share the height. Few = scan lines, many = solid shapes.");
+        contrast.setTooltip ("Contrast (Carve + Draw and Draw): how far the quietest drawn parts sit below the loudest (dB)");
+        level.setTooltip ("Level (Carve + Draw and Draw): the level of the drawing's sines. The audio passing through keeps its own.");
+        preview.setTooltip ("Preview: run the drawing's pass from its start on the audio coming in, even while the DAW is "
+                            "stopped (once, or on a loop with Repeat). Most DAWs keep sending audio to effects then.");
+    }
+
     // Length
     length.addItemList (params::lengthNames(), 1);
     length.setComponentID ("length");
@@ -232,6 +242,16 @@ juce::String Footer::tempoHint() const
 
 void Footer::refresh()
 {
+    // FreqArt FX: the sines' settings are greyed in the modes that play no sines.
+    if (processor.isEffect())
+    {
+        const auto sines = playsSines (processor.getEffectMode());
+
+        for (auto* knob : { &density, &contrast, &level })
+            if (knob->isEnabled() != sines)
+                knob->setEnabled (sines);
+    }
+
     const auto previewing = processor.isPreviewing();
 
     if (preview.getToggleState() != previewing)

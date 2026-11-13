@@ -2,6 +2,8 @@
 
 // Hands plans from the message thread to the audio thread without locks or allocations on the
 // audio thread, and frees them on the message thread once the audio thread is done with them.
+// The sine plan (ArtPlan, PlanExchange) and the carving masks (MaskPlan, MaskPlanExchange; the
+// effect's pair of them, MaskPlanSet, MaskSetExchange) travel the same way.
 //
 // The message thread publishes plans with strictly increasing versions. The audio thread picks
 // up the newest one with acquire() and reports which plans it still uses (the current one and,
@@ -10,6 +12,7 @@
 // touched again, and collectGarbage() releases it.
 
 #include "core/ArtPlan.h"
+#include "core/MaskPlan.h"
 
 #include <atomic>
 #include <cstdint>
@@ -19,20 +22,23 @@
 namespace freqart
 {
 
-class PlanExchange
+/** Plan is a type with a public `uint64_t version` (ArtPlan, MaskPlan, MaskPlanSet: each is
+    instantiated in PlanExchange.cpp). */
+template <typename Plan>
+class VersionedExchange
 {
 public:
-    PlanExchange() = default;
-    ~PlanExchange();
+    VersionedExchange() = default;
+    ~VersionedExchange();
 
     // ---- message thread ------------------------------------------------------------------
 
     /** Assigns the next version number to the plan, keeps it alive, and makes it the plan the
         audio thread picks up next (replacing an earlier published plan it has not picked up). */
-    void publish (std::shared_ptr<ArtPlan> plan);
+    void publish (std::shared_ptr<Plan> plan);
 
     /** The most recently published plan (null before the first). */
-    std::shared_ptr<const ArtPlan> latest() const;
+    std::shared_ptr<const Plan> latest() const;
 
     /** Releases plans the audio thread can no longer reach. Call regularly (e.g. from a timer).
         Besides plans older than both reported versions, that includes plans that were replaced
@@ -48,7 +54,7 @@ public:
     /** The newest published plan not handed out before, or nullptr if there is none.
         Wait-free. The pointer stays valid until reportInUse has been called with versions
         that are both newer than the plan's. */
-    const ArtPlan* acquire() noexcept;
+    const Plan* acquire() noexcept;
 
     /** The versions of the plans the audio thread still reads: its current plan and the one
         it is fading out from (0 for none). Call after every acquire() that returned a plan,
@@ -58,15 +64,23 @@ public:
 private:
     struct Kept
     {
-        std::shared_ptr<ArtPlan> plan;
+        std::shared_ptr<Plan> plan;
         bool skipped = false;  // replaced in `pending` before the audio thread picked it up
     };
 
     std::vector<Kept> alive;                      // message thread only, oldest first
-    std::atomic<ArtPlan*> pending { nullptr };
+    std::atomic<Plan*> pending { nullptr };
     std::atomic<uint64_t> oldestInUse { 0 };      // the older of the two reported versions (0: none yet)
     std::atomic<bool> audioHasReported { false };
     uint64_t nextVersion = 1;
 };
+
+extern template class VersionedExchange<ArtPlan>;
+extern template class VersionedExchange<MaskPlan>;
+extern template class VersionedExchange<MaskPlanSet>;
+
+using PlanExchange = VersionedExchange<ArtPlan>;
+using MaskPlanExchange = VersionedExchange<MaskPlan>;
+using MaskSetExchange = VersionedExchange<MaskPlanSet>;
 
 } // namespace freqart

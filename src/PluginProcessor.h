@@ -1,15 +1,26 @@
 #pragma once
 
-// The host-facing plug-in: an instrument whose output is the sound of the drawing.
+// The host-facing plug-in, in two variants built from the same code (one class, a flag):
+//
+// - FreqArt, an instrument: its output is the sound of the drawing.
+// - FreqArt FX, an audio effect for audio tracks, buses and the master: the drawing is carved
+//   out of the audio coming in (Carve), kept alone (Stencil), played into a hole carved for it
+//   (Carve + Draw) or played on top of it (Draw). See docs/DESIGN.md, "FreqArt FX".
+//
+// Hosts decide from a VST3's category whether it goes in an instrument slot or an effect slot
+// (Ableton Live, FL Studio and Cubase offer an instrument only on MIDI / instrument tracks and an
+// effect only on audio), so the same plug-in is registered twice: once as each.
 
 #include "Parameters.h"
 #include "core/ArtPlan.h"
 #include "core/Compositor.h"
 #include "core/Document.h"
+#include "core/MaskPlan.h"
 #include "dsp/ArtEngine.h"
 #include "dsp/LiveAnalyzer.h"
 #include "dsp/PlanExchange.h"
 #include "dsp/PlayheadTracker.h"
+#include "dsp/TunedCarver.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -27,12 +38,22 @@ class FreqArtProcessor final : public juce::AudioProcessor,
                                private juce::AsyncUpdater
 {
 public:
-    FreqArtProcessor();
+    enum class Variant
+    {
+        instrument,  // FreqArt: no audio in, makes the sound
+        effect       // FreqArt FX: audio in and out, Mode and Depth
+    };
+
+    explicit FreqArtProcessor (Variant variant = Variant::instrument);
     ~FreqArtProcessor() override;
+
+    Variant getVariant() const noexcept { return variant; }
+    bool isEffect() const noexcept { return variant == Variant::effect; }
 
     // ---- juce::AudioProcessor -------------------------------------------------------------
     void prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock) override;
     void releaseResources() override;
+    void reset() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
     void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
     void processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
@@ -42,7 +63,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "FreqArt"; }
+    const juce::String getName() const override { return isEffect() ? "FreqArt FX" : "FreqArt"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -123,6 +144,28 @@ public:
 
     LiveAnalyzer& getAnalyzer() noexcept { return analyzer; }
 
+    // ---- FreqArt FX ------------------------------------------------------------------------
+
+    /** The effect's Mode (Carve for the instrument, which has none). */
+    EffectMode getEffectMode() const noexcept;
+
+    /** How far carved frequencies drop, in dB (0 for the instrument). */
+    float getDepthDb() const noexcept;
+
+    /** The masks the effect carves with (null for the instrument, and before the first build).
+        Rebuilt with the plan, and when a change of length or tempo changes the halo's width. */
+    std::shared_ptr<const MaskPlanSet> getCurrentMasks() const { return maskExchange.latest(); }
+
+    /** Carve + Draw's halo: the hole is this many canvas rows wider than the drawing above and
+        below it, and about haloSeconds longer before and after it (in columns, from the length
+        at the time of the build, at most maxHaloColumns: a sixteenth of the drawing). */
+    static constexpr int haloRows = 4;
+    static constexpr double haloSeconds = 0.060;
+    static constexpr int maxHaloColumns = Canvas::width / 16;
+
+    /** ... and it carves this many FFT bins wider still (Carve itself widens by one). */
+    static constexpr int carveDrawHaloBins = 3;
+
     /** The output level as a linear gain (for the WAV export). */
     float getOutputGain() const noexcept;
 
@@ -135,6 +178,7 @@ public:
     double getCurrentSampleRate() const noexcept { return currentSampleRate.load(); }
 
 private:
+    static BusesProperties busesFor (Variant variant);
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void timerCallback() override;
     void handleAsyncUpdate() override;
@@ -147,7 +191,13 @@ private:
     void renderChunk (float* out, int numSamples, const HostTiming& timing, const juce::MidiBuffer& midi,
                       const TrackerSettings& settings) noexcept;
     void writeOutput (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept;
+    HostTiming readHostTiming() noexcept;
+    void processEffect (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, bool bypassed) noexcept;
+    void addDelayedSines (juce::AudioBuffer<float>& buffer, int start, int numSamples, int numChannels, bool rendered) noexcept;
+    void buildMasks (const FrequencyScale& scale);
+    int wantedHaloColumns() const noexcept;
 
+    const Variant variant;
     juce::AudioProcessorValueTreeState parameters;
 
     // message thread
@@ -160,6 +210,7 @@ private:
     bool documentDirty = true;
     std::atomic<bool> parametersDirty { true };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };  // 0 = default size
+    int builtHaloColumns = -1;   // the effect's masks were built with this halo (-1: none yet)
 
     // The document as last serialised (or as loaded), for hosts that save state from another
     // thread. Refreshed on the message thread shortly after edits stop.
@@ -174,6 +225,7 @@ private:
 
     // shared
     PlanExchange planExchange;
+    MaskSetExchange maskExchange;   // the effect only
     LiveAnalyzer analyzer;
     // 0 while Preview is off; otherwise which press of Preview is playing, so a single pass
     // that ends (the audio thread turns the preview off then) never turns off a newer press.
@@ -197,6 +249,17 @@ private:
     juce::MidiBuffer chunkMidi;  // for hosts that send blocks larger than announced
     std::atomic<double> currentSampleRate { 48000.0 };
 
+    // audio thread, the effect only
+    TunedCarver carver;
+    const MaskPlanSet* currentMasks = nullptr;
+    const MaskPlanSet* olderMasks = nullptr;       // the oldest set the carver may still read (a frame it began)
+    juce::LinearSmoothedValue<float> drawGain;     // 1 in the modes that play the sines, else 0
+    bool sinesRunning = false;                     // the engine is being rendered
+    juce::HeapBlock<float> sineDelay;              // the sines, as late as the carved audio
+    int sineDelayLength = 0;
+    int sineDelayPosition = 0;
+    int sineDelaySilence = 0;                      // samples of silence written into it in a row
+
     // parameter pointers (raw values are atomics owned by the value tree)
     std::atomic<float>* levelParam = nullptr;
     std::atomic<float>* lengthParam = nullptr;
@@ -207,10 +270,13 @@ private:
     std::atomic<float>* bpmParam = nullptr;
     std::atomic<float>* densityParam = nullptr;
     std::atomic<float>* contrastParam = nullptr;
+    std::atomic<float>* lowEndParam = nullptr;
     std::atomic<float>* scaleParam = nullptr;
     std::atomic<float>* rangeLowParam = nullptr;
     std::atomic<float>* rangeHighParam = nullptr;
     std::atomic<float>* slopeParam = nullptr;
+    std::atomic<float>* modeParam = nullptr;       // the effect only
+    std::atomic<float>* depthParam = nullptr;      // the effect only
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FreqArtProcessor)
 };

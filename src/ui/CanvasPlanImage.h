@@ -2,8 +2,9 @@
 
 // The picture of a plan as an analyser would show it: each sine line at its height, coloured by
 // its loudness (dB relative to the plan's loudest point, over a 60 dB window) with the
-// spectrogram colour map. Kept separate from the canvas component so it can be tested and
-// timed on its own.
+// spectrogram colour map; with Smooth lows, the rising comb's band filled (as bright as an
+// analyser of 8192 points shows it). Kept separate from the canvas component so it can be tested
+// and timed on its own.
 
 #include "core/ArtPlan.h"
 
@@ -34,6 +35,18 @@ public:
     /** Forgets the cached picture (the next get() rebuilds it). */
     void invalidate() noexcept { image = {}; }
 
+    /** The colour-map index (0..255) of every pixel of the picture last returned, row by row:
+        what FreqArt FX's canvas lays over its stand-in for the song. */
+    const std::vector<uint8_t>& getPixelLevels() const noexcept { return pixelLevels; }
+
+    /** Counts the pictures rendered: it changes whenever the picture last returned does. */
+    uint64_t getRenderCount() const noexcept { return renderCount; }
+
+    /** The amplitude the top colour (level 255) stands for in the picture last returned: the
+        plan's loudest line, as an analyser shows it (the comb's grid divided by combGain), as a
+        linear sine amplitude before the output level. 0 for silence. */
+    float getLoudestAmplitude() const noexcept { return levelsPlan != nullptr ? loudestAmplitude : 0.0f; }
+
     /** The colour-map index 0..255 for a linear amplitude relative to the loudest (exposed for
         tests). 0 for silence, 255 at the loudest, windowDb below it maps to 0. */
     static uint8_t levelFor (float amplitude, float loudest) noexcept;
@@ -49,10 +62,14 @@ private:
     FrequencyScale imageScale;
     float imagePixelsPerLogical = 0.0f;
 
+    std::vector<uint8_t> pixelLevels;  // width x height, of `image`
+    uint64_t renderCount = 0;
+
     // Colour-map levels of the plan: levels[line * numColumns + column]
     std::shared_ptr<const ArtPlan> levelsPlan;  // kept so the pointer cannot be reused
     std::vector<uint8_t> levels;
     std::vector<uint8_t> lineAudible;
+    float loudestAmplitude = 0.0f;
 
     // Scratch, kept to avoid reallocating per rebuild
     struct Contribution

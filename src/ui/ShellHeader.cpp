@@ -9,6 +9,13 @@ namespace
     constexpr int logoSize = 20;
     constexpr int switchWidth = 168;
     constexpr int buttonGap = 4;
+    constexpr int effectGap = 24;   // FreqArt FX: around Canvas | Live and the effect's controls
+    constexpr const char* wordmark = "FreqArt";
+    constexpr const char* effectMark = "FX";
+    constexpr const char* byline = "by AnyMeans";
+
+    juce::Font wordmarkFont()   { return fonts::ui (theme::wordmarkSize, fonts::UiWeight::semiBold); }
+    juce::Font bylineFont()     { return fonts::ui (theme::labelSize, fonts::UiWeight::medium); }
 
     /** The mark: five scan lines, coloured from the bottom of the spectrogram colour map to the
         top, their lengths tracing a shape the way FreqArt's lines do in an analyser. */
@@ -39,11 +46,12 @@ juce::String shortcutText (const juce::String& keys)
    #endif
 }
 
-Header::Header()
+Header::Header (bool forEffect)
     : undoButton ("Undo", icons::undo()),
       redoButton ("Redo", icons::redo()),
       helpButton ("Help", icons::help()),
-      settingsButton ("Settings", icons::gear())
+      settingsButton ("Settings", icons::gear()),
+      effect (forEffect)
 {
     setOpaque (true);
 
@@ -53,7 +61,7 @@ Header::Header()
 
     undoButton.setTooltip ("Undo  " + shortcutText ("Cmd+Z"));
     redoButton.setTooltip ("Redo  " + shortcutText ("Cmd+Shift+Z"));
-    helpButton.setTooltip ("How FreqArt works");
+    helpButton.setTooltip (effect ? "How FreqArt FX works" : "How FreqArt works");
     settingsButton.setTooltip ("Settings: match your analyser, window size");
 
     undoButton.setComponentID ("undo");
@@ -70,6 +78,31 @@ Header::Header()
     addAndMakeVisible (viewSwitch);
 }
 
+void Header::setEffectControls (juce::Component* controls, int idealWidth)
+{
+    if (effectControls != nullptr)
+        removeChildComponent (effectControls);
+
+    effectControls = controls;
+    effectControlsWidth = idealWidth;
+
+    if (effectControls != nullptr)
+        addAndMakeVisible (effectControls);
+
+    resized();
+}
+
+int Header::bylineRight() const
+{
+    // Where paint() ends the byline.
+    auto x = logoArea.getRight() + 10 + textWidth (wordmarkFont(), wordmark);
+
+    if (effect)
+        x += 5 + textWidth (wordmarkFont(), effectMark);
+
+    return x + 8 + textWidth (bylineFont(), byline);
+}
+
 void Header::paint (juce::Graphics& g)
 {
     g.fillAll (theme::panel);
@@ -78,17 +111,26 @@ void Header::paint (juce::Graphics& g)
     drawLogo (g, logoArea);
 
     // Wordmark and byline share a baseline, centred on the bar by the wordmark's cap height.
-    const auto wordmarkFont = fonts::ui (theme::wordmarkSize, fonts::UiWeight::semiBold);
+    // The effect's "FX" is in the playing colour: the same plug-in, the other way round.
     const auto baseline = getHeight() / 2 + 7;
-    const auto wordmarkX = logoArea.getRight() + 10;
+    auto x = logoArea.getRight() + 10;
 
     g.setColour (theme::text);
-    g.setFont (wordmarkFont);
-    g.drawSingleLineText ("FreqArt", wordmarkX, baseline);
+    g.setFont (wordmarkFont());
+    g.drawSingleLineText (wordmark, x, baseline);
+    x += textWidth (wordmarkFont(), wordmark);
+
+    if (effect)
+    {
+        x += 5;
+        g.setColour (theme::accent2);
+        g.drawSingleLineText (effectMark, x, baseline);
+        x += textWidth (wordmarkFont(), effectMark);
+    }
 
     g.setColour (theme::textDim);
-    g.setFont (fonts::ui (theme::labelSize, fonts::UiWeight::medium));
-    g.drawSingleLineText ("by AnyMeans", wordmarkX + textWidth (wordmarkFont, "FreqArt") + 8, baseline);
+    g.setFont (bylineFont());
+    g.drawSingleLineText (byline, x + 8, baseline);
 
     drawVerticalDivider (g, dividerX, getHeight() / 2 - 10, getHeight() / 2 + 10);
 }
@@ -105,6 +147,11 @@ void Header::resized()
     viewSwitch.setBounds ((getWidth() - switchWidth) / 2, centreY - metrics::controlHeight / 2,
                           switchWidth, metrics::controlHeight);
 
+    // FreqArt FX: Canvas | Live beside the wordmark, the effect's controls after it (laid out
+    // below, once the buttons they end before are placed).
+    if (effectControls != nullptr)
+        viewSwitch.setTopLeftPosition (bylineRight() + effectGap, viewSwitch.getY());
+
     // The icons sit inside their buttons: the buttons overhang the margin a little so the icons
     // line up with it optically.
     const auto right = getWidth() - pad + 4;
@@ -116,6 +163,15 @@ void Header::resized()
     dividerX = helpButton.getX() - 12;
     redoButton.setBounds (dividerX - 11 - button, buttonY, button, button);
     undoButton.setBounds (redoButton.getX() - buttonGap - button, buttonY, button, button);
+
+    if (effectControls != nullptr)
+    {
+        // Centred between Canvas | Live and undo, as far as it fits.
+        const auto from = viewSwitch.getRight() + effectGap;
+        const auto to = undoButton.getX() - effectGap;
+        const auto x = juce::jmax (from, (from + to - effectControlsWidth) / 2);
+        effectControls->setBounds (x, 0, juce::jmin (effectControlsWidth, to - x), getHeight());
+    }
 }
 
 } // namespace freqart::ui::shell

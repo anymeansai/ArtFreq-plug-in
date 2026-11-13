@@ -23,6 +23,15 @@ namespace freqart
 /** RMS the loudest moment of every plan is normalised to: -12 dBFS before the output level. */
 constexpr float planTargetRms = 0.25f;
 
+/** How the crowded low end is played (on a log scale, below about 2 kHz, where lines must keep
+    minLineSpacingHz apart and so are few). */
+enum class LowEnd
+{
+    stripes,  // separate lines: an analyser with a long FFT shows them as stripes with dark gaps
+              // (the only look in FreqArt 0.1 and 0.2, kept as an effect)
+    smooth    // the rising comb (see ArtPlan::combLines): shapes stay filled at every FFT size
+};
+
 struct PlanSettings
 {
     FrequencyScale scale;
@@ -31,7 +40,66 @@ struct PlanSettings
     float slopeDbPerOctave = 0.0f;  // tilt of the user's analyser, compensated (pivot 1 kHz)
     float minLineSpacingHz = 25.0f; // closer lines beat audibly and visibly: they are merged
     float maxFrequencyHz = 20000.0f;// lines above this are dropped (kept below Nyquist by the engine too)
+
+    // Plain lines unless asked: the processor's "lowEnd" parameter (Smooth for new instances)
+    // sets this.
+    LowEnd lowEnd = LowEnd::stripes;
 };
+
+/** LowEnd::smooth, the rising comb.
+
+    Why: in the merged lows the lines stand 25 Hz apart, which an analyser with a long FFT
+    resolves into stripes with dark gaps; closer lines would beat. Instead, the lows are played
+    by a comb of sines combSpacingHz apart that glide upwards together at combSlopeHzPerSecond,
+    each wrapping round from the top of the comb to the bottom, where it is silent. Every height
+    of the band is passed by a sine every spacing / slope seconds (0.1 s), so analyser windows of
+    every usual length (4096 to 32768 samples at 48 kHz) find energy at every height: a short
+    window blurs neighbouring sines together, a long one sees each sine smeared along its glide.
+    As every sine glides at the same speed, they never cross or crowd, and their unrelated
+    starting phases keep the passes from adding up in a pattern that repeats.
+
+    Each gliding sine takes its loudness from the drawing at the height it has reached: the comb's
+    lines in the plan are a grid of that loudness, finer than the sines (so edges stay where they
+    were drawn), read with linear interpolation between grid lines and between columns. */
+constexpr float combSpacingHz = 20.0f;
+constexpr float combSlopeHzPerSecond = 200.0f;
+constexpr float combGridSpacingHz = 5.0f;
+constexpr float combEdgeFadeHz = 15.0f;   // the glide runs this far past each end of the grid, fading in and out
+constexpr float combTopLimitHz = 2000.0f; // the comb never reaches above this: the highs keep their lines
+constexpr int combMaxSines = 255;
+
+// Nothing is played below this: lower lines are dropped (nothing so low is heard or shown), and
+// the comb's sines are silent until they pass it. The glide starts combEdgeFadeHz below the grid,
+// which with the analyser's low end at 10 Hz is below 0 Hz; the fade-in at the bottom starts here
+// at the lowest, from silence (a sine coming on at a level of its own would click every 0.1 s),
+// and the grid starts no lower than here.
+constexpr float lowestPlayedHz = 10.0f;
+
+// The edges of what is drawn. A sine gliding into a shape would turn on as fast as it crosses one
+// grid cell (25 ms), and so quick an onset splashes energy tens of Hz below the shape (a faint
+// curtain under it, a haze inside holes such as an O's); leaving it at the top does the same
+// above. So, in each column, the outermost grid line of a run of drawn ones plays at
+// combEdgeTaper[0] of its level and the next one at combEdgeTaper[1]: a raised cosine over three
+// cells, inside the shape, along which the sines fade in and out over 75 ms. Runs shorter than
+// combEdgeTaperMinCells (25 Hz) keep their level, so thin strokes stay as bright; the ends of the
+// grid fade over combEdgeFadeHz beyond it instead. Measured with FreqArtLab against hard edges:
+// 1.3 dB less leakage in the lows (1.2 dB for text), fidelity +0.01 (text +0.03), fill the same.
+constexpr float combEdgeTaper[] { 0.5f, 0.933f };
+constexpr int combEdgeTaperMinCells = 5;
+
+// Thin strokes. A run of drawn grid lines narrower than combSpacingHz (fewer than 4 cells: a
+// one-row stroke, an outline, thin lettering) would be lit only while one of the sines, which
+// pass every 0.1 s, is inside it: the whole stroke would blink ten times a second (15 - 28 dB on
+// an analyser of 4096 points, 4 - 5 dB at 8192, and as a train of blips to the ear). So, in each
+// column, such a run is played by the replaced lows' own lines instead (ArtPlan::combThinLines),
+// on the one nearest its middle, at the run's loudest value: steady, as Stripes plays it.
+
+// A line's energy stays in one analyser bin at every FFT size; the comb's is spread along its
+// glide, so the longer the analyser's window, the darker the comb looks next to a line of the same
+// amplitude (about 3 dB per doubling). The comb is played this much louder (3.5 dB), which makes
+// it as bright as the lines above it at an FFT size of 8192: about 3 dB brighter at 4096, 1 to 4
+// dB darker at 16384 and 3 to 7 dB darker at 32768 (the deep lows darkest).
+constexpr float combGain = 1.5f;
 
 struct ArtPlan
 {
@@ -40,7 +108,7 @@ struct ArtPlan
     int numLines = 0;
     int numColumns = 0;   // always Canvas::width for a built plan
 
-    std::vector<float> frequencies;  // numLines, ascending, Hz
+    std::vector<float> frequencies;  // numLines, Hz: ascending (with a comb, within its grid and within the lines after it)
     std::vector<float> lineNorm;     // numLines, height of each line on the scale (0 = bottom, 1 = top)
 
     // Linear peak amplitude of each line's sine at each column, column-major:
@@ -56,6 +124,32 @@ struct ArtPlan
 
     uint64_t layoutHash = 0;  // hash of `frequencies`; equal hashes mean the same lines
     bool silent = true;       // every amplitude is 0
+
+    // The rising comb (LowEnd::smooth; 0 lines otherwise). Lines [0, combLines) are not sines of
+    // their own: they are the comb's loudness grid, frequencies[k] = combGridLowHz + k *
+    // combGridHz, with amplitudes like any line's (so they show where the comb's energy goes).
+    // The comb plays combSines sines over a glide from combGridLowHz - combEdgeHz to the last
+    // grid line + combEdgeHz (length L): sine j at
+    //     combGridLowHz - combEdgeHz + (j * L / combSines + combSlope * t) mod L
+    // for t seconds since the engine's reset. Between grid lines it has the amplitude
+    // interpolated between them; beyond the top of the grid it fades linearly to silence at the
+    // top of the glide, and below the bottom it fades in linearly over combEdgeHz from silence at
+    // the bottom of the glide (no lower than lowestPlayedHz, and more than one of the engine's
+    // chunks of glide above the bottom, where a wrapped sine is first heard). The comb's lines
+    // are never in activeLines; combActive says in which columns the comb can sound.
+    //
+    // Lines [combLines, combLines + combThinLines) are the lows the comb replaced, exactly as
+    // Stripes lays them out (so lines [combLines, numLines) are a Stripes plan's lines), played
+    // as lines but only where a run of drawn grid lines is too thin for the comb (see "Thin
+    // strokes" above); the grid is silent there.
+    int combLines = 0;
+    int combThinLines = 0;
+    float combGridLowHz = 0.0f;
+    float combGridHz = 0.0f;
+    float combEdgeHz = 0.0f;
+    int combSines = 0;
+    float combSlope = 0.0f;               // Hz per second
+    std::vector<uint8_t> combActive;      // numColumns: a grid amplitude is non-zero at c or (c + 1) % numColumns
 
     float amplitude (int column, int line) const noexcept
     {
@@ -83,7 +177,19 @@ struct ArtPlan
     Loudness: value v (0..1) becomes amplitude 10^((v - 1) * contrastDb / 20) for v > 0.001, else
     0; times the slope compensation 10^(-slope * log2 (f / 1000) / 20); then every amplitude is
     scaled by one factor so that the loudest column's RMS, sqrt (sum (a^2) / 2), is
-    planTargetRms. A canvas with nothing on it gives a silent plan with the lines still laid out. */
+    planTargetRms. A canvas with nothing on it gives a silent plan with the lines still laid out.
+
+    LowEnd::smooth: the lowest lines, up to the last one that stands closer than twice the minimum
+    spacing to the line below (that is, the merged and crowded lows) and below combTopLimitHz,
+    are replaced by the rising comb's grid, evenly spaced over the same band of the canvas (from
+    the bottom of the lowest line's span to the top of the last replaced line's span), about
+    combGridSpacingHz apart. A grid line's value is the maximum of the canvas over its own cell,
+    and its amplitude is played combGain louder, softened at the edges of runs of drawn grid lines
+    (combEdgeTaper); the lines above keep their spans and values. The replaced lines stay in the
+    plan, after the grid, silent but where a run of drawn grid lines in a column is thinner than
+    the comb's spacing: that run's grid lines are silenced, and the replaced line nearest its
+    middle takes its loudest value. In the normalisation the comb counts as its sines, each with
+    the mean power of the grid lines it glides over. */
 std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& settings);
 
 } // namespace freqart

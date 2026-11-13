@@ -97,7 +97,8 @@ class HelpPanel final : public juce::Component
 public:
     static constexpr int width = 920;
 
-    HelpPanel();
+    /** forEffect: FreqArt FX's help (where it goes, its modes, the latency, MIDI in effects). */
+    explicit HelpPanel (bool forEffect = false);
     ~HelpPanel() override;
 
     /** The height the content needs at the panel's width. */
@@ -112,6 +113,7 @@ private:
     struct Block;
     std::vector<Block> layoutColumn (int column, int width) const;
 
+    const bool effect;
     IconButton closeButton;
     std::vector<Block> blocks;   // both columns, laid out by resized()
 

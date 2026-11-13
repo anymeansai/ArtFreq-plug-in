@@ -60,6 +60,8 @@ juce::StringArray triggerNames()     { return { "Transport", "MIDI note" }; }
 juce::StringArray tempoSourceNames() { return { "Host", "Manual" }; }
 juce::StringArray scaleNames()       { return { "Log", "Linear", "Mel" }; }
 juce::StringArray slopeNames()       { return { "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct" }; }
+juce::StringArray lowEndNames()      { return { "Smooth", "Stripes" }; }
+juce::StringArray modeNames()        { return { "Carve", "Carve + Draw", "Stencil", "Draw" }; }
 
 double lengthInQuarterNotes (int lengthIndex, double quarterNotesPerBar) noexcept
 {
@@ -102,7 +104,23 @@ TriggerMode triggerForIndex (int triggerIndex) noexcept
     return triggerIndex == 1 ? TriggerMode::midiNote : TriggerMode::transport;
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
+LowEnd lowEndForIndex (int lowEndIndex) noexcept
+{
+    return lowEndIndex == stripesLowEndIndex ? LowEnd::stripes : LowEnd::smooth;
+}
+
+EffectMode effectModeForIndex (int modeIndex) noexcept
+{
+    switch (modeIndex)
+    {
+        case 1:  return EffectMode::carveDraw;
+        case 2:  return EffectMode::stencil;
+        case 3:  return EffectMode::draw;
+        default: return EffectMode::carve;
+    }
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect)
 {
     using Float = juce::AudioParameterFloat;
     using Choice = juce::AudioParameterChoice;
@@ -141,6 +159,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
             .withLabel ("dB")
             .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
             .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
+
+    // How the lows below about 2 kHz are played: the rising comb (shapes stay filled) or separate
+    // lines (stripes on a long FFT). Added after 0.2 (version hint 3): setStateInformation loads
+    // states without it as Stripes, the only look before. It reshapes the plan, so like Density
+    // it is not an automation target.
+    layout.add (std::make_unique<Choice> (
+        juce::ParameterID { id::lowEnd, 3 }, "Lows", lowEndNames(), smoothLowEndIndex,
+        ChoiceAttributes().withAutomatable (false)));
 
     // ---- timing --------------------------------------------------------------------------
     layout.add (std::make_unique<Choice> (
@@ -199,6 +225,24 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
     layout.add (std::make_unique<Choice> (
         juce::ParameterID { id::slope, 1 }, "Analyser slope", slopeNames(), 0,
         ChoiceAttributes().withAutomatable (false)));
+
+    // ---- FreqArt FX: what happens to the audio coming in. Both act on the audio thread at once
+    // (the masks for every mode are built together, and Depth is read per frame), so unlike the
+    // plan's settings they can be automated: a Carve that deepens into the drop, or Stencil for a
+    // bar. Version hint 4: they came with the effect. ----------------------------------------
+    if (forEffect)
+    {
+        layout.add (std::make_unique<Choice> (
+            juce::ParameterID { id::mode, 4 }, "Mode", modeNames(), 0));
+
+        layout.add (std::make_unique<Float> (
+            juce::ParameterID { id::depth, 4 }, "Depth",
+            juce::NormalisableRange<float> (minDepthDb, 0.0f, 0.1f), defaultDepthDb,
+            FloatAttributes()
+                .withLabel ("dB")
+                .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
+                .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
+    }
 
     return layout;
 }

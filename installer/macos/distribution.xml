@@ -10,14 +10,21 @@
     <license file="license.txt" mime-type="text/plain"/>
     <conclusion file="conclusion.html" mime-type="text/html"/>
 
+    <!-- One plug-in, registered twice: hosts offer an instrument only on MIDI tracks and an
+         effect only on audio tracks, so both are installed by default. -->
     <choices-outline>
         <line choice="vst3"/>
+        <line choice="fx"/>
         <line choice="finish"/>
     </choices-outline>
 
-    <choice id="vst3" title="FreqArt VST3 plug-in" start_selected="true"
-            description="The FreqArt instrument by AnyMeans, for Ableton Live, FL Studio, Reaper, Cubase, Studio One, Bitwig and other VST3 hosts. Installed in /Library/Audio/Plug-Ins/VST3.">
+    <choice id="vst3" title="FreqArt (instrument)" start_selected="true"
+            description="FreqArt, the instrument by AnyMeans, for MIDI and instrument tracks: it plays the drawing. For Ableton Live, FL Studio, Reaper, Cubase, Studio One, Bitwig and other VST3 hosts. Installed in /Library/Audio/Plug-Ins/VST3.">
         <pkg-ref id="com.anymeans.freqart.vst3"/>
+    </choice>
+    <choice id="fx" title="FreqArt FX (audio effect)" start_selected="true"
+            description="FreqArt FX, the same plug-in as an audio effect, for audio tracks, buses and the master: it carves the drawing into the song (or plays it on top). Installed in /Library/Audio/Plug-Ins/VST3.">
+        <pkg-ref id="com.anymeans.freqartfx.vst3"/>
     </choice>
     <!-- Hidden, always on: a payload-free package whose postinstall offers to move the
          downloaded installer to the Trash. It is listed last so it runs last. -->
@@ -25,6 +32,7 @@
         <pkg-ref id="com.anymeans.freqart.finish"/>
     </choice>
 
-    <pkg-ref id="com.anymeans.freqart.vst3"   version="@VERSION@" onConclusion="none">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.anymeans.freqart.vst3"   version="@VERSION@" onConclusion="none">FreqArt.pkg</pkg-ref>
+    <pkg-ref id="com.anymeans.freqartfx.vst3" version="@VERSION@" onConclusion="none">FreqArtFX.pkg</pkg-ref>
     <pkg-ref id="com.anymeans.freqart.finish" version="@VERSION@" onConclusion="none">finish.pkg</pkg-ref>
 </installer-gui-script>

@@ -7,6 +7,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <vector>
+
 namespace freqart::ui
 {
 
@@ -32,6 +34,10 @@ public:
         current plan rendered offline at its real speed, one pass ending now (so a snapshot shows
         what a user sees, without a running host). */
     void fillFromPlanForSnapshot (double seconds);
+
+    /** For the snapshot tool: fills the history with columns analysed from `audio` (one
+        channel at `sampleRate`, ending now): FreqArt FX's output, which needs a song. */
+    void fillFromAudioForSnapshot (const std::vector<float>& audio, double sampleRate);
 
 private:
     void timerCallback() override;
