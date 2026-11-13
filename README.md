@@ -94,7 +94,7 @@ The **?** button shows these steps inside the plug-in.
 
 Knobs: drag to turn, hold Shift for fine adjustment, double-click to reset, double-click the value to type one. The window can also be resized from its corner (75–200 %, fixed proportions); its size is saved with the session, as are the drawing (pictures included) and every setting.
 
-Automation: Level, Density, Contrast, Length, Trigger, Tempo and BPM can be automated (in the automation list Trigger reads Transport, MIDI note, Free loop).
+Automation: Level, Length, Trigger, Tempo and BPM can be automated (in the automation list Trigger reads Transport, MIDI note, Free loop). Density and Contrast cannot: the sound is rebuilt from them about 25 times a second by the clock, not in step with the song, so in a bounce faster than real time their changes would land in the wrong place.
 
 ## How it works
 

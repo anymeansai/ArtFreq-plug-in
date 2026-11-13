@@ -125,10 +125,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
             .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 1); })
             .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
 
+    // Density and Contrast reshape the plan, which is rebuilt on the message thread (~25 Hz, by
+    // wall-clock time), not in step with the audio. Automated, they would land late, and at a
+    // different place on every faster-than-real-time bounce, so (like the analyser settings
+    // below) they are not automation targets.
     layout.add (std::make_unique<Float> (
         juce::ParameterID { id::density, 1 }, "Density",
         densityRange(), 256.0f,
         FloatAttributes()
+            .withAutomatable (false)
             .withLabel ("lines")
             .withStringFromValueFunction ([] (float v, int) { return juce::String (juce::roundToInt (v)) + " lines"; })
             .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
@@ -137,6 +142,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
         juce::ParameterID { id::contrast, 1 }, "Contrast",
         juce::NormalisableRange<float> (12.0f, 72.0f, 0.5f), 40.0f,
         FloatAttributes()
+            .withAutomatable (false)
             .withLabel ("dB")
             .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
             .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
