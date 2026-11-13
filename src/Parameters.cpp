@@ -56,7 +56,7 @@ juce::StringArray lengthNames()
     return { "1 beat", "2 beats", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars", "32 bars" };
 }
 
-juce::StringArray triggerNames()     { return { "Transport", "MIDI note", "Free loop" }; }
+juce::StringArray triggerNames()     { return { "Transport", "MIDI note" }; }
 juce::StringArray tempoSourceNames() { return { "Host", "Manual" }; }
 juce::StringArray scaleNames()       { return { "Log", "Linear", "Mel" }; }
 juce::StringArray slopeNames()       { return { "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct" }; }
@@ -99,12 +99,7 @@ ScaleType scaleForIndex (int scaleIndex) noexcept
 
 TriggerMode triggerForIndex (int triggerIndex) noexcept
 {
-    switch (triggerIndex)
-    {
-        case 1:  return TriggerMode::midiNote;
-        case 2:  return TriggerMode::freeLoop;
-        default: return TriggerMode::transport;
-    }
+    return triggerIndex == 1 ? TriggerMode::midiNote : TriggerMode::transport;
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
@@ -153,6 +148,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout()
 
     layout.add (std::make_unique<Choice> (
         juce::ParameterID { id::trigger, 1 }, "Trigger", triggerNames(), 0));
+
+    // Added after 0.1 (version hint 2). Before them Transport always looped, and a third trigger,
+    // "Free loop", played by itself: setStateInformation loads it as Transport with Repeat on.
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { id::repeat, 2 }, "Repeat", false,
+        juce::AudioParameterBoolAttributes().withStringFromValueFunction ([] (bool on, int) { return on ? "On" : "Off"; })));
+
+    layout.add (std::make_unique<juce::AudioParameterInt> (
+        juce::ParameterID { id::startBar, 2 }, "Start bar", firstStartBar, lastStartBar, firstStartBar,
+        juce::AudioParameterIntAttributes()
+            .withStringFromValueFunction ([] (int bar, int) { return "Bar " + juce::String (bar); })
+            .withValueFromStringFunction ([] (const juce::String& t) { return t.retainCharacters ("0123456789").getIntValue(); })));
 
     layout.add (std::make_unique<Choice> (
         juce::ParameterID { id::tempoSource, 1 }, "Tempo", tempoSourceNames(), 0));

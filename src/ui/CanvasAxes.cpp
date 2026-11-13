@@ -104,7 +104,7 @@ void drawFrequencyLabels (juce::Graphics& g, juce::Rectangle<float> axis, juce::
 
 }
 
-std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator, float width)
+std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator, float width, int firstBar)
 {
     std::vector<TimeMark> marks;
 
@@ -136,8 +136,31 @@ std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator
     while (static_cast<float> (labelEvery) * majorSpacing < minBarLabelSpacing && labelEvery < numMajor)
         labelEvery *= 2;
 
+    // At a bar of the song, a drawing under a bar is labelled by the bar's beats it falls on
+    // (beat numbers are counted in 1/denominator notes, as the signature counts them), so its
+    // sixteenths go unlabelled: "12.2.3" would say too much.
+    const auto inSong = firstBar > 0;
     const auto showMinor = minorSpacing >= minSubLineSpacing;
-    const auto labelMinor = numMajor <= 2 && minorSpacing >= minSubLabelSpacing;
+    const auto labelMinor = numMajor <= 2 && minorSpacing >= minSubLabelSpacing && ! (inSong && underABar);
+
+    const auto majorLabel = [&] (int m) -> juce::String
+    {
+        if (! inSong)
+            return juce::String (m + 1);
+
+        if (! underABar)
+            return juce::String (firstBar + m);
+
+        if (m == 0)
+            return juce::String (firstBar);
+
+        const auto beat = static_cast<double> (m) * static_cast<double> (denominator) / 4.0;
+
+        if (std::abs (beat - std::round (beat)) > slack)
+            return {};   // between two of the signature's beats (half-note beats)
+
+        return juce::String (firstBar) + "." + juce::String (juce::roundToInt (beat) + 1);
+    };
 
     for (int m = 0; m < numMajor; ++m)
     {
@@ -147,7 +170,7 @@ std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator
         mark.major = m % labelEvery == 0;
 
         if (mark.major)
-            mark.label = juce::String (m + 1);
+            mark.label = majorLabel (m);
 
         marks.push_back (mark);
 
@@ -165,7 +188,7 @@ std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator
             sub.fraction = at / quarters;
 
             if (labelMinor)
-                sub.label = juce::String (m + 1) + "." + juce::String (k + 1);
+                sub.label = juce::String (inSong ? firstBar + m : m + 1) + "." + juce::String (k + 1);
 
             marks.push_back (sub);
         }

@@ -11,7 +11,7 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
 1. **Put FreqArt on an instrument track.** It is an instrument: it makes the sound itself and needs no audio input. Create an instrument (MIDI) track and load FreqArt on it. A fresh instance already has something to show: the word "FreqArt" in the mid band.
 2. **Open the spectrogram.** In MiniMeters, choose the **Spectrogram** with a **logarithmic** frequency scale from **20 Hz to 20 kHz**, listening to your DAW's output. Any analyser with a scrolling spectrogram works.
 3. **Match the settings.** Open FreqArt's **Settings** (the gear) and set **Scale**, **Low**, **High** and **Slope** to what your analyser uses. The defaults (Log, 20 Hz, 20 kHz) match the MiniMeters setup above; if your analyser tilts its display (MiniMeters has a Slope setting), give FreqArt the same Slope.
-4. **Press play in your DAW.** With the default trigger (Transport), FreqArt plays while the DAW plays. The drawing scrolls through the spectrogram; FreqArt's own **Live** view (the Canvas | Live switch at the top of the window) shows the same thing.
+4. **Press play in your DAW.** With the default trigger (Transport, Repeat off), FreqArt plays the drawing once, from bar 1, as the DAW plays through it. The drawing scrolls through the spectrogram; FreqArt's own **Live** view (the Canvas | Live switch at the top of the window) shows the same thing.
 5. **Make it yours.**
    - **+ Text** adds a text box in the mid band across the whole length (or, if something is already there, in a free band), ready for typing. Pick a font and Solid or Outline letters in the inspector on the right.
    - **+ Image** adds a picture (PNG, JPEG, GIF, HEIC, WebP, TIFF or BMP), placed like new text, or drop an image file straight onto the canvas: it lands in the band under the cursor. A file that cannot be read is reported at the bottom of the canvas. **Mode** decides what in the picture becomes sound; **Auto** usually gets it right (on a white background it draws the dark parts).
@@ -23,8 +23,11 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
 10. **Choose the length, tempo and trigger.**
     - **Length** is how long one pass of the drawing takes: 1 beat, 2 beats, 1 bar, 2 bars, 4 bars (default), 8, 16 or 32 bars, at the song's tempo and time signature.
     - **Tempo**: **Host** follows the DAW's tempo; **Manual** uses the **BPM** you type (also used when a host gives no tempo).
-    - **Trigger**: **Transport** follows the DAW's timeline and loops every length from bar 1 (a 4-bar drawing starts again on bars 5, 9, 13 and so on), starting on the DAW's bar lines also after a time-signature change, and plays only while the DAW plays. **MIDI** plays the drawing once from the start on every note-on (any key; a new note restarts it; note-offs are ignored), sample-accurately; stopping the DAW, All Notes Off or All Sound Off ends the pass. **Loop** plays all the time, looping.
-11. **Preview.** The round play button plays the drawing on a loop from its start, whatever the trigger, even while the DAW is stopped.
+    - **Trigger** and **Repeat** decide when the drawing plays. Nothing plays by itself: it plays while the DAW plays or while notes play it (or with Preview).
+      - **Transport** follows the DAW's timeline. With **Repeat** off (the default) it plays **once**, from the start of the bar in **from bar** (under Trigger; 1 to 999) for one Length: start the DAW in the middle of it and it plays from there, before and after it is silent (with short fades so nothing clicks), and looping the DAW over it plays it each time round. Bars are counted from the song start in the DAW's current time signature, so if the signature changes before that bar, choose the bar as if it had not. With **Repeat** on it loops every Length from bar 1 (a 4-bar drawing starts again on bars 5, 9, 13 and so on), starting on the DAW's bar lines also after a time-signature change.
+      - **MIDI** plays the drawing from the start on every note-on (any key; a new note restarts it), sample-accurately. With **Repeat** off it plays once and note-offs are ignored; with **Repeat** on it loops while any key is held and fades out when you let go of the last. Stopping the DAW, All Notes Off or All Sound Off ends it.
+      - The line under Trigger says what will happen: "Plays once from bar 1", "Repeats every 4 bars from bar 1", "Each note plays it once" or "Loops while a note is held".
+11. **Preview.** The round play button plays the drawing from its start, whatever the trigger, even while the DAW is stopped: once (the button then turns itself off), or on a loop with **Repeat** on until you press it again.
 12. **Bounce WAV.** **Bounce WAV** renders one pass of the drawing to a WAV file in the background, with your Level. Drag the **FreqArt.wav** chip that appears into your DAW, or click **Save...** to keep a copy where you want it. Every bounce is a new file in a temporary folder, so a later bounce never replaces audio already in your project; FreqArt clears these files away after a day, so use **Save...** for anything you want to keep.
 
 The **?** button shows these steps inside the plug-in.
@@ -45,7 +48,7 @@ The **?** button shows these steps inside the plug-in.
 
 | Control | What it does |
 | --- | --- |
-| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats (in the song's time signature) along the bottom. **Live** shows a scrolling spectrogram of FreqArt's own output, on the same scale, wide enough for a whole pass of the drawing (a quarter more than one pass, from 4 to 20 seconds). |
+| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats (in the song's time signature) along the bottom: the song's own bar numbers when it plays once at a bar (Transport, Repeat off). **Live** shows a scrolling spectrogram of FreqArt's own output, on the same scale, wide enough for a whole pass of the drawing (a quarter more than one pass, from 4 to 20 seconds). |
 | **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, a drag, a scroll over a bar, holding down an arrow key, or one session of typing in a text box is one step. |
 | **?** | The how-to, inside the window. |
 | **Gear** | Settings: match your analyser (Scale, Low, High, Slope), window size, and Reset drawing. |
@@ -76,10 +79,12 @@ The **?** button shows these steps inside the plug-in.
 | **Contrast** | 12–72 dB | 40 dB | Distance in level between the brightest and the faintest parts of the drawing. |
 | **Level** | −60 to 0 dB | −6 dB | Output volume. A safety clipper keeps the output from going over 0 dBFS. |
 | **Length** | 1 beat to 32 bars | 4 bars | How long one pass of the drawing lasts. |
-| **Trigger** | Transport, MIDI, Loop | Transport | When the drawing plays (see step 10 above). |
+| **Trigger** | Transport, MIDI | Transport | When the drawing plays (see step 10 above). |
+| **Repeat** | on/off | off | Off: it plays once (from a bar of the song, or per note). On: it loops while the DAW plays, or while a note is held. |
+| **from bar** | 1–999 | 1 | Under Trigger, with Transport and Repeat off: the bar the single pass starts on. Drag it or click to type (Enter to set, Esc to cancel). |
 | **Tempo** | Host, Manual | Host | Where the tempo comes from. |
 | **BPM** | 20–300 | 120 | The manual tempo. With Host, it shows the host's tempo, greyed. |
-| **Preview** | on/off | off | Plays the drawing on a loop from its start. |
+| **Preview** | on/off | off | Plays the drawing from its start: once, or on a loop with Repeat. |
 | **Bounce WAV** | | | Renders one pass to a WAV file to drag into the DAW or save. |
 
 **Settings** (match your analyser; not automatable, since changing them mid-song would move the whole drawing)
@@ -94,14 +99,16 @@ The **?** button shows these steps inside the plug-in.
 
 Knobs: drag to turn, hold Shift for fine adjustment, double-click to reset, double-click the value to type one. The window can also be resized from its corner (75–200 %, fixed proportions); its size is saved with the session, as are the drawing (pictures included) and every setting.
 
-Automation: Level, Length, Trigger, Tempo and BPM can be automated (in the automation list Trigger reads Transport, MIDI note, Free loop). Density and Contrast cannot: the sound is rebuilt from them about 25 times a second by the clock, not in step with the song, so in a bounce faster than real time their changes would land in the wrong place.
+Automation: Level, Length, Trigger, Repeat, Start bar, Tempo and BPM can be automated (in the automation list Trigger reads Transport, MIDI note). Density and Contrast cannot: the sound is rebuilt from them about 25 times a second by the clock, not in step with the song, so in a bounce faster than real time their changes would land in the wrong place.
+
+Projects saved with FreqArt 0.1 open with Repeat off and from bar 1, so a Transport drawing that looped through the song now plays once from bar 1: turn **Repeat** on to have it loop again. The old **Free loop** trigger, which played by itself, opens as Transport with Repeat on. Automation recorded on the old Trigger is not rewritten: there, Free loop now reads as MIDI note.
 
 ## How it works
 
 - **The drawing.** A paint layer plus any number of text and picture objects. Objects are placed by time (a fraction of the length) and by frequency in hertz, so "in the highs" keeps meaning the highs if you change the analyser scale; the paint layer remembers the scale it was painted on, so brush strokes keep their frequencies too. Everything is flattened into a 1024 × 1024 picture of loudness values (the maximum of all layers): the canvas.
 - **Sine lines.** The canvas becomes a bank of sine waves, one per line, spaced evenly in canvas height (so evenly on your analyser's scale). A sine at a fixed frequency shows in a spectrogram as a horizontal line at that height, and its loudness over time draws the picture along it. Each line takes the brightest part of the canvas rows nearest to it (halfway to the lines either side), so thin strokes never fall between lines. Brightness becomes level through Contrast; the analyser's Slope is compensated (around 1 kHz); and the whole drawing is scaled so its loudest moment sits at −12 dBFS RMS before Level.
 - **Playback.** One oscillator per line, its level following the drawing as playback moves across it. Starts, stops, jumps, retriggers and the host's bypass fade in a few milliseconds, and a change to the drawing crossfades in 20 ms, so nothing clicks. Lines too close to the top of the sample rate's range are skipped, so nothing aliases. A safety clipper (transparent below −1 dBFS) follows Level.
-- **Timing.** The position in the drawing comes from the DAW's transport, from MIDI notes, or from a free-running loop, at the host's tempo or yours.
+- **Timing.** The position in the drawing comes from the DAW's transport (a single pass at a bar of the song, or looping) or from MIDI notes (once each, or looping while held), at the host's tempo or yours.
 - **Real time.** The canvas and the sine plan are rebuilt on the message thread within a few tens of milliseconds of each edit and handed to the audio thread without locks; the audio thread never allocates or waits.
 
 **Why sound and not MIDI?** A spectrogram shows the frequencies present at each moment. MIDI notes can only make the few pitches of a synth patch, on a semitone grid, with harmonics drawn on top; pictures need hundreds of exactly placed frequencies. So FreqArt *is* the instrument: MIDI is used as a trigger, and the drawing can also be bounced to a WAV file.
@@ -173,11 +180,11 @@ sudo apt-get install libasound2-dev libx11-dev libxext-dev libxrandr-dev \
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and how they end, free loop, preview, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export; and the editor, driven with synthetic mouse, wheel and key events (bounce files, undo steps, selecting and placing objects, the live view's span, pictures that cannot be read). The editor tests need a display: on Linux run it under `xvfb-run -a`.
+or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, the single pass from a start bar and how the DAW's position, relocations and loops play it, MIDI one-shots and how they end, MIDI loops held by keys, preview once and looping, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, projects saved before Repeat and the Free loop trigger, a single pass and a held loop, Preview following Repeat, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export; and the editor, driven with synthetic mouse, wheel and key events (bounce files, undo steps, selecting and placing objects, the live view's span, pictures that cannot be read). The editor tests need a display: on Linux run it under `xvfb-run -a`.
 
 ### Snapshot tool
 
-`FreqArtSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the brush, the settings and help panels, other window sizes) to PNG files, without a host. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a FreqArtSnapshot out`).
+`FreqArtSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the brush, the settings and help panels, Repeat and the start bar, other window sizes) to PNG files, without a host, and checks what the controls do along the way. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a FreqArtSnapshot out`).
 
 ### Continuous integration
 

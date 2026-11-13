@@ -50,8 +50,12 @@ struct TimeMark
     host gives it; anything not above 0 reads as 4/4), thinned for the width: bars labelled "1",
     "2", ... (every 2nd/4th/... when crowded), the signature's beats (numerator of them, each a
     1/denominator note) as "1.2", "1.3", ... when there is room; under a bar, quarter-note beats
-    and sixteenths instead. A length that is not a whole number of bars ends on a short bar. */
-std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator, float width);
+    and sixteenths instead. A length that is not a whole number of bars ends on a short bar.
+
+    With a `firstBar` (above 0) the drawing sits at that bar of the song, and the labels are the
+    song's bars: firstBar, firstBar + 1, ..., with beats as "12.2"; under a bar, the quarter-note
+    beats are labelled as the beats of bar firstBar they fall on ("12", "12.2", ...). */
+std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator, float width, int firstBar = 0);
 
 /** The marks as faint vertical lines over `area`. */
 void drawTimeGrid (juce::Graphics&, juce::Rectangle<float> area, const std::vector<TimeMark>&,

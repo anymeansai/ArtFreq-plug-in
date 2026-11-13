@@ -84,6 +84,13 @@ namespace shellIcons
     juce::Path chevronDown()  { return strokedIcon ("M7 10 L12 15 L17 10"); }
     juce::Path check()        { return strokedIcon ("M5 12.5 L10 17.5 L19 7"); }
     juce::Path plus()         { return strokedIcon ("M12 5.5 L12 18.5 M5.5 12 L18.5 12"); }
+
+    juce::Path repeat()
+    {
+        // Two arrows chasing each other round: play again from the top.
+        return strokedIcon ("M17 2.5 L20.5 6 L17 9.5 M3.5 11.5 L3.5 10 Q3.5 6 7.5 6 L20.5 6 "
+                            "M7 21.5 L3.5 18 L7 14.5 M20.5 12.5 L20.5 14 Q20.5 18 16.5 18 L3.5 18");
+    }
     juce::Path dragHandle()   { return strokedIcon ("M9 6 L9 6.1 M15 6 L15 6.1 M9 12 L9 12.1 M15 12 L15 12.1 M9 18 L9 18.1 M15 18 L15 18.1", 2.6f); }
 
     juce::Path waveFile()
@@ -303,7 +310,7 @@ void NumberField::paint (juce::Graphics& g)
         return;
 
     const auto text = following ? followingText : options.format (value);
-    const auto font = fonts::mono (theme::controlSize);
+    const auto font = fonts::mono (options.textSize);
     const auto unitFont = fonts::ui (theme::labelSize, fonts::UiWeight::medium);
     const auto unitGap = options.unit.isEmpty() ? 0 : 4;
     const auto total = textWidth (font, text) + unitGap + (options.unit.isEmpty() ? 0 : textWidth (unitFont, options.unit));
@@ -416,7 +423,7 @@ void NumberField::showEditor()
         return;
 
     editor = std::make_unique<juce::TextEditor>();
-    editor->setFont (fonts::mono (theme::controlSize));
+    editor->setFont (fonts::mono (options.textSize));
     editor->setJustification (juce::Justification::centred);
     editor->setIndents (0, 0);
     editor->setBorder ({});
@@ -463,6 +470,74 @@ void NumberField::closeEditor (bool commit)
 void NumberField::textEditorReturnKeyPressed (juce::TextEditor&)   { closeEditor (true); }
 void NumberField::textEditorEscapeKeyPressed (juce::TextEditor&)   { closeEditor (false); }
 void NumberField::textEditorFocusLost (juce::TextEditor&)          { closeEditor (true); }
+
+//==============================================================================
+namespace
+{
+    constexpr float chipIconSize = 14.0f;
+    constexpr int chipIconGap = 5;
+
+    juce::Font chipFont (bool on)
+    {
+        // As a segment's label: semi-bold when chosen.
+        return fonts::ui (theme::controlSize, on ? fonts::UiWeight::semiBold : fonts::UiWeight::medium);
+    }
+} // namespace
+
+ToggleChip::ToggleChip (const juce::String& label, juce::Path icon24)
+    : juce::Button (label), icon (std::move (icon24))
+{
+    setButtonText (label);
+    setClickingTogglesState (true);
+    setWantsKeyboardFocus (false);
+}
+
+void ToggleChip::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    const auto enabled = isEnabled();
+    const auto on = getToggleState();
+    const auto outer = getLocalBounds().toFloat();
+
+    highlighted = highlighted && enabled;
+    down = down && enabled;
+
+    // The container of a segmented control, with its one segment chosen or hovered.
+    g.setColour (theme::raised);
+    g.fillRoundedRectangle (outer, theme::controlCorner);
+    g.setColour (theme::line);
+    g.drawRoundedRectangle (outer.reduced (0.5f), theme::controlCorner, 1.0f);
+
+    const auto inner = outer.reduced (2.0f);
+    const auto innerCorner = theme::controlCorner - 2.0f;
+
+    if (on)
+    {
+        const auto colour = enabled ? theme::accent : theme::textFaint;
+        g.setColour (colour.withAlpha (down ? 0.32f : highlighted ? 0.28f : 0.22f));
+        g.fillRoundedRectangle (inner, innerCorner);
+        g.setColour (colour.withAlpha (0.75f));
+        g.drawRoundedRectangle (inner.reduced (0.5f), innerCorner, 1.0f);
+    }
+    else if (highlighted || down)
+    {
+        g.setColour (down ? theme::raised.darker (0.25f) : theme::raisedHover);
+        g.fillRoundedRectangle (inner, innerCorner);
+    }
+
+    // Icon and label centred together.
+    const auto font = chipFont (on);
+    const auto labelWidth = textWidth (font, getButtonText());
+    const auto contentWidth = chipIconSize + static_cast<float> (chipIconGap + labelWidth);
+    const auto left = std::round ((outer.getWidth() - contentWidth) * 0.5f);
+    const auto colour = ! enabled ? theme::textFaint : on || highlighted ? theme::text : theme::textDim;
+
+    drawIcon (g, icon, juce::Rectangle<float> (left, outer.getCentreY() - chipIconSize * 0.5f, chipIconSize, chipIconSize), colour);
+
+    g.setColour (colour);
+    g.setFont (font);
+    g.drawText (getButtonText(), juce::roundToInt (left + chipIconSize) + chipIconGap, 0, labelWidth + 2, getHeight(),
+                juce::Justification::centredLeft, false);
+}
 
 //==============================================================================
 ChoiceSegments::ChoiceSegments (SegmentedControl& c, juce::RangedAudioParameter& parameter)

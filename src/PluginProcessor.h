@@ -98,14 +98,20 @@ public:
     double getPlayPosition() const noexcept { return playPosition.load(); }  // 0..1
     bool isSounding() const noexcept { return sounding.load(); }
 
-    /** Plays the drawing on a loop from its start, whatever the trigger mode (an audition
-        while the DAW is stopped). */
+    /** Plays the drawing from its start, whatever the trigger mode (an audition while the DAW
+        is stopped): on a loop with Repeat, else once, after which the preview turns itself off
+        (isPreviewing() turns false). Turning it on while it is on changes nothing. */
     void setPreview (bool shouldPreview) noexcept;
-    bool isPreviewing() const noexcept { return previewRequested.load(); }
+    bool isPreviewing() const noexcept { return previewToken.load() != 0; }
 
     /** The tempo in use (host or manual) and one pass of the drawing in seconds at it. */
     double getEffectiveTempo() const noexcept;
     double getLengthSeconds() const noexcept;
+
+    /** The bar a single pass on the DAW's timeline starts on (Transport without Repeat; 1 is the
+        song start), or 0 when the drawing does not play at one place in the song (Repeat, MIDI).
+        The canvas numbers its bars from it. */
+    int getSinglePassStartBar() const noexcept;
 
     /** The host's time signature as the audio thread last saw it (4/4 until a host gives one):
         the length in bars and the canvas's bar and beat grid follow it. */
@@ -132,6 +138,7 @@ private:
     void markProjectChanged();
     void refreshSavedDocument();
     void applyDocumentState (const juce::ValueTree& documentTree);
+    void prepareLoadedParameters (juce::ValueTree& loadedParameters) const;
     TrackerSettings currentTrackerSettings() const noexcept;
     void renderChunk (float* out, int numSamples, const HostTiming& timing, const juce::MidiBuffer& midi,
                       const TrackerSettings& settings) noexcept;
@@ -164,7 +171,10 @@ private:
     // shared
     PlanExchange planExchange;
     LiveAnalyzer analyzer;
-    std::atomic<bool> previewRequested { false };
+    // 0 while Preview is off; otherwise which press of Preview is playing, so a single pass
+    // that ends (the audio thread turns the preview off then) never turns off a newer press.
+    std::atomic<juce::uint32> previewToken { 0 };
+    std::atomic<juce::uint32> previewPresses { 0 };
     std::atomic<double> playPosition { 0.0 };
     std::atomic<bool> sounding { false };
     std::atomic<double> effectiveTempo { 120.0 };
@@ -176,6 +186,7 @@ private:
     ArtEngine engine;
     PlayheadTracker tracker;
     PlaySegment segments[PlayheadTracker::maxSegments];
+    juce::uint32 previewTokenInUse = 0;
     juce::LinearSmoothedValue<float> outputGain;
     juce::HeapBlock<float> mono;
     int monoCapacity = 0;
@@ -186,6 +197,8 @@ private:
     std::atomic<float>* levelParam = nullptr;
     std::atomic<float>* lengthParam = nullptr;
     std::atomic<float>* triggerParam = nullptr;
+    std::atomic<float>* repeatParam = nullptr;
+    std::atomic<float>* startBarParam = nullptr;
     std::atomic<float>* tempoSourceParam = nullptr;
     std::atomic<float>* bpmParam = nullptr;
     std::atomic<float>* densityParam = nullptr;

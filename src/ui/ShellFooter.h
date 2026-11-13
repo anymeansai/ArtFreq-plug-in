@@ -1,7 +1,7 @@
 #pragma once
 
-// The footer: the sound (Density, Contrast, Level), the timing (Length, Trigger, Tempo, BPM),
-// Preview and Export. See docs/DESIGN.md, "Footer".
+// The footer: the sound (Density, Contrast, Level), the timing (Length, Trigger with Repeat and
+// the start bar, Tempo, BPM), Preview and Export. See docs/DESIGN.md, "Footer".
 
 #include "PluginProcessor.h"
 #include "ShellControls.h"
@@ -42,16 +42,23 @@ public:
     Knob contrast { "Contrast" };
     Knob level { "Level" };
     juce::ComboBox length;
-    SegmentedControl trigger { { "Transport", "MIDI", "Loop" } };
+    SegmentedControl trigger { { "Transport", "MIDI" } };
+    ToggleChip repeat { "Repeat", shellIcons::repeat() };
+    std::unique_ptr<NumberField> startBar;   // in the hint line: "Plays once from bar [N]"
     SegmentedControl tempoSource { { "Host", "Manual" } };
     std::unique_ptr<NumberField> bpm;
     PreviewButton preview;
     ExportPanel exporter;
 
+    /** What the trigger will do, in words, as the line under it says ("Plays once from bar 1",
+        "Repeats every 4 bars from bar 1", "Each note plays it once", "Loops while a note is
+        held"). With Transport and no Repeat the bar number is the start bar field. */
+    juce::String getTriggerHint() const;
+
 private:
     juce::String lengthHint() const;
-    juce::String triggerHint() const;
     juce::String tempoHint() const;
+    bool showsStartBar() const;
 
     FreqArtProcessor& processor;
     const int inspectorLeft;
@@ -61,6 +68,7 @@ private:
     std::unique_ptr<SliderAttachment> densityAttachment, contrastAttachment, levelAttachment;
     std::unique_ptr<ComboBoxAttachment> lengthAttachment;
     std::unique_ptr<ChoiceSegments> triggerAttachment, tempoAttachment;
+    std::unique_ptr<juce::ButtonParameterAttachment> repeatAttachment;
 
     // Layout, in the footer's coordinates.
     int soundDividerX = 0, outputDividerX = 0;

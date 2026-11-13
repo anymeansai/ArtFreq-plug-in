@@ -58,6 +58,8 @@ FreqArtProcessor::FreqArtProcessor()
     levelParam       = parameters.getRawParameterValue (params::id::level);
     lengthParam      = parameters.getRawParameterValue (params::id::length);
     triggerParam     = parameters.getRawParameterValue (params::id::trigger);
+    repeatParam      = parameters.getRawParameterValue (params::id::repeat);
+    startBarParam    = parameters.getRawParameterValue (params::id::startBar);
     tempoSourceParam = parameters.getRawParameterValue (params::id::tempoSource);
     bpmParam         = parameters.getRawParameterValue (params::id::bpm);
     densityParam     = parameters.getRawParameterValue (params::id::density);
@@ -68,9 +70,10 @@ FreqArtProcessor::FreqArtProcessor()
     slopeParam       = parameters.getRawParameterValue (params::id::slope);
 
     jassert (levelParam != nullptr && lengthParam != nullptr && triggerParam != nullptr
-             && tempoSourceParam != nullptr && bpmParam != nullptr && densityParam != nullptr
-             && contrastParam != nullptr && scaleParam != nullptr && rangeLowParam != nullptr
-             && rangeHighParam != nullptr && slopeParam != nullptr);
+             && repeatParam != nullptr && startBarParam != nullptr && tempoSourceParam != nullptr
+             && bpmParam != nullptr && densityParam != nullptr && contrastParam != nullptr
+             && scaleParam != nullptr && rangeLowParam != nullptr && rangeHighParam != nullptr
+             && slopeParam != nullptr);
 
     for (const auto* id : planParameterIds)
         parameters.addParameterListener (id, this);
@@ -154,6 +157,8 @@ TrackerSettings FreqArtProcessor::currentTrackerSettings() const noexcept
 {
     TrackerSettings settings;
     settings.mode = params::triggerForIndex (juce::roundToInt (triggerParam->load()));
+    settings.repeat = repeatParam->load() >= 0.5f;
+    settings.startBar = juce::roundToInt (startBarParam->load());
     settings.useHostTempo = juce::roundToInt (tempoSourceParam->load()) == 0;
     settings.manualBpm = static_cast<double> (bpmParam->load());
     settings.quarterNotesPerBar = quarterNotesPerBar (timeSignature.load());
@@ -220,7 +225,17 @@ void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         }
     }
 
-    tracker.setPreview (previewRequested.load());
+    // A new press of Preview since the last block starts it again from the top, even if the
+    // one before was still on.
+    const auto preview = previewToken.load();
+
+    if (preview != previewTokenInUse)
+    {
+        tracker.setPreview (false);
+        previewTokenInUse = preview;
+    }
+
+    tracker.setPreview (preview != 0);
     const auto settings = currentTrackerSettings();
     const auto sampleRate = currentSampleRate.load();
 
@@ -256,6 +271,14 @@ void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
         writeOutput (buffer, start, length);
         start += length;
+    }
+
+    // A preview without Repeat has played its pass: it turns itself off (the button follows),
+    // unless Preview was pressed again meanwhile.
+    if (preview != 0 && tracker.hasPreviewEnded())
+    {
+        auto expected = preview;
+        previewToken.compare_exchange_strong (expected, 0);
     }
 
     planExchange.reportInUse (versionOf (engine.getPlan()), versionOf (engine.getFadingPlan()));
@@ -310,7 +333,20 @@ void FreqArtProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, j
 
 void FreqArtProcessor::setPreview (bool shouldPreview) noexcept
 {
-    previewRequested.store (shouldPreview);
+    if (! shouldPreview)
+    {
+        previewToken.store (0);
+        return;
+    }
+
+    // A token of its own for this press (never 0), taken only if the preview is off.
+    auto token = previewPresses.fetch_add (1) + 1;
+
+    if (token == 0)
+        token = previewPresses.fetch_add (1) + 1;
+
+    juce::uint32 off = 0;
+    previewToken.compare_exchange_strong (off, token);
 }
 
 double FreqArtProcessor::getEffectiveTempo() const noexcept
@@ -327,6 +363,16 @@ double FreqArtProcessor::getLengthSeconds() const noexcept
                                                         quarterNotesPerBar (timeSignature.load()));
     const auto tempo = juce::jlimit (20.0, 400.0, getEffectiveTempo());
     return lengthQn * 60.0 / tempo;
+}
+
+int FreqArtProcessor::getSinglePassStartBar() const noexcept
+{
+    const auto transport = params::triggerForIndex (juce::roundToInt (triggerParam->load())) == TriggerMode::transport;
+
+    if (! transport || repeatParam->load() >= 0.5f)
+        return 0;
+
+    return juce::jlimit (params::firstStartBar, params::lastStartBar, juce::roundToInt (startBarParam->load()));
 }
 
 float FreqArtProcessor::getOutputGain() const noexcept
@@ -540,7 +586,11 @@ void FreqArtProcessor::setStateInformation (const void* data, int sizeInBytes)
     editorHeight.store (juce::jlimit (0, 8000, root->getIntAttribute ("editorHeight", 0)));
 
     if (auto* parametersXml = root->getChildByName (parameters.state.getType().toString()))
-        parameters.replaceState (juce::ValueTree::fromXml (*parametersXml));
+    {
+        auto loadedParameters = juce::ValueTree::fromXml (*parametersXml);
+        prepareLoadedParameters (loadedParameters);
+        parameters.replaceState (loadedParameters);
+    }
 
     parametersDirty.store (true);
 
@@ -567,6 +617,67 @@ void FreqArtProcessor::setStateInformation (const void* data, int sizeInBytes)
         }
 
         triggerAsyncUpdate();
+    }
+}
+
+void FreqArtProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameters) const
+{
+    // The value tree state keeps each parameter as a PARAM child with an "id" and its plain
+    // "value".
+    static const juce::Identifier paramType ("PARAM"), idProperty ("id"), valueProperty ("value");
+
+    const auto child = [&] (const juce::String& id) { return loadedParameters.getChildWithProperty (idProperty, id); };
+
+    // FreqArt 0.1's third trigger, "Free loop", looped by itself; nothing plays by itself any
+    // more, so it becomes the nearest thing left: Transport with Repeat on. (A clamp to the two
+    // choices left would make it MIDI note.)
+    if (auto trigger = child (params::id::trigger); trigger.isValid())
+    {
+        const auto value = trigger.getProperty (valueProperty);
+        const auto text = value.toString().trim();
+        const auto freeLoop = text.equalsIgnoreCase (params::legacyFreeLoopName)
+                           || (text.containsAnyOf ("0123456789")
+                               && juce::roundToInt (static_cast<double> (value)) == params::legacyFreeLoopIndex);
+
+        if (freeLoop)
+        {
+            trigger.setProperty (valueProperty, 0, nullptr);
+
+            auto repeat = child (params::id::repeat);
+
+            if (! repeat.isValid())
+            {
+                repeat = juce::ValueTree (paramType);
+                repeat.setProperty (idProperty, params::id::repeat, nullptr);
+                loadedParameters.appendChild (repeat, nullptr);
+            }
+
+            repeat.setProperty (valueProperty, 1, nullptr);
+        }
+    }
+
+    // A parameter the state does not have (saved before it existed) loads at its default:
+    // replaceState would otherwise leave it at whatever this instance had.
+    for (auto* parameter : juce::AudioProcessor::getParameters())
+    {
+        auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter);
+
+        if (ranged == nullptr)
+            continue;
+
+        auto saved = child (ranged->getParameterID());
+
+        if (saved.isValid() && saved.hasProperty (valueProperty))
+            continue;
+
+        if (! saved.isValid())
+        {
+            saved = juce::ValueTree (paramType);
+            saved.setProperty (idProperty, ranged->getParameterID(), nullptr);
+            loadedParameters.appendChild (saved, nullptr);
+        }
+
+        saved.setProperty (valueProperty, ranged->convertFrom0to1 (ranged->getDefaultValue()), nullptr);
     }
 }
 

@@ -19,7 +19,9 @@ namespace id
 
     // Timing
     inline constexpr const char* length      = "length";       // choice, see lengthNames(), default "4 bars"
-    inline constexpr const char* trigger     = "trigger";      // choice: Transport, MIDI note, Free loop
+    inline constexpr const char* trigger     = "trigger";      // choice: Transport, MIDI note
+    inline constexpr const char* repeat      = "repeat";       // bool, default off: loop rather than play once
+    inline constexpr const char* startBar    = "startBar";     // int 1..999, default 1: where a single Transport pass starts
     inline constexpr const char* tempoSource = "tempoSource";  // choice: Host, Manual
     inline constexpr const char* bpm         = "bpm";          // 20..300, default 120
 
@@ -34,12 +36,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
 // Choices, in parameter order.
 juce::StringArray lengthNames();       // "1 beat", "2 beats", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars", "32 bars"
-juce::StringArray triggerNames();      // "Transport", "MIDI note", "Free loop"
+juce::StringArray triggerNames();      // "Transport", "MIDI note"
 juce::StringArray tempoSourceNames();  // "Host", "Manual"
 juce::StringArray scaleNames();        // "Log", "Linear", "Mel"
 juce::StringArray slopeNames();        // "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct"
 
 constexpr int defaultLengthIndex = 4;  // "4 bars"
+constexpr int firstStartBar = 1;
+constexpr int lastStartBar = 999;
+
+/** The index of FreqArt 0.1's third trigger, "Free loop" (it played by itself, looping). States
+    saved with it load as Transport with Repeat on. */
+constexpr int legacyFreeLoopIndex = 2;
+inline constexpr const char* legacyFreeLoopName = "Free loop";
 
 /** The drawing's length in quarter notes for a length choice. A bar is beatsPerBar quarter
     notes (4 in 4/4, 3 in 3/4, 3 in 6/8, ...). */
