@@ -82,8 +82,13 @@ Taps makeTaps (int sourceSize, double origin, double length, int first, int last
     return taps;
 }
 
-/** The paint layer (1024 x 512 bytes) stretched bilinearly over the canvas height. */
-void drawPaint (const std::vector<uint8_t>& paint, Canvas& out)
+/** The paint layer (1024 x 512 bytes) over the canvas height: each canvas row takes the paint
+    at the same frequency, read through the scale the paint was made on (paintScale), so paint
+    keeps its frequencies like objects do when the scale or range changes. Rows outside the
+    paint's range get nothing. Where the paint is stretched it is read bilinearly; where it is
+    squeezed (several paint rows per canvas row) a canvas row takes the loudest of them, so a
+    thin stroke never falls between rows. */
+void drawPaint (const std::vector<uint8_t>& paint, const FrequencyScale& scale, const FrequencyScale& paintScale, Canvas& out)
 {
     constexpr auto paintWidth = ArtDocument::paintWidth;
     constexpr auto paintHeight = ArtDocument::paintHeight;
@@ -92,19 +97,51 @@ void drawPaint (const std::vector<uint8_t>& paint, Canvas& out)
     if (paint.size() != static_cast<size_t> (paintWidth * paintHeight))
         return;
 
-    constexpr auto rowScale = static_cast<double> (paintHeight) / Canvas::height;
+    const auto canvasScale = scale.sanitised();
+    const auto layerScale = paintScale.sanitised();
+
+    // Canvas y (0 = top, in rows) to paint y (0 = top, in paint rows).
+    const auto toPaintY = [&canvasScale, &layerScale] (double y)
+    {
+        return canvasToPaintY (y / Canvas::height, canvasScale, layerScale);
+    };
 
     for (int y = 0; y < Canvas::height; ++y)
     {
-        // Pixel centres line up: canvas row y samples the paint layer at (y + 0.5) * scale - 0.5.
-        const auto source = std::clamp ((y + 0.5) * rowScale - 0.5, 0.0, static_cast<double> (paintHeight - 1));
+        const auto centre = toPaintY (y + 0.5);
+
+        if (! (centre >= 0.0 && centre <= static_cast<double> (paintHeight)))
+            continue;
+
+        auto* dst = out.values.data() + static_cast<size_t> (y) * Canvas::width;
+        const auto top = toPaintY (y);
+        const auto bottom = toPaintY (y + 1.0);
+
+        if (bottom - top > 1.0)
+        {
+            // The paint rows whose centres fall inside this canvas row.
+            const auto first = std::clamp (static_cast<int> (std::ceil (top - 0.5)), 0, paintHeight - 1);
+            const auto last = std::clamp (static_cast<int> (std::ceil (bottom - 0.5)) - 1, first, paintHeight - 1);
+
+            for (int row = first; row <= last; ++row)
+            {
+                const auto* p = paint.data() + static_cast<size_t> (row) * paintWidth;
+
+                for (int x = 0; x < Canvas::width; ++x)
+                    dst[x] = std::max (dst[x], static_cast<float> (p[x]) * (1.0f / 255.0f));
+            }
+
+            continue;
+        }
+
+        // Pixel centres line up: the paint is sampled at the canvas row centre's height.
+        const auto source = std::clamp (centre - 0.5, 0.0, static_cast<double> (paintHeight - 1));
         const auto row0 = static_cast<int> (source);
         const auto row1 = std::min (paintHeight - 1, row0 + 1);
         const auto f = static_cast<float> (source - row0);
 
         const auto* p0 = paint.data() + static_cast<size_t> (row0) * paintWidth;
         const auto* p1 = paint.data() + static_cast<size_t> (row1) * paintWidth;
-        auto* dst = out.values.data() + static_cast<size_t> (y) * Canvas::width;
 
         const auto w0 = (1.0f - f) / 255.0f;
         const auto w1 = f / 255.0f;
@@ -240,6 +277,16 @@ HzRange normSpanToHz (float top, float bottom, const FrequencyScale& scale) noex
     return { s.toHz (1.0 - static_cast<double> (bottom)), s.toHz (1.0 - static_cast<double> (top)) };
 }
 
+double canvasToPaintY (double canvasY, const FrequencyScale& scale, const FrequencyScale& paintScale) noexcept
+{
+    if (scale == paintScale)
+        return canvasY * ArtDocument::paintHeight;
+
+    // Bounded so a point far off the canvas stays finite (1 Hz keeps the log of it finite).
+    const auto hz = std::max (1.0, scale.toHz (1.0 - std::clamp (canvasY, -1.0, 2.0)));
+    return (1.0 - paintScale.toNorm (hz)) * ArtDocument::paintHeight;
+}
+
 void Compositor::render (const ArtDocument& document, const FrequencyScale& scale, Canvas& out)
 {
     if (out.values.size() != static_cast<size_t> (Canvas::width * Canvas::height))
@@ -248,7 +295,7 @@ void Compositor::render (const ArtDocument& document, const FrequencyScale& scal
         out.clear();
 
     if (document.hasPaint())
-        drawPaint (document.paint, out);
+        drawPaint (document.paint, scale, document.paintScale, out);
 
     for (const auto& object : document.objects)
     {

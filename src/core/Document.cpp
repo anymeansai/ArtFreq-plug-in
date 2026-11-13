@@ -21,6 +21,9 @@ namespace ids
     const juce::Identifier object ("Object");
     const juce::Identifier version ("version");
     const juce::Identifier paint ("paint");
+    const juce::Identifier paintScale ("paintScale");
+    const juce::Identifier paintMinHz ("paintMinHz");
+    const juce::Identifier paintMaxHz ("paintMaxHz");
     const juce::Identifier id ("id");
     const juce::Identifier type ("type");
     const juce::Identifier startTime ("startTime");
@@ -396,6 +399,7 @@ void ArtDocument::paintStroke (const BrushStroke& stroke)
 void ArtDocument::clearPaint()
 {
     paint.assign (paintSize, 0);
+    paintScale = {};
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -406,7 +410,13 @@ juce::ValueTree ArtDocument::toValueTree() const
     tree.setProperty (ids::version, documentVersion, nullptr);
 
     if (paint.size() == paintSize && hasPaint())
+    {
+        const auto s = paintScale.sanitised();
         tree.setProperty (ids::paint, encodePaint (paint), nullptr);
+        tree.setProperty (ids::paintScale, static_cast<int> (s.type), nullptr);
+        tree.setProperty (ids::paintMinHz, s.minHz, nullptr);
+        tree.setProperty (ids::paintMaxHz, s.maxHz, nullptr);
+    }
 
     for (const auto& object : objects)
     {
@@ -453,6 +463,13 @@ ArtDocument ArtDocument::fromValueTree (const juce::ValueTree& tree)
 
         if (bytes.size() == paintSize)
             document.paint = std::move (bytes);
+
+        // Documents from before the paint was tagged were painted on the default scale.
+        const FrequencyScale fallback;
+        document.paintScale.type = static_cast<ScaleType> (readInt (tree, ids::paintScale, static_cast<int> (fallback.type), 0, 2));
+        document.paintScale.minHz = readFloat (tree, ids::paintMinHz, static_cast<float> (fallback.minHz));
+        document.paintScale.maxHz = readFloat (tree, ids::paintMaxHz, static_cast<float> (fallback.maxHz));
+        document.paintScale = document.paintScale.sanitised();
     }
 
     std::set<juce::String> usedIds;

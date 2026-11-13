@@ -11,6 +11,7 @@
 // undo snapshots and the processor's state are taken (pictures are shared, never modified in
 // place, so copies are cheap apart from the paint layer).
 
+#include "FrequencyScale.h"
 #include "ImageProcessing.h"
 #include "TextRaster.h"
 
@@ -58,8 +59,8 @@ struct ArtObject
 };
 
 /** A brush dab or stroke on the paint layer. Coordinates are paint-layer pixels (x 0..1023,
-    y 0..511, y = 0 at the top). Radii are separate so a brush that is round on screen stays
-    round however the canvas is stretched. */
+    y 0..511, y = 0 at the top, which is the document's paintScale.maxHz). Radii are separate so
+    a brush that is round on screen stays round however the canvas is stretched. */
 struct BrushStroke
 {
     juce::Point<float> from;
@@ -83,7 +84,14 @@ public:
     static ArtDocument createDefault();
 
     std::vector<ArtObject> objects;  // drawn in this order (the order does not change the result)
-    std::vector<uint8_t> paint;      // paintWidth * paintHeight, row-major, row 0 = top of the canvas
+    std::vector<uint8_t> paint;      // paintWidth * paintHeight, row-major, row 0 = paintScale.maxHz
+
+    // The analyser scale the paint layer was painted on: its rows run evenly over this scale,
+    // from maxHz (row 0) to minHz. The compositor and the canvas map them through it, so paint
+    // keeps its frequencies, like objects, when the user changes the scale or range (the
+    // pixels are never resampled, so switching back and forth loses nothing). Set to the
+    // current scale by the first stroke on an empty layer; clearPaint resets it.
+    FrequencyScale paintScale;
 
     bool isEmpty() const noexcept;   // no objects and nothing painted
     bool hasPaint() const noexcept;
@@ -100,10 +108,13 @@ public:
         not compound an erase. Pixel (x, y) is measured at its centre (x + 0.5, y + 0.5). */
     void paintStroke (const BrushStroke& stroke);
 
+    /** Empties the paint layer and puts paintScale back to the default scale. */
     void clearPaint();
 
     /** Serialisation. The ValueTree type is "FreqArtDocument" (version 1):
-          properties: version, paint (base64 of zlib-compressed paint bytes; absent if empty)
+          properties: version, paint (base64 of zlib-compressed paint bytes; absent if empty),
+                      paintScale, paintMinHz, paintMaxHz (with the paint; a document without
+                      them was painted on the default Log 20 Hz - 20 kHz scale)
           children "Object": id, type, startTime, endTime, lowHz, highHz, intensity, text,
                              fontIndex, textStyle, imageMode, cleanup, image (base64 PNG)
         fromValueTree tolerates missing or out-of-range values (it clamps them and drops

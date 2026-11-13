@@ -12,12 +12,14 @@ any analyser with a scrolling spectrogram) on the output and the drawing scrolls
    20 Hz and 20 kHz by default. What the user sees on the canvas is what the analyser will show.
 2. **The document** (`core/Document.h`) is a paint layer plus objects (text, pictures). Objects
    are placed by time (fraction of the length) and by frequency in Hz, so "put this in the
-   highs" keeps meaning the highs.
+   highs" keeps meaning the highs. The paint layer is tagged with the scale it was painted on
+   and mapped through it, so strokes keep their frequencies too when the scale or range changes.
 3. **The compositor** (`core/Compositor.h`) flattens the document into a 1024 x 1024 canvas of
    loudness values 0..1 (max of all layers).
 4. **The plan** (`core/ArtPlan.h`) turns the canvas into a bank of sine "lines". Density =
-   number of lines across the canvas height (few = scan lines, many = solid). Each line's
-   amplitude per column comes from the canvas, mapped to decibels with the *contrast* (dB range),
+   number of lines across the canvas height (few = scan lines, many = solid); lines closer than
+   25 Hz are merged, and every canvas row plays on its nearest line. Each line's amplitude per
+   column comes from the canvas, mapped to decibels with the *contrast* (dB range),
    compensated for the analyser's slope, and normalised so the loudest moment sits at -12 dBFS
    RMS before the output level.
 5. **The engine** (`dsp/ArtEngine.h`) plays the plan on the audio thread: one sine per line,

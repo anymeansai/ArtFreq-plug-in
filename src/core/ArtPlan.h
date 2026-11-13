@@ -67,15 +67,18 @@ struct ArtPlan
 
     Lines: density lines are spaced evenly in canvas height, line i (0 = bottom) at
     norm (i + 0.5) / density, frequency scale.toHz (norm). Going up from the bottom, a line closer
-    than minLineSpacingHz to the last kept line is merged into it (its canvas span joins the kept
-    line's span); lines below 10 Hz or above maxFrequencyHz are dropped. Lines closer than twice
-    the minimum spacing to the line below are then moved by a fixed pseudo-random offset of up
-    to a quarter of the minimum spacing either way (so crowded lines do not all beat in step),
-    and their lineNorm follows.
+    than minLineSpacingHz to the last kept line is merged into it (it is not played; its rows go
+    to the nearest kept line); lines below 10 Hz or above maxFrequencyHz are dropped. Lines
+    closer than twice the minimum spacing to the line below are then moved by a fixed
+    pseudo-random offset of up to a quarter of the minimum spacing either way (so crowded lines
+    do not all beat in step), and their lineNorm follows.
 
     Values: a line's value at a column is the MAXIMUM of the canvas over the rows its span covers
-    (so thin strokes never fall between lines), where a line's span runs halfway to its kept
-    neighbours.
+    (so thin strokes never fall between lines), where a line's span runs halfway (in canvas
+    height, from the final lineNorm values) to its kept neighbours: every row plays on its
+    nearest line, and a row on the boundary on both. The lowest line's span starts at the bottom
+    of its own cell and the highest line's ends at the top of the last cell merged into it, so
+    rows of dropped lines (below 10 Hz, above maxFrequencyHz) play nowhere.
 
     Loudness: value v (0..1) becomes amplitude 10^((v - 1) * contrastDb / 20) for v > 0.001, else
     0; times the slope compensation 10^(-slope * log2 (f / 1000) / 20); then every amplitude is

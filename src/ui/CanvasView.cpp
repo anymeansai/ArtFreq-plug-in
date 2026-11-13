@@ -255,7 +255,21 @@ struct CanvasView::Impl
         strokeSoftness = state.getBrushSoftness();
         strokeKey = "canvas-stroke-" + juce::String (++editCounter);
         lastStrokePoint = position;
+
+        // The first stroke on an empty layer tags it with the scale it is painted on; later
+        // strokes paint into the layer's own scale, whatever the canvas shows now.
+        const auto& document = processor.getDocument();
+        strokeScale = document.hasPaint() ? document.paintScale.sanitised() : scale;
         strokeTo (position);
+    }
+
+    /** Canvas height (0 = top, 1 = bottom; beyond for points off the canvas) to paint-layer
+        rows. The layer's rows run evenly over the scale it was painted on, so the height goes
+        through its frequency: paint lands at the frequency under the cursor, where the
+        compositor draws it back. */
+    double toPaintY (double normY) const
+    {
+        return canvasToPaintY (normY, scale, strokeScale);
     }
 
     juce::Point<float> toPaintLayer (juce::Point<float> screen) const
@@ -263,7 +277,22 @@ struct CanvasView::Impl
         // Pixel (x, y) of the paint layer is measured at its centre, so normX * width puts a
         // dab exactly where the cursor is.
         const auto n = toNorm (screen);
-        return { n.x * static_cast<float> (ArtDocument::paintWidth), n.y * static_cast<float> (ArtDocument::paintHeight) };
+        return { n.x * static_cast<float> (ArtDocument::paintWidth), static_cast<float> (toPaintY (static_cast<double> (n.y))) };
+    }
+
+    /** The paint-layer radius in y of a dab `radius` screen pixels round: half the paint rows
+        its height on screen covers, so it stays round on screen where the canvas scale
+        stretches or squeezes the paint's. */
+    float paintRadiusY (juce::Point<float> screen, float radius) const
+    {
+        const auto height = juce::jmax (1.0f, area().getHeight());
+
+        if (strokeScale == scale)
+            return radius / height * static_cast<float> (ArtDocument::paintHeight);
+
+        const auto y = static_cast<double> (toNorm (screen).y);
+        const auto r = static_cast<double> (radius / height);
+        return static_cast<float> (0.5 * std::abs (toPaintY (y + r) - toPaintY (y - r)));
     }
 
     void strokeTo (juce::Point<float> position)
@@ -275,7 +304,7 @@ struct CanvasView::Impl
         stroke.from = toPaintLayer (lastStrokePoint);
         stroke.to = toPaintLayer (position);
         stroke.radiusX = radius / juce::jmax (1.0f, a.getWidth()) * static_cast<float> (ArtDocument::paintWidth);
-        stroke.radiusY = radius / juce::jmax (1.0f, a.getHeight()) * static_cast<float> (ArtDocument::paintHeight);
+        stroke.radiusY = paintRadiusY (position, radius);
         stroke.softness = strokeSoftness;
         stroke.strength = 1.0f;
         stroke.erase = false;
@@ -296,6 +325,7 @@ struct CanvasView::Impl
         const auto& before = strokeBefore;
         const auto erase = strokeErase;
         const auto strength = strokeStrength;
+        const auto paintScale = strokeScale;
 
         processor.editDocument ([&] (ArtDocument& document)
         {
@@ -303,6 +333,8 @@ struct CanvasView::Impl
 
             if (document.paint.size() != size)
                 document.paint.assign (size, 0);
+
+            document.paintScale = paintScale;
 
             for (int y = top; y <= bottom; ++y)
             {
@@ -756,6 +788,7 @@ struct CanvasView::Impl
 
     std::vector<uint8_t> strokeBefore;
     ArtDocument strokeMask;
+    FrequencyScale strokeScale;  // the scale the stroke's paint layer is painted on
     bool strokeErase = false;
     float strokeStrength = 1.0f;
     float strokeSoftness = 0.5f;
