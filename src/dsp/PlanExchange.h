@@ -2,8 +2,8 @@
 
 // Hands plans from the message thread to the audio thread without locks or allocations on the
 // audio thread, and frees them on the message thread once the audio thread is done with them.
-// The sine plan (ArtPlan, PlanExchange) and the carving mask (MaskPlan, MaskPlanExchange) travel
-// the same way.
+// The sine plan (ArtPlan, PlanExchange) and the carving masks (MaskPlan, MaskPlanExchange; the
+// effect's pair of them, MaskPlanSet, MaskSetExchange) travel the same way.
 //
 // The message thread publishes plans with strictly increasing versions. The audio thread picks
 // up the newest one with acquire() and reports which plans it still uses (the current one and,
@@ -22,8 +22,8 @@
 namespace freqart
 {
 
-/** Plan is a type with a public `uint64_t version` (ArtPlan, MaskPlan: both are instantiated in
-    PlanExchange.cpp). */
+/** Plan is a type with a public `uint64_t version` (ArtPlan, MaskPlan, MaskPlanSet: each is
+    instantiated in PlanExchange.cpp). */
 template <typename Plan>
 class VersionedExchange
 {
@@ -77,8 +77,10 @@ private:
 
 extern template class VersionedExchange<ArtPlan>;
 extern template class VersionedExchange<MaskPlan>;
+extern template class VersionedExchange<MaskPlanSet>;
 
 using PlanExchange = VersionedExchange<ArtPlan>;
 using MaskPlanExchange = VersionedExchange<MaskPlan>;
+using MaskSetExchange = VersionedExchange<MaskPlanSet>;
 
 } // namespace freqart

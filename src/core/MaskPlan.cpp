@@ -8,30 +8,83 @@ namespace freqart
 
 namespace
 {
-    /** Replaces every value by the maximum within `radius` steps along one direction (a
-        separable square dilation is this along the rows, then along the columns). `stride` is
-        the step between neighbours, `count` the number of steps in that direction and `lines`
-        how many such lines there are, `lineStride` apart. */
-    void dilate (std::vector<float>& values, int radius, int count, size_t stride, int lines, size_t lineStride)
+    /** Replaces each of `count` elements (element i is the `width` floats from data + i *
+        stride) by the maximum of the elements within `radius` of it, elementwise; elements
+        beyond the ends count as 0 (all values are >= 0, so that is the same as stopping at the
+        ends). A window of 2r + 1 is built up from shifted maxima of doubling length (windows of
+        1, 2, 4, ... then one shift for the rest), so the cost grows with log (radius), not with
+        the radius: a time halo can be dozens of columns wide. */
+    void dilate (float* data, int count, int width, size_t stride, int radius, std::vector<float>& scratch)
     {
-        if (radius <= 0)
+        if (radius <= 0 || count <= 0 || width <= 0)
             return;
 
-        std::vector<float> line (static_cast<size_t> (count));
+        const auto w = static_cast<size_t> (width);
+        const auto length = static_cast<size_t> (count) + 2 * static_cast<size_t> (radius);
+        scratch.assign (length * w, 0.0f);
 
-        for (int l = 0; l < lines; ++l)
+        // The elements r from the start, zeros either side: element y of the result is then the
+        // maximum of scratch elements y .. y + 2r.
+        for (size_t i = 0; i < static_cast<size_t> (count); ++i)
+            std::copy (data + i * stride, data + i * stride + w, scratch.data() + (i + static_cast<size_t> (radius)) * w);
+
+        const auto shiftMax = [&] (size_t shift)
         {
-            auto* first = values.data() + static_cast<size_t> (l) * lineStride;
-
-            for (int i = 0; i < count; ++i)
-                line[static_cast<size_t> (i)] = first[static_cast<size_t> (i) * stride];
-
-            for (int i = 0; i < count; ++i)
+            // In place, forwards: element y + shift has not been changed yet when y reads it.
+            for (size_t y = 0; y + shift < length; ++y)
             {
-                const auto from = std::max (0, i - radius);
-                const auto to = std::min (count - 1, i + radius);
-                first[static_cast<size_t> (i) * stride] = *std::max_element (line.begin() + from, line.begin() + to + 1);
+                auto* to = scratch.data() + y * w;
+                const auto* from = to + shift * w;
+
+                for (size_t k = 0; k < w; ++k)
+                    to[k] = std::max (to[k], from[k]);
             }
+        };
+
+        const auto window = 2 * static_cast<size_t> (radius) + 1;
+        size_t covered = 1;
+
+        while (covered * 2 <= window)
+        {
+            shiftMax (covered);
+            covered *= 2;
+        }
+
+        if (covered < window)
+            shiftMax (window - covered);
+
+        for (size_t i = 0; i < static_cast<size_t> (count); ++i)
+            std::copy (scratch.data() + i * w, scratch.data() + (i + 1) * w, data + i * stride);
+    }
+
+    /** Widens every shape by haloRows rows up and down and haloColumns columns either side. */
+    void dilatePlan (MaskPlan& plan, int haloRows, int haloColumns)
+    {
+        std::vector<float> scratch;
+        const auto rows = static_cast<size_t> (plan.numRows);
+
+        // Along each column (contiguous, low rows first), then across the columns (whole
+        // columns at a time).
+        if (haloRows > 0)
+            for (int c = 0; c < plan.numColumns; ++c)
+                dilate (plan.values.data() + static_cast<size_t> (c) * rows, plan.numRows, 1, 1, haloRows, scratch);
+
+        if (haloColumns > 0)
+            dilate (plan.values.data(), plan.numColumns, plan.numRows, rows, haloColumns, scratch);
+    }
+
+    /** Works out which columns hold anything, and whether any does. */
+    void markUsedColumns (MaskPlan& plan)
+    {
+        plan.columnUsed.assign (static_cast<size_t> (plan.numColumns), 0);
+        plan.empty = true;
+
+        for (int x = 0; x < plan.numColumns; ++x)
+        {
+            const auto* column = plan.column (x);
+            const auto used = std::any_of (column, column + plan.numRows, [] (float v) { return v > 0.0f; });
+            plan.columnUsed[static_cast<size_t> (x)] = used ? 1 : 0;
+            plan.empty = plan.empty && ! used;
         }
     }
 }
@@ -146,20 +199,22 @@ std::unique_ptr<MaskPlan> buildMaskPlan (const Canvas& canvas, const MaskSetting
         }
     }
 
-    dilate (plan->values, settings.haloRows, Canvas::height, 1, Canvas::width, rows);
-    dilate (plan->values, settings.haloColumns, Canvas::width, rows, Canvas::height, 1);
-
-    plan->columnUsed.assign (static_cast<size_t> (Canvas::width), 0);
-
-    for (int x = 0; x < Canvas::width; ++x)
-    {
-        const auto* column = plan->column (x);
-        const auto used = std::any_of (column, column + Canvas::height, [] (float v) { return v > 0.0f; });
-        plan->columnUsed[static_cast<size_t> (x)] = used ? 1 : 0;
-        plan->empty = plan->empty && ! used;
-    }
-
+    dilatePlan (*plan, settings.haloRows, settings.haloColumns);
+    markUsedColumns (*plan);
     return plan;
+}
+
+std::unique_ptr<MaskPlan> widenMaskPlan (const MaskPlan& plan, int haloRows, int haloColumns)
+{
+    auto widened = std::make_unique<MaskPlan>();
+    widened->scale = plan.scale;
+    widened->numColumns = plan.numColumns;
+    widened->numRows = plan.numRows;
+    widened->values = plan.values;
+
+    dilatePlan (*widened, std::max (0, haloRows), std::max (0, haloColumns));
+    markUsedColumns (*widened);
+    return widened;
 }
 
 } // namespace freqart

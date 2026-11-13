@@ -1,6 +1,7 @@
-// Spectral carving: the mask plan built from the canvas, its exchange, the baseline engine
-// (transparency, carving and stencilling a band, the latency, the gate, block sizes) and the
-// tuned engine (engine 1: the same, plus thin low strokes and the gate at the output).
+// Spectral carving: the mask plan built from the canvas (and widened by a halo), its exchange,
+// the baseline engine (transparency, carving and stencilling a band, the latency, the gate,
+// block sizes) and the tuned engine (engine 1: the same, plus thin low strokes, the gate at the
+// output, reading the drawing over each hop and at column edges alike, and the halo per mode).
 
 #include "TestFramework.h"
 
@@ -86,9 +87,9 @@ Stereo noise (int numSamples, int seed = 7)
 
 /** Plays `audio` through the carver in blocks (sizes taken in turn from `blocks`), the drawing
     playing on a loop of `passSamples` from the first sample, or with the gate shut before
-    `gateFrom`. */
+    `gateFrom`; each block's position off by `positionError` (a host's rounding). */
 Stereo run (SpectralCarver& carver, const Stereo& audio, const std::vector<int>& blocks, const CarveSettings& settings,
-            double passSamples = 8.0 * rate, int gateFrom = 0)
+            double passSamples = 8.0 * rate, int gateFrom = 0, double positionError = 0.0)
 {
     auto out = audio;
     const auto total = static_cast<int> (audio[0].size());
@@ -109,7 +110,7 @@ Stereo run (SpectralCarver& carver, const Stereo& audio, const std::vector<int>&
             segment.start = from - start;
             segment.length = to - from;
             segment.playing = from >= gateFrom;
-            segment.fraction = std::fmod (from / passSamples, 1.0);
+            segment.fraction = std::fmod (from / passSamples, 1.0) + positionError;
             segment.fractionPerSample = 1.0 / passSamples;
         };
 
@@ -176,6 +177,18 @@ float differenceFromDelayed (const Stereo& in, const Stereo& out, int latency, i
     for (size_t channel = 0; channel < in.size(); ++channel)
         for (auto i = static_cast<size_t> (std::max (from, latency)); i < out[channel].size(); ++i)
             largest = std::max (largest, std::abs (out[channel][i] - in[channel][i - static_cast<size_t> (latency)]));
+
+    return largest;
+}
+
+/** The largest difference between two outputs, over both channels. */
+float largestDifference (const Stereo& a, const Stereo& b)
+{
+    auto largest = 0.0f;
+
+    for (size_t channel = 0; channel < a.size(); ++channel)
+        for (size_t i = 0; i < a[channel].size(); ++i)
+            largest = std::max (largest, std::abs (a[channel][i] - b[channel][i]));
 
     return largest;
 }
@@ -722,4 +735,187 @@ FREQART_TEST (tunedCarverGateWorksAtTheOutput)
             CHECK_NEAR (levelDb (out, keptHz, from, to) - levelDb (input, keptHz, start, start + edge), 0.0, 0.2);
         }
     }
+}
+
+FREQART_TEST (maskPlanWideHaloMatchesTheDirectOne)
+{
+    // widenMaskPlan builds its window up from doubling shifts: it must give exactly what a
+    // straightforward maximum over the window gives, for small and wide halos and at the edges.
+    Canvas canvas;
+    juce::Random random (5);
+
+    for (int i = 0; i < 300; ++i)
+        canvas.at (random.nextInt (Canvas::width), random.nextInt (Canvas::height)) = random.nextFloat();
+
+    for (int x = 0; x < 6; ++x)
+        canvas.at (x, 3) = 0.9f;   // at the corner
+
+    const auto exact = buildMaskPlan (canvas, MaskSettings());
+
+    for (const auto& [haloRows, haloColumns] : { std::pair<int, int> { 4, 8 }, { 1, 0 }, { 0, 37 }, { 7, 64 } })
+    {
+        const auto widened = widenMaskPlan (*exact, haloRows, haloColumns);
+        MaskSettings settings;
+        settings.haloRows = haloRows;
+        settings.haloColumns = haloColumns;
+        const auto built = buildMaskPlan (canvas, settings);
+
+        auto mismatches = 0;
+
+        for (int c = 0; c < Canvas::width; c += 3)
+        {
+            for (int r = 0; r < Canvas::height; r += 3)
+            {
+                auto expected = 0.0f;
+
+                for (int dc = -haloColumns; dc <= haloColumns; ++dc)
+                    for (int dr = -haloRows; dr <= haloRows; ++dr)
+                        if (c + dc >= 0 && c + dc < Canvas::width && r + dr >= 0 && r + dr < Canvas::height)
+                            expected = std::max (expected, exact->column (c + dc)[r + dr]);
+
+                if (! juce::exactlyEqual (widened->column (c)[r], expected) || ! juce::exactlyEqual (built->column (c)[r], expected))
+                    ++mismatches;
+            }
+        }
+
+        CHECK_NEAR (mismatches, 0, 0);
+        CHECK (widened->isColumnUsed (haloColumns) && ! widened->empty);
+    }
+}
+
+FREQART_TEST (tunedCarverReadsColumnEdgesAlike)
+{
+    // Every other column drawn, over a pass of a whole number of samples per column (375): many
+    // of the points where frames read the drawing fall exactly on the edge between two columns,
+    // where a host's position rounds either way depending on where its blocks start (here a few
+    // ulps one way in one run, the other way in the other; the pass opens after its first
+    // moment, where a loop's position would wrap round to its end). Both runs must read the
+    // same columns (columnNudge).
+    Canvas stripes;
+
+    for (int x = 1; x < Canvas::width; x += 2)
+        for (int y = 300; y < 700; ++y)
+            stripes.at (x, y) = 1.0f;
+
+    const auto plan = buildMaskPlan (stripes, MaskSettings());
+    const auto input = noise (3 * 48000, 13);
+
+    for (const auto mode : { CarveMode::carve, CarveMode::stencil })
+    {
+        CarveSettings settings;
+        settings.mode = mode;
+
+        auto early = preparedTuned();
+        early->setPlan (plan.get());
+        const auto reference = run (*early, input, { 512 }, settings, 8.0 * rate, 1000, -1.0e-15);
+
+        auto late = preparedTuned();
+        late->setPlan (plan.get());
+        const auto other = run (*late, input, { 300, 700, 1 }, settings, 8.0 * rate, 1000, 1.0e-15);
+
+        CHECK_LESS (largestDifference (reference, other), 1.0e-6);
+        CHECK_GREATER (differenceFromDelayed (input, reference, early->getLatencySamples()), 0.01);
+    }
+}
+
+FREQART_TEST (tunedCarverReadsThinVerticalStrokes)
+{
+    // A one-beat drawing at 120 BPM (0.5 s, 23 samples a column) with a stroke 8 columns wide
+    // (190 samples) over 1 - 4 kHz: a frame stands for a hop of 1024 samples, so read at one
+    // moment per hop the stroke would be missed in most passes. Read at points 128 samples
+    // apart it is carved in every pass, by about its share of the hop.
+    const auto passSamples = 24000.0;
+    const auto plan = bandPlan (1000.0, 4000.0, 500, 508);
+    const auto input = noise (6 * 24000, 17);
+
+    auto carver = preparedTuned();
+    carver->setPlan (plan.get());
+    CarveSettings settings;
+    settings.depthDb = -60.0f;
+    const auto out = run (*carver, input, { 512 }, settings, passSamples);
+    const auto latency = carver->getLatencySamples();
+
+    // The energy of 1.5 - 3 kHz around the stroke (a hop either side of it), in and out.
+    const auto bandEnergy = [] (const Stereo& audio, int from, int to)
+    {
+        juce::dsp::FFT fft (11);
+        std::vector<float> buffer (4096, 0.0f);
+        double energy = 0.0;
+
+        for (int start = from; start + 2048 <= to; start += 256)
+        {
+            std::fill (buffer.begin(), buffer.end(), 0.0f);
+
+            for (int i = 0; i < 2048; ++i)
+                buffer[static_cast<size_t> (i)] = audio[0][static_cast<size_t> (start + i)]
+                                                * static_cast<float> (0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * i / 2048));
+
+            fft.performFrequencyOnlyForwardTransform (buffer.data());
+
+            for (int bin = 64; bin <= 128; ++bin)  // 1.5 - 3 kHz at 23.4 Hz a bin
+                energy += static_cast<double> (buffer[static_cast<size_t> (bin)]) * buffer[static_cast<size_t> (bin)];
+        }
+
+        return energy;
+    };
+
+    for (int pass = 1; pass < 5; ++pass)
+    {
+        const auto strokeStart = static_cast<int> (pass * passSamples + 500.0 / Canvas::width * passSamples);
+        const auto from = strokeStart - 1024, to = strokeStart + 190 + 1024;
+        const auto drop = 10.0 * std::log10 (bandEnergy (out, from + latency, to + latency) / bandEnergy (input, from, to));
+        CHECK_LESS (drop, -3.0);
+    }
+}
+
+FREQART_TEST (tunedCarverHaloFollowsTheMode)
+{
+    // Carve widens what it carves by settings.haloBins. A sine on the drawn band's top edge is
+    // carved by about half of Depth with Carve's 1 bin and by all of it with Carve + Draw's 3;
+    // one 3 bins (35 Hz) above the band is left alone with 1 bin and partly carved with 3. And
+    // with holdLoudest a stroke that covers part of a frame's hop is carved by all of Depth in
+    // that frame, not by its share (the frames either side, which do not reach it, still let
+    // some of the tone through: an STFT spreads a frame's change over its whole length).
+    const auto input = sines (3 * 48000, { { 1000.0, 0.5f }, { 1035.2, 0.5f } });
+    const auto plan = bandPlan (900.0, 1000.0);
+    const auto from = 4096 + 8192, to = 3 * 48000;
+
+    const auto carvedBy = [&] (int haloBins, double hz)
+    {
+        auto carver = preparedTuned();
+        carver->setPlan (plan.get());
+        CarveSettings settings;
+        settings.haloBins = haloBins;
+        const auto out = run (*carver, input, { 512 }, settings);
+        return levelDb (out, hz, from, to) - levelDb (input, hz, from, to);
+    };
+
+    CHECK_GREATER (carvedBy (1, 1000.0), -40.0);
+    CHECK_LESS (carvedBy (3, 1000.0), -55.0);
+    CHECK_GREATER (carvedBy (1, 1035.2), -1.0);
+    CHECK_LESS (carvedBy (3, 1035.2), -5.0);
+
+    // A stroke of 4 columns in a pass of 1024 x 48 samples: 192 samples of a 1024-sample hop,
+    // between two frames' centres (which are hop starts).
+    const auto stroke = bandPlan (800.0, 1250.0, 517, 521);
+    const auto tone = sines (3 * 48000, { { 1000.0, 0.5f } });
+    const auto passSamples = 1024.0 * 48.0;
+    const auto strokeAt = static_cast<int> (passSamples * 517.0 / Canvas::width);
+
+    const auto deepest = [&] (bool holdLoudest)
+    {
+        auto carver = preparedTuned();
+        carver->setPlan (stroke.get());
+        CarveSettings settings;
+        settings.holdLoudest = holdLoudest;
+        const auto out = run (*carver, tone, { 512 }, settings, passSamples);
+        const auto latency = carver->getLatencySamples();
+        return levelDb (out, 1000.0, strokeAt + latency - 256, strokeAt + latency + 448)
+             - levelDb (tone, 1000.0, strokeAt - 256, strokeAt + 448);
+    };
+
+    const auto byShare = deepest (false);
+    const auto byMost = deepest (true);
+    CHECK_LESS (byShare, -2.0);
+    CHECK_LESS (byMost, byShare - 3.0);
 }

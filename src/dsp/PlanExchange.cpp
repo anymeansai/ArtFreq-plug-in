@@ -17,7 +17,7 @@ namespace freqart
 //    can never see half of a report (a new current version with a stale fading one).
 
 static_assert (std::atomic<ArtPlan*>::is_always_lock_free && std::atomic<MaskPlan*>::is_always_lock_free
-                   && std::atomic<uint64_t>::is_always_lock_free,
+                   && std::atomic<MaskPlanSet*>::is_always_lock_free && std::atomic<uint64_t>::is_always_lock_free,
                "the audio thread must never wait for the exchange");
 
 template <typename Plan>
@@ -97,5 +97,6 @@ void VersionedExchange<Plan>::reportInUse (uint64_t currentVersion, uint64_t fad
 
 template class VersionedExchange<ArtPlan>;
 template class VersionedExchange<MaskPlan>;
+template class VersionedExchange<MaskPlanSet>;
 
 } // namespace freqart

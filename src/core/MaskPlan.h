@@ -86,4 +86,25 @@ struct MaskPlan
     first replaced by the maximum within haloRows rows and haloColumns columns of it. */
 std::unique_ptr<MaskPlan> buildMaskPlan (const Canvas& canvas, const MaskSettings& settings);
 
+/** A copy of `plan` with every value replaced by the maximum within haloRows rows and
+    haloColumns columns of it (the same as building it with that halo). The cost grows with the
+    logarithm of the halo, so a wide one in time is cheap. */
+std::unique_ptr<MaskPlan> widenMaskPlan (const MaskPlan& plan, int haloRows, int haloColumns);
+
+/** What FreqArt FX carves with, built together from one canvas: the drawing as it is (Carve,
+    Stencil) and the drawing widened by a halo (Carve + Draw, where the sines are played in a hole
+    a little larger than they are, so they show with a dark edge). Both are always there, so a
+    change of mode, also by automation, takes effect at once rather than after a rebuild on the
+    message thread. Immutable once built; travels like a plan (MaskSetExchange in
+    dsp/PlanExchange.h). */
+struct MaskPlanSet
+{
+    uint64_t version = 0;  // set by the publisher; strictly increasing per exchange
+
+    std::unique_ptr<MaskPlan> exact;
+    std::unique_ptr<MaskPlan> halo;
+    int haloRows = 0;      // what `halo` was widened by
+    int haloColumns = 0;
+};
+
 } // namespace freqart

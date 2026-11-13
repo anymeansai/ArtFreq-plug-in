@@ -48,12 +48,13 @@ TunedCarver::TunedCarver (const Options& o) : options (o)
 {
     options.overlap = std::clamp (options.overlap, 2, hopRingSize);
     options.windowPower = std::max (0.5f, options.windowPower);
-    options.haloBins = std::clamp (options.haloBins, 0, 64);
+    options.pointSpacing = std::max (16, options.pointSpacing);
 
     char text[200];
-    std::snprintf (text, sizeof (text), "tuned STFT %d (%.1f ms), sin^%g windows, %d x overlap, Carve: mean per bin, halo %d bin%s",
+    std::snprintf (text, sizeof (text), "tuned STFT %d (%.1f ms), sin^%g windows, %d x overlap, Carve: mean per bin, "
+                                        "the drawing read every %d samples",
                    juce::roundToInt (options.frameSeconds * 48000.0), options.frameSeconds * 1000.0,
-                   static_cast<double> (options.windowPower), options.overlap, options.haloBins, options.haloBins == 1 ? "" : "s");
+                   static_cast<double> (options.windowPower), options.overlap, options.pointSpacing);
     name = text;
 }
 
@@ -63,6 +64,13 @@ void TunedCarver::prepareCarver()
     frameSize = std::max (options.overlap * 16,
                           juce::roundToInt (options.frameSeconds * sampleRate / options.overlap) * options.overlap);
     hop = frameSize / options.overlap;
+
+    // Points about pointSpacing apart, an even number of them (the frame reads the second half
+    // of one hop and the first half of the next), each at the centre of its share of the hop.
+    pointsPerHop = std::clamp (2 * juce::roundToInt (0.5 * hop / options.pointSpacing), 2, maxPointsPerHop);
+
+    for (int p = 0; p < pointsPerHop; ++p)
+        pointOffset[p] = static_cast<int> ((2 * static_cast<int64_t> (p) + 1) * hop / (2 * pointsPerHop));
 
     fftOrder = 4;
     while ((1 << fftOrder) < frameSize)
@@ -97,6 +105,9 @@ void TunedCarver::prepareCarver()
     fftBuffer.assign (static_cast<size_t> (2 * fftSize), 0.0f);
     gains.assign (bins, 1.0f);
     amounts.assign (bins, 0.0f);
+    columnValues.assign (bins, 0.0f);
+    besideBefore.assign (bins, 0.0f);
+    besideAfter.assign (bins, 0.0f);
     scratch.assign (bins, 0.0f);
     binEdgeRows.assign (bins + 1, 0.0);
     prefix.assign (static_cast<size_t> (Canvas::height + 1), 0.0);
@@ -168,7 +179,13 @@ void TunedCarver::carve (float* const* channels, int numChannels, int numSamples
     for (int done = 0; done < numSamples;)
     {
         if (hopFill == 0)
-            hopRing[static_cast<size_t> (hopCount++ % hopRingSize)] = { timeline.fraction[done], timeline.gate[done] > 0.0f, false };
+        {
+            auto& started = hopRing[static_cast<size_t> (hopCount++ % hopRingSize)];
+            started.fraction = timeline.fraction[done];
+            started.openAtStart = timeline.gate[done] > 0.0f;
+            started.open = false;
+            std::fill (started.pointGate, started.pointGate + maxPointsPerHop, 0.0f);
+        }
 
         auto& current = hopRing[static_cast<size_t> ((hopCount - 1) % hopRingSize)];
         const auto length = std::min (hop - hopFill, numSamples - done);
@@ -181,6 +198,18 @@ void TunedCarver::carve (float* const* channels, int numChannels, int numSamples
             {
                 current.open = true;
                 current.fraction = timeline.fraction[done + i];
+            }
+        }
+
+        // The points of the hop that fall in this stretch.
+        for (int p = 0; p < pointsPerHop; ++p)
+        {
+            const auto at = pointOffset[p] - hopFill;
+
+            if (at >= 0 && at < length)
+            {
+                current.pointFraction[p] = timeline.fraction[done + at];
+                current.pointGate[p] = timeline.gate[done + at];
             }
         }
 
@@ -227,15 +256,13 @@ void TunedCarver::carve (float* const* channels, int numChannels, int numSamples
     }
 }
 
-bool TunedCarver::sampleMask (double fraction, bool stencil) noexcept
+bool TunedCarver::columnAmounts (int column, bool stencil, float* out) noexcept
 {
     // Per bin, the drawing's mean over the bin's band (and in Stencil its maximum there), from
-    // the column the moment falls in. Returns false, with every value 0, if that column is empty.
-    const auto column = plan->columnAt (fraction);
-
+    // one column. Returns false, with every value 0, if that column is empty.
     if (! plan->isColumnUsed (column))
     {
-        std::fill (amounts.begin(), amounts.end(), 0.0f);
+        std::fill (out, out + numBins, 0.0f);
         return false;
     }
 
@@ -276,7 +303,7 @@ bool TunedCarver::sampleMask (double fraction, bool stencil) noexcept
                 value += (*std::max_element (cells + first, cells + last + 1) - value) * mixMax;
         }
 
-        amounts[static_cast<size_t> (bin)] = value;
+        out[bin] = value;
     }
 
     return true;
@@ -298,17 +325,53 @@ void TunedCarver::widenAcrossBins (int radius) noexcept
     }
 }
 
-bool TunedCarver::computeGains (const CarveSettings& settings) noexcept
+int TunedCarver::gatherPoints() noexcept
 {
-    if (plan == nullptr || plan->empty || plan->numColumns <= 0 || plan->numRows <= 0
-        || static_cast<size_t> (plan->numRows) >= prefix.size() || settings.depthDb >= 0.0f)
-        return false;
+    // The drawing over the hop around the frame's centre (the window's centre is the start of
+    // hop `centre`: the second half of the hop before it and the first half of that one), at
+    // the points there where the gate is open, weighted by the gate (so only what is inside the
+    // pass counts, and its fades count less). Neighbouring points in one column are merged.
+    const auto centre = hopCount - 1 - options.overlap / 2 + 1;
+    const auto half = pointsPerHop / 2;
+    auto count = 0;
+    auto total = 0.0f;
 
-    // The frame's moment: the start of the hop at its centre, or where the gate is shut there,
+    const auto read = [&] (const Hop& source, int from, int to)
+    {
+        for (int p = from; p < to; ++p)
+        {
+            const auto gate = source.pointGate[p];
+
+            if (! (gate > 0.0f))
+                continue;
+
+            const auto column = plan->columnAt (source.pointFraction[p] + columnNudge);
+            total += gate;
+
+            if (count > 0 && points[count - 1].column == column)
+                points[count - 1].weight += gate;
+            else
+                points[count++] = { column, gate };
+        }
+    };
+
+    read (hopAt (centre - 1), half, pointsPerHop);
+    read (hopAt (centre), 0, half);
+
+    for (int p = 0; p < count; ++p)
+        points[p].weight /= total;
+
+    return count;
+}
+
+int TunedCarver::nearestMoment() noexcept
+{
+    // No point of the frame's own stretch is in the pass, but the pass may still begin or end
+    // within the frame: the start of the hop at its centre, or where the gate is shut there,
     // the nearest hop start in the frame where it is open, else the nearest moment in the frame
-    // where it opens. A frame reaching over the start or the end of the pass carves as the pass's
-    // first or last moment does (the output takes it only where the gate is open); with the gate
-    // shut all through the frame it changes nothing.
+    // where it opens. A frame reaching over the start or the end of the pass carves as the
+    // pass's first or last moment does (the output takes it only where the gate is open); with
+    // the gate shut all through the frame it changes nothing.
     const auto newest = hopCount - 1;
     const auto centre = newest - options.overlap / 2 + 1;
     const Hop* moment = nullptr;
@@ -325,23 +388,100 @@ bool TunedCarver::computeGains (const CarveSettings& settings) noexcept
             }
 
     if (moment == nullptr)
+        return 0;
+
+    points[0] = { plan->columnAt (moment->fraction + columnNudge), 1.0f };
+    return 1;
+}
+
+bool TunedCarver::computeGains (const CarveSettings& settings) noexcept
+{
+    if (plan == nullptr || plan->empty || plan->numColumns <= 0 || plan->numRows <= 0
+        || static_cast<size_t> (plan->numRows) >= prefix.size() || settings.depthDb >= 0.0f)
+        return false;
+
+    auto numPoints = gatherPoints();
+
+    if (numPoints == 0)
+        numPoints = nearestMoment();
+
+    if (numPoints == 0)
         return false;
 
     lookUpBinRows();
 
-    if (settings.mode == CarveMode::stencil)
-    {
-        sampleMask (moment->fraction, true);
+    const auto stencil = settings.mode == CarveMode::stencil;
+    const auto loudest = ! stencil && settings.holdLoudest;
+    auto drawn = false;
 
+    std::fill (amounts.begin(), amounts.end(), 0.0f);
+
+    // The points' mean (an empty column adds nothing to it), or with holdLoudest their maximum.
+    for (int p = 0; p < numPoints; ++p)
+    {
+        if (! columnAmounts (points[p].column, stencil, columnValues.data()))
+            continue;
+
+        drawn = true;
+        const auto weight = points[p].weight;
+
+        if (loudest)
+            for (int bin = 0; bin < numBins; ++bin)
+                amounts[static_cast<size_t> (bin)] = std::max (amounts[static_cast<size_t> (bin)], columnValues[static_cast<size_t> (bin)]);
+        else
+            for (int bin = 0; bin < numBins; ++bin)
+                amounts[static_cast<size_t> (bin)] += weight * columnValues[static_cast<size_t> (bin)];
+    }
+
+    // The mean spreads a shape's edge over the frames whose stretch reaches it, half a hop
+    // either side of where it is drawn. Where the frame's centre is drawn, it carves at least as
+    // much as the centre asks; where it is not but the centre of a frame beside it is, that
+    // frame carves the shape and this one leaves it alone (as when the drawing was read at the
+    // centres only). Only a stroke that falls between the centres is left to the mean.
+    if (! loudest && options.sharpEdges)
+    {
+        const auto centre = hopCount - 1 - options.overlap / 2 + 1;
+        const auto valuesAt = [this, stencil] (const Hop& source, std::vector<float>& out)
+        {
+            if (source.openAtStart && columnAmounts (plan->columnAt (source.fraction + columnNudge), stencil, out.data()))
+                return true;
+
+            std::fill (out.begin(), out.end(), 0.0f);
+            return false;
+        };
+
+        if (hopAt (centre).openAtStart)
+        {
+            const auto atCentre = valuesAt (hopAt (centre), columnValues);
+            const auto before = valuesAt (hopAt (centre - 1), besideBefore);
+            const auto after = valuesAt (hopAt (centre + 1), besideAfter);
+            drawn = drawn || atCentre;
+
+            if (atCentre || before || after)
+            {
+                for (size_t bin = 0; bin < amounts.size(); ++bin)
+                {
+                    if (columnValues[bin] > 0.0f)
+                        amounts[bin] = std::max (amounts[bin], columnValues[bin]);
+                    else if (besideBefore[bin] > 0.0f || besideAfter[bin] > 0.0f)
+                        amounts[bin] = 0.0f;
+                }
+            }
+        }
+    }
+
+    if (stencil)
+    {
+        // Where nothing is drawn, everything goes.
         for (auto& amount : amounts)
-            amount = 1.0f - amount;
+            amount = 1.0f - std::min (amount, 1.0f);
     }
     else
     {
-        if (! sampleMask (moment->fraction, false))
+        if (! drawn)
             return false;
 
-        widenAcrossBins (options.haloBins);
+        widenAcrossBins (std::clamp (settings.haloBins, 0, 64));
     }
 
     // gain = depth ^ amount, as a natural exponent per unit of amount

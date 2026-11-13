@@ -37,7 +37,14 @@ enum class CarveMode
 struct CarveSettings
 {
     CarveMode mode = CarveMode::carve;
-    float depthDb = -60.0f;  // how far carved frequencies drop, minDepthDb..0 dB
+    float depthDb = -60.0f;    // how far carved frequencies drop, minDepthDb..0 dB
+    int haloBins = 1;          // Carve: also carve this many bins either side of what is drawn
+                               // (the window spreads a frequency over its neighbours, so a band
+                               // carved exactly to its edge stays shallow there). Stencil never
+                               // widens. Engines without bins ignore it.
+    bool holdLoudest = false;  // Carve: carve the most the drawing asks for anywhere in a frame's
+                               // stretch of time rather than its average (Carve + Draw: the hole
+                               // must cover the sines wherever they sound in it)
 };
 
 class SpectralCarver
