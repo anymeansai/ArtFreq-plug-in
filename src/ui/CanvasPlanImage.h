@@ -35,6 +35,13 @@ public:
     /** Forgets the cached picture (the next get() rebuilds it). */
     void invalidate() noexcept { image = {}; }
 
+    /** The colour-map index (0..255) of every pixel of the picture last returned, row by row:
+        what FreqArt FX's canvas lays over its stand-in for the song. */
+    const std::vector<uint8_t>& getPixelLevels() const noexcept { return pixelLevels; }
+
+    /** Counts the pictures rendered: it changes whenever the picture last returned does. */
+    uint64_t getRenderCount() const noexcept { return renderCount; }
+
     /** The colour-map index 0..255 for a linear amplitude relative to the loudest (exposed for
         tests). 0 for silence, 255 at the loudest, windowDb below it maps to 0. */
     static uint8_t levelFor (float amplitude, float loudest) noexcept;
@@ -49,6 +56,9 @@ private:
     uint64_t imageVersion = 0;
     FrequencyScale imageScale;
     float imagePixelsPerLogical = 0.0f;
+
+    std::vector<uint8_t> pixelLevels;  // width x height, of `image`
+    uint64_t renderCount = 0;
 
     // Colour-map levels of the plan: levels[line * numColumns + column]
     std::shared_ptr<const ArtPlan> levelsPlan;  // kept so the pointer cannot be reused

@@ -370,6 +370,52 @@ namespace
         return steps;
     }
 
+    // FreqArt FX: the same window on the audio passing through.
+    const std::vector<std::pair<juce::String, Paragraph>>& effectSteps()
+    {
+        static const std::vector<std::pair<juce::String, Paragraph>> steps {
+            { "1", { "Put FreqArt FX on an audio track, a bus or the master.", "It works on the audio passing "
+                                                                               "through." } },
+            { "2", { "Open a spectrogram after it.", "MiniMeters on the master, or any scrolling spectrogram." } },
+            { "3", { "Match your analyser.", "In Settings (the gear): the same scale, range and slope. MiniMeters: "
+                                             "Log, 20 Hz to 20 kHz." } },
+            { "4", { "Draw.", "Add text, a picture or brush strokes. The canvas shows them over a stand-in for "
+                              "your song." } },
+            { "5", { "Choose a mode and the depth", "at the top. Depth is how far the drawing's frequencies drop "
+                                                    "(-80 dB looks black)." } },
+            { "6", { "Press play in your DAW.", "It carves from the bar set under Trigger. Preview runs the pass on "
+                                                "the audio coming in." } },
+            { "7", { "Bounce the track in your DAW.", "Carving needs the song. In the Draw modes, Export still "
+                                                      "bounces the sines." } },
+        };
+        return steps;
+    }
+
+    const std::vector<Paragraph>& effectModes()
+    {
+        static const std::vector<Paragraph> modes {
+            { "Carve.", "The drawing's frequencies are muted, so it shows as dark shapes in the song. The default." },
+            { "Carve + Draw.", "The drawing played in a hole carved a little wider: bright with a dark edge, "
+                               "even in a dense mix." },
+            { "Stencil.", "The opposite of Carve: only the drawing's frequencies pass." },
+            { "Draw.", "The drawing's sines on top of the audio. Density, Contrast, Level and Lows shape the "
+                       "sines of both Draw modes." },
+        };
+        return modes;
+    }
+
+    const std::vector<Paragraph>& effectTiming()
+    {
+        static const std::vector<Paragraph> list {
+            { "As in FreqArt.", "Length, Trigger, Repeat and Tempo work as in the instrument; outside the pass the "
+                                "audio passes untouched." },
+            { "MIDI note", "works where the DAW sends MIDI to effects (Reaper, Bitwig, Cubase, Studio One). Ableton "
+                           "Live does not: use Transport there." },
+            { "Latency:", "85 ms, the same in every mode and in bypass. Your DAW makes up for it." },
+        };
+        return list;
+    }
+
     const std::vector<Paragraph>& layerTips()
     {
        #if JUCE_MAC
@@ -435,8 +481,9 @@ namespace
     }
 } // namespace
 
-HelpPanel::HelpPanel()
-    : closeButton ("Close help", icons::close())
+HelpPanel::HelpPanel (bool forEffect)
+    : effect (forEffect),
+      closeButton ("Close help", icons::close())
 {
     setComponentID ("help-panel");
     setWantsKeyboardFocus (true);
@@ -484,7 +531,7 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
     {
         heading ("Getting started");
 
-        for (const auto& [number, p] : helpSteps())
+        for (const auto& [number, p] : effect ? effectSteps() : helpSteps())
             paragraph (Block::Kind::step, number, leadText (p), textIndent, 14.0f);
 
         y += 4.0f;
@@ -495,15 +542,15 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
     }
     else
     {
-        heading ("Trigger modes");
+        heading (effect ? "Modes" : "Trigger modes");
 
-        for (const auto& p : triggerModes())
+        for (const auto& p : effect ? effectModes() : triggerModes())
             paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
 
         y += 14.0f;
-        heading ("Tips");
+        heading (effect ? "Timing, MIDI and latency" : "Tips");
 
-        for (const auto& p : tips())
+        for (const auto& p : effect ? effectTiming() : tips())
             paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
 
         y += 14.0f;
@@ -535,7 +582,7 @@ int HelpPanel::getIdealHeight() const
 void HelpPanel::paint (juce::Graphics& g)
 {
     paintCard (g, getLocalBounds());
-    paintTitle (g, "How to use FreqArt", getWidth());
+    paintTitle (g, effect ? "How to use FreqArt FX" : "How to use FreqArt", getWidth());
 
     const auto columnWidth = (getWidth() - 2 * helpPad - helpColumnGap) / 2;
 

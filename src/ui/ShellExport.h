@@ -4,6 +4,9 @@
 // thread; the result is offered as a chip to drag into the DAW, and as "Save..." (an async file
 // chooser). From then on the file follows the drawing: each change renders a new file of its
 // own a moment later. See docs/DESIGN.md, "Footer".
+//
+// In FreqArt FX, Carve and Stencil change the song, which only the DAW has: the column then says
+// "Bounce the track in your DAW" instead. In the Draw modes it bounces the drawing's sines.
 
 #include "PluginProcessor.h"
 #include "ShellControls.h"
@@ -79,6 +82,12 @@ public:
     /** The last error, empty if the last bounce worked. */
     juce::String getLastError() const;
 
+    /** FreqArt FX in Carve or Stencil: the column asks for a bounce in the DAW instead (nothing
+        can be bounced here without the song). */
+    bool isAskingForDawBounce() const noexcept { return look == Look::daw; }
+
+    static constexpr const char* dawBounceText = "Bounce the track in your DAW";
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -102,7 +111,8 @@ private:
         button,     // "Bounce WAV" (or "Rendering..." for the first file, or after an error)
         ready,      // the chip with the current file
         updating,   // the chip waiting for the next file
-        empty       // the chip with nothing to export
+        empty,      // the chip with nothing to export
+        daw         // FreqArt FX carving: "Bounce the track in your DAW"
     };
 
     Take takeFor (const ArtPlan& plan) const;
@@ -111,6 +121,7 @@ private:
     void collectFinishedRenders();
     void finishPendingSave();
     bool isOnShow() const;
+    bool needsTheSong() const;
     void updateLook();
     juce::String hintText() const;
     void chooseSaveTarget();

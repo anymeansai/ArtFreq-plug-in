@@ -2,7 +2,14 @@
 
 **by AnyMeans**
 
-An instrument plug-in (VST3, macOS) that turns text, pictures and brush strokes into sound whose **spectrogram shows them**. Put it on an instrument track, open a spectrogram such as MiniMeters on its output, press play, and your drawing scrolls past.
+A plug-in (VST3, macOS) that turns text, pictures and brush strokes into sound whose **spectrogram shows them**. Put it on an instrument track, open a spectrogram such as MiniMeters on its output, press play, and your drawing scrolls past.
+
+It comes as two plug-ins from the same code, with the same window, installed together:
+
+- **FreqArt**, an instrument for MIDI and instrument tracks: it plays the drawing.
+- **FreqArt FX**, an audio effect for audio tracks, buses and the master: it carves the drawing into the song passing through, so it shows as dark shapes even in a full mix, or keeps only the drawing, or plays it into a hole carved for it, or on top. See [FreqArt FX](#freqart-fx-the-drawing-in-a-song).
+
+Why two? A DAW decides from a VST3's category where it may go: Ableton Live, FL Studio and Cubase offer an instrument only on MIDI / instrument tracks and an effect only on audio tracks, buses and the master. No single plug-in can be both, so FreqArt is registered once as each. Everything else is shared: the drawing tools, the settings, even the saved state (a drawing made in one opens in the other).
 
 The canvas is a picture of your spectrogram: left to right is time across the drawing's length (1 beat to 32 bars, in time with the song), bottom to top is frequency on the same scale as your analyser (logarithmic, 20 Hz to 20 kHz, by default). What you see on the canvas is what the analyser will show.
 
@@ -33,6 +40,32 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
 
 The **?** button shows these steps inside the plug-in.
 
+## FreqArt FX: the drawing in a song
+
+On a full song the drawing's own sound can get lost in everything else going on. FreqArt FX works the other way round: it **mutes the drawing's frequencies in the song** (Carve), so the drawing shows as dark shapes in the song's spectrogram.
+
+1. **Put FreqArt FX on an audio track, a bus or the master** (it is listed under audio effects, as "FreqArt FX" by AnyMeans, category Fx / Filter). It takes mono or stereo.
+2. **Open a spectrogram after it**: MiniMeters on the master, as for FreqArt. Match the analyser in Settings as usual.
+3. **Draw** as in FreqArt. The canvas shows the drawing over a stand-in for a song, as the analyser will show it in the chosen mode; the **Live** view shows what actually comes out (your song, carved).
+4. **Choose the Mode and the Depth** at the top of the window:
+   - **Carve** (the default): the drawing's frequencies are muted: dark shapes in the song.
+   - **Carve + Draw**: carved a little wider than the drawing (4 canvas rows and about 35 Hz above and below it, about 60 ms before and after it; a sixteenth of the length for drawings under a second), and FreqArt's sines played in the hole: the drawing shows bright with a dark edge, even in a dense mix.
+   - **Stencil**: the opposite of Carve: only the drawing's frequencies pass, everything else is muted.
+   - **Draw**: the drawing's sines on top of the audio, which is left as it is.
+   - **Depth** (−120 to 0 dB, default −80 dB) is how far carved frequencies drop. −80 dB looks black in MiniMeters even over a master's bass and kick; −20 to −40 dB darkens without silencing. Greyed in Draw, which carves nothing. Click it to type a value, or drag it.
+   - Mode and Depth can be automated, and switching modes or moving Depth while playing never clicks (the carve crossfades from frame to frame, the sines fade in and out).
+   - Density, Contrast, Level and Lows shape the sines, so they only do something in Carve + Draw and Draw (greyed otherwise). Level is the sines' level: the song keeps its own.
+5. **Press play in your DAW.** Length, Trigger, Repeat, the start bar and Tempo work exactly as in FreqArt: with Transport and Repeat off, the drawing is carved once, from bar 1 (or the bar under Trigger) for one Length. **Outside the pass the song passes through untouched**: before and after a single pass, while the DAW is stopped and with nothing drawn (also in Stencil), with 5 ms fades into and out of the carving.
+6. **Bounce the track in your DAW.** Carving changes your song, which only the DAW has: export the mix, freeze the track or bounce it in place there. In Carve and Stencil the Export column says so; in Carve + Draw and Draw, **Bounce WAV** still renders the drawing's sines alone, as in FreqArt.
+
+**Latency.** FreqArt FX analyses the audio in frames of 85 ms, so its output comes 85.3 ms (4096 samples at 48 kHz) after its input, in every mode, at every sample rate and also when the host bypasses it. It reports this to the DAW, which delays everything else to match (plug-in delay compensation), so the song stays in time; when you play live through it you hear it 85 ms late. The sines of the Draw modes are delayed as much, so they land in their holes.
+
+**Preview** runs the drawing's pass from its start on whatever audio comes in, even while the DAW is stopped (once, or on a loop with Repeat), and plays the sines in the Draw modes. Most DAWs keep feeding audio to effects while stopped (a track monitoring its input, the master with other plug-ins playing); with silence coming in, Carve and Stencil have nothing to show, and the Live view stays dark.
+
+**MIDI.** FreqArt FX accepts MIDI, so Trigger = MIDI works where the DAW sends MIDI to an audio effect: **Reaper** (MIDI on the track reaches its effects), **Bitwig**, **Cubase** (pick FreqArt FX as a MIDI track's output) and **Studio One** (route a note track to it). **Ableton Live does not send MIDI to audio effects** (nor does FL Studio's mixer): use Transport there, which needs no MIDI.
+
+**Moving between the two.** FreqArt and FreqArt FX save the same state, with FreqArt FX adding Mode and Depth. Where a DAW lets you load one's preset or state into the other, the drawing and the shared settings come along (Mode and Depth start at Carve and −80 dB in FreqArt FX, and are left out by FreqArt).
+
 ## Tips
 
 - **The highs show the most detail.** An analyser's frequency bins are evenly spaced in hertz, so on a log scale the top octaves get many bins each and stay sharp. Text and fine pictures read best in the **High** band.
@@ -49,6 +82,8 @@ The **?** button shows these steps inside the plug-in.
 
 | Control | What it does |
 | --- | --- |
+| **Mode** (FreqArt FX) | **Carve**, **Carve + Draw**, **Stencil** or **Draw**: what happens to the audio passing through (see [FreqArt FX](#freqart-fx-the-drawing-in-a-song)). Automatable. |
+| **Depth** (FreqArt FX) | −120 to 0 dB, default −80 dB: how far carved frequencies drop. Click to type, drag to change. Automatable. |
 | **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats (in the song's time signature) along the bottom: the song's own bar numbers when it plays once at a bar (Transport, Repeat off). **Live** shows a scrolling spectrogram of FreqArt's own output, on the same scale, wide enough for a whole pass of the drawing (a quarter more than one pass, from 4 to 20 seconds). |
 | **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, a drag, a scroll over a bar, holding down an arrow key, or one session of typing in a text box is one step. |
 | **?** | The how-to, inside the window. |
@@ -113,7 +148,7 @@ Hiding, reordering and deleting are one undo step each; selecting is none (nor i
 
 Knobs: drag to turn, hold Shift for fine adjustment, double-click to reset, double-click the value to type one. The window can also be resized from its corner (75–200 %, fixed proportions); its size is saved with the session, as are the drawing (pictures included) and every setting.
 
-Automation: Level, Length, Trigger, Repeat, Start bar, Tempo and BPM can be automated (in the automation list Trigger reads Transport, MIDI note). Density, Contrast and Lows cannot: the sound is rebuilt from them about 25 times a second by the clock, not in step with the song, so in a bounce faster than real time their changes would land in the wrong place.
+Automation: Level, Length, Trigger, Repeat, Start bar, Tempo and BPM can be automated (and in FreqArt FX Mode and Depth) (in the automation list Trigger reads Transport, MIDI note). Density, Contrast and Lows cannot: the sound is rebuilt from them about 25 times a second by the clock, not in step with the song, so in a bounce faster than real time their changes would land in the wrong place.
 
 Projects saved before Lows existed (FreqArt 0.1 and 0.2) open with Lows on **Stripes**, so they look and sound as they did; new instances start on **Smooth**. Projects saved with FreqArt 0.1 open with Repeat off and from bar 1, so a Transport drawing that looped through the song now plays once from bar 1: turn **Repeat** on to have it loop again. The old **Free loop** trigger, which played by itself, opens as Transport with Repeat on. Automation recorded on the old Trigger is not rewritten: there, Free loop now reads as MIDI note.
 
@@ -134,7 +169,7 @@ Downloads are on the repository's **Releases** page, under **Assets**. Every suc
 
 ### macOS: installer
 
-Download `FreqArt-<version>-macOS.pkg` and open it. It installs `FreqArt.vst3` into `/Library/Audio/Plug-Ins/VST3/`. Then rescan plug-ins in your DAW. It runs on Apple Silicon and Intel Macs with macOS 10.15 or later.
+Download `FreqArt-<version>-macOS.pkg` and open it. It installs both plug-ins, `FreqArt.vst3` (the instrument) and `FreqArt FX.vst3` (the effect), into `/Library/Audio/Plug-Ins/VST3/` (**Customize** can leave one out). Then rescan plug-ins in your DAW. It runs on Apple Silicon and Intel Macs with macOS 10.15 or later.
 
 The installer is not notarised by Apple, so macOS will not open it with a double-click the first time:
 
@@ -145,12 +180,12 @@ At the end the installer offers to move itself to the Trash.
 
 ### Manual install
 
-Download `FreqArt-VST3-macOS.zip`, unzip it, and copy `FreqArt.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (just for you) or `/Library/Audio/Plug-Ins/VST3/` (every user). Then rescan plug-ins in your DAW.
+Download `FreqArt-VST3-macOS.zip`, unzip it, and copy `FreqArt.vst3` and `FreqArt FX.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (just for you) or `/Library/Audio/Plug-Ins/VST3/` (every user). Then rescan plug-ins in your DAW.
 
-A manually copied plug-in keeps the download quarantine flag. If the DAW refuses to load it, clear the flag once:
+A manually copied plug-in keeps the download quarantine flag. If the DAW refuses to load them, clear the flag once:
 
 ```sh
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3 "$HOME/Library/Audio/Plug-Ins/VST3/FreqArt FX.vst3"
 ```
 
 Windows and Linux builds are paused until the macOS version is finished.
@@ -164,23 +199,23 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
 ```
 
-The plug-in is written to `build/FreqArt_artefacts/Release/VST3/FreqArt.vst3`. For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring.
+The plug-ins are written to `build/FreqArt_artefacts/Release/VST3/FreqArt.vst3` (target `FreqArt`) and `build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3` (target `FreqArtFX`; mind the space when you script it). For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring.
 
 | CMake option | Default | Purpose |
 | --- | --- | --- |
 | `FREQART_BUILD_TESTS` | ON | Build `FreqArtTests`. |
-| `FREQART_BUILD_TOOLS` | ON | Build the `FreqArtSnapshot` interface snapshot tool and the `FreqArtLab` lows lab. |
-| `FREQART_COPY_PLUGIN_AFTER_BUILD` | OFF | Copy the plug-in into your VST3 folder after each build. |
+| `FREQART_BUILD_TOOLS` | ON | Build the `FreqArtSnapshot` interface snapshot tool, the `FreqArtLab` lows lab and the `FreqArtCarveLab` carving lab. |
+| `FREQART_COPY_PLUGIN_AFTER_BUILD` | OFF | Copy the plug-ins into your VST3 folder after each build. |
 | `FREQART_ENABLE_LTO` | ON | Link-time optimisation in Release builds (turn it off for faster development builds). |
 | `FETCHCONTENT_SOURCE_DIR_JUCE` | *(download)* | Use a local JUCE checkout instead of downloading it. |
 
 To build the macOS installer from a build folder (macOS only):
 
 ```sh
-installer/macos/build-pkg.sh build out        # writes out/FreqArt-<version>-macOS.pkg
+installer/macos/build-pkg.sh build out        # writes out/FreqArt-<version>-macOS.pkg, with both plug-ins
 ```
 
-The version comes from `project(FreqArt VERSION ...)` in `CMakeLists.txt` unless given as a third argument. JUCE signs the plug-in before it writes `moduleinfo.json` into it, which breaks the signature's seal; the script signs its copy again (ad hoc) when needed.
+The version comes from `project(FreqArt VERSION ...)` in `CMakeLists.txt` unless given as a third argument. It needs a Release build of both targets (`FreqArt` and `FreqArtFX`). JUCE signs a plug-in before it writes `moduleinfo.json` into it, which breaks the signature's seal; the script signs its copies again (ad hoc) when needed.
 
 On Linux, install the JUCE dependencies first:
 
@@ -195,29 +230,30 @@ sudo apt-get install libasound2-dev libx11-dev libxext-dev libxrandr-dev \
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); Smooth lows (the lines the comb replaces, its loudness grid and softened edges, thin strokes held steady on lines, no clicks or rumble where the sines fade in at the bottom, its power staying in the drawn band, determinism, crossfades, speed, the canvas showing the band filled); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, the single pass from a start bar and how the DAW's position, relocations, loops, time-signature changes and a typed tempo play it, MIDI one-shots and how they end, MIDI loops held by keys, preview once and looping, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas, and Smooth must fill the lows where Stripes leaves gaps at FFT sizes 8192 and 16384, read closer to the drawing and not pulse; the processor (state round trip, Lows on Smooth for new instances and on Stripes for projects saved before it, switching Lows while playing without a click, projects saved before Repeat and the Free loop trigger, a single pass and a held loop, a single pass through time-signature changes and at a typed tempo, Preview following Repeat, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export (and its file names); and the editor, driven with synthetic mouse, wheel and key events (bounce files and the export following the drawing, undo steps, selecting and placing objects, the layer list and hidden layers, picking overlapping objects, the live view's span, pictures that cannot be read). The editor tests need a display: on Linux run it under `xvfb-run -a`.
+or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); Smooth lows (the lines the comb replaces, its loudness grid and softened edges, thin strokes held steady on lines, no clicks or rumble where the sines fade in at the bottom, its power staying in the drawn band, determinism, crossfades, speed, the canvas showing the band filled); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, the single pass from a start bar and how the DAW's position, relocations, loops, time-signature changes and a typed tempo play it, MIDI one-shots and how they end, MIDI loops held by keys, preview once and looping, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas, and Smooth must fill the lows where Stripes leaves gaps at FFT sizes 8192 and 16384, read closer to the drawing and not pulse; the processor (state round trip, Lows on Smooth for new instances and on Stripes for projects saved before it, switching Lows while playing without a click, projects saved before Repeat and the Free loop trigger, a single pass and a held loop, a single pass through time-signature changes and at a typed tempo, Preview following Repeat, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export (and its file names); spectral carving (the mask plan and its halo, the carving engines: transparency, depth, Stencil, latency, block sizes, the gate, thin strokes, column edges, the halo per mode); FreqArt FX through the real processor (its layout and parameters, the latency at every rate and in bypass, the audio untouched outside the pass and with nothing drawn, Carve and Stencil on a sine in a drawn band, Carve + Draw's wider hole and Level, Draw adding exactly the instrument's sound as late as the audio, mode and depth changes without clicks, states moving between the two plug-ins, mono and stereo, block sizes, MIDI and Preview); and the editor, driven with synthetic mouse, wheel and key events (bounce files and the export following the drawing, undo steps, selecting and placing objects, the layer list and hidden layers, picking overlapping objects, the live view's span, pictures that cannot be read; in FreqArt FX the header's Mode and Depth, what each mode greys, the export's hint, the help fitting the window and the canvas in each mode). The editor tests need a display: on Linux run it under `xvfb-run -a`.
 
 ### Snapshot tool
 
-`FreqArtSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the layer list, Lows on Stripes, the brush, the settings and help panels, Repeat and the start bar, other window sizes) to PNG files, without a host, and checks what the controls do along the way. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a FreqArtSnapshot out`).
+`FreqArtSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the layer list, Lows on Stripes, the brush, the settings and help panels, Repeat and the start bar, other window sizes; and FreqArt FX in each mode, its live view of a carved stand-in song, its help and window sizes, as `freqart-fx-*.png`) to PNG files, without a host, and checks what the controls do along the way. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a FreqArtSnapshot out`).
 
 ### Continuous integration
 
-Every push builds the universal macOS plug-in on GitHub Actions, runs the tests natively and again on the Intel half under Rosetta, renders the interface snapshots (artifact **FreqArt-Snapshots**), validates the plug-in with pluginval at strictness 10, builds the installer and test-installs it, then publishes everything as the release `v<version>`.
+Every push builds both universal macOS plug-ins on GitHub Actions, runs the tests natively and again on the Intel half under Rosetta, renders the interface snapshots of both (artifact **FreqArt-Snapshots**), validates both plug-ins with pluginval at strictness 10, builds the installer and test-installs it, then publishes everything as the release `v<version>`.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
 | `src/core/` | The drawing: document, text, pictures, compositing, the frequency scale, fonts, and the plan that turns the canvas into sine lines. No audio-thread code, no UI. |
-| `src/dsp/` | Everything the audio thread runs (the engine, the playhead tracker, the plan exchange), plus the WAV export and the live analyser. |
+| `src/dsp/` | Everything the audio thread runs (the engine, the playhead tracker, the plan exchange, the spectral carvers of FreqArt FX), plus the WAV export and the live analyser. |
 | `src/ui/` | The editor: header, toolbar, canvas, inspector, live view, footer, settings and help. |
 | `src/Parameters.*` | Parameter ids, ranges and defaults, shared by the processor, the editor and the tests. |
-| `src/PluginProcessor.*` | The host-facing plug-in: parameters, state, undo, plan building, MIDI and transport. |
+| `src/PluginProcessor.*` | The host-facing plug-in, both variants (instrument and effect): parameters, state, undo, plan and mask building, MIDI and transport, carving. |
+| `src/plugin/` | One entry point per plug-in target (`createPluginFilter`): the only code that differs between FreqArt and FreqArt FX. |
 | `tests/` | `FreqArtTests`. |
-| `tools/` | The interface snapshot tool, and the lows lab (`FreqArtLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage). |
+| `tools/` | The interface snapshot tool, the lows lab (`FreqArtLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage) and the carving lab (`FreqArtCarveLab`: plays songs through a carving engine with test drawings and measures what an analyser shows). |
 | `assets/fonts/` | The embedded fonts and their licences. |
-| `installer/macos/` | The macOS installer: `build-pkg.sh`, its distribution file, pages and postinstall script. |
+| `installer/macos/` | The macOS installer (both plug-ins): `build-pkg.sh`, its distribution file, pages and postinstall script. |
 | `docs/DESIGN.md` | The design. |
 
 ## Licences

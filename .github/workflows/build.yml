@@ -18,9 +18,9 @@ jobs:
     concurrency:
       group: build-${{ github.ref }}-${{ matrix.name }}
       cancel-in-progress: true
-    # Every target compiles all of FreqArt's sources (the tests and the snapshot tool link the
-    # processor and the editor too), twice over for the universal build.
-    timeout-minutes: 60
+    # Every target compiles all of FreqArt's sources (both plug-ins, and the tests and the
+    # snapshot tool, link the processor and the editor too), twice over for the universal build.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -70,8 +70,9 @@ jobs:
           done
           exit 1
 
-      # All targets: the plug-in (FreqArt), the tests (FreqArtTests) and the interface snapshot
-      # tool (FreqArtSnapshot).
+      # All targets: the two plug-ins (FreqArt, the instrument, and FreqArtFX, the effect "FreqArt
+      # FX": one code base, registered once as each), the tests (FreqArtTests), the interface
+      # snapshot tool (FreqArtSnapshot) and the two labs.
       - name: Build
         shell: bash
         run: cmake --build build --config Release --parallel 4
@@ -95,6 +96,7 @@ jobs:
         run: |
           for binary in \
             "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3/Contents/MacOS/FreqArt" \
+            "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3/Contents/MacOS/FreqArt FX" \
             "build/FreqArtTests_artefacts/Release/FreqArtTests" \
             "build/FreqArtSnapshot_artefacts/Release/FreqArtSnapshot"; do
             lipo -info "$binary"
@@ -115,23 +117,27 @@ jobs:
             echo "::warning::Rosetta is not available on this runner; the Intel half was not tested."
           fi
 
-      # JUCE signs the bundle before it writes moduleinfo.json into it, which leaves the
-      # signature's seal broken. Sign again (ad hoc) now that the bundle is complete, before it
-      # is validated and packaged, so the bundle pluginval checks is the one that ships.
-      - name: Sign the plug-in (ad hoc)
+      # JUCE signs a bundle before it writes moduleinfo.json into it, which leaves the
+      # signature's seal broken. Sign both again (ad hoc) now that they are complete, before they
+      # are validated and packaged, so the bundles pluginval checks are the ones that ship.
+      - name: Sign the plug-ins (ad hoc)
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          plugin="build/FreqArt_artefacts/Release/VST3/FreqArt.vst3"
-          if [ ! -f "$plugin/Contents/Resources/moduleinfo.json" ]; then
-            echo "::warning::$plugin has no Contents/Resources/moduleinfo.json; VST 3.7.5+ hosts scan it more slowly."
-          fi
-          codesign --force --sign - "$plugin"
-          codesign --verify --strict --verbose=2 "$plugin"
+          for plugin in \
+            "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" \
+            "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3"; do
+            if [ ! -f "$plugin/Contents/Resources/moduleinfo.json" ]; then
+              echo "::warning::$plugin has no Contents/Resources/moduleinfo.json; VST 3.7.5+ hosts scan it more slowly."
+            fi
+            codesign --force --sign - "$plugin"
+            codesign --verify --strict --verbose=2 "$plugin"
+          done
 
       # Renders the editor in its main states to PNG files, to check the interface on a real
-      # Mac (fonts, HiDPI). It runs headless on the macOS runner; on Linux it needs a display
-      # (xvfb-run -a).
+      # Mac (fonts, HiDPI): the instrument's (freqart-*.png) and FreqArt FX's in each of its
+      # modes (freqart-fx-*.png). It runs headless on the macOS runner; on Linux it needs a
+      # display (xvfb-run -a).
       - name: Interface snapshots
         id: snapshots
         if: runner.os == 'macOS'
@@ -140,6 +146,7 @@ jobs:
           build/FreqArtSnapshot_artefacts/Release/FreqArtSnapshot snapshots
           ls -l snapshots
           ls snapshots/*.png > /dev/null
+          ls snapshots/freqart-fx-*.png > /dev/null
 
       # Uploaded even when the tool failed part-way, to see how far it got.
       - name: Upload interface snapshots
@@ -150,19 +157,24 @@ jobs:
           path: snapshots/*.png
           if-no-files-found: warn
 
+      # Both plug-ins, one after the other (the effect's bundle name has a space: quoted).
       - name: Validate with pluginval
         shell: bash
         run: |
           curl -sSL --retry 3 -o pluginval.zip \
             "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/${{ matrix.pluginval_zip }}"
           if [ "$RUNNER_OS" = "Windows" ]; then 7z x -y pluginval.zip > /dev/null; else unzip -oq pluginval.zip; fi
-          plugin="build/FreqArt_artefacts/Release/VST3/FreqArt.vst3"
-          args=(--strictness-level 10 --validate-in-process --output-dir pluginval-logs --validate "$plugin")
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            xvfb-run -a "./${{ matrix.pluginval_bin }}" "${args[@]}"
-          else
-            "./${{ matrix.pluginval_bin }}" "${args[@]}"
-          fi
+          for plugin in \
+            "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" \
+            "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3"; do
+            echo "Validating $plugin"
+            args=(--strictness-level 10 --validate-in-process --output-dir pluginval-logs --validate "$plugin")
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              xvfb-run -a "./${{ matrix.pluginval_bin }}" "${args[@]}"
+            else
+              "./${{ matrix.pluginval_bin }}" "${args[@]}"
+            fi
+          done
 
       - name: Upload pluginval logs
         if: failure()
@@ -172,19 +184,29 @@ jobs:
           path: pluginval-logs
           if-no-files-found: ignore
 
+      # One zip with both bundles side by side at its top: FreqArt.vst3 and "FreqArt FX.vst3".
       - name: Package
         shell: bash
         run: |
-          mkdir -p dist
-          cd build/FreqArt_artefacts/Release/VST3
+          mkdir -p dist stage
+          rm -rf stage/*
           if [ "$RUNNER_OS" = "macOS" ]; then
-            codesign --verify --strict FreqArt.vst3
-            ditto -c -k --keepParent FreqArt.vst3 "$GITHUB_WORKSPACE/dist/FreqArt-VST3-macOS.zip"
-          elif [ "$RUNNER_OS" = "Windows" ]; then
-            7z a -tzip "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Windows.zip" FreqArt.vst3 > /dev/null
+            ditto "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" "stage/FreqArt.vst3"
+            ditto "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3" "stage/FreqArt FX.vst3"
+            codesign --verify --strict "stage/FreqArt.vst3"
+            codesign --verify --strict "stage/FreqArt FX.vst3"
+            # Without --keepParent ditto archives the folder's contents, not the folder.
+            ditto -c -k stage "$GITHUB_WORKSPACE/dist/FreqArt-VST3-macOS.zip"
           else
-            zip -qry "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Linux.zip" FreqArt.vst3
+            cp -R "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" "stage/FreqArt.vst3"
+            cp -R "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3" "stage/FreqArt FX.vst3"
+            if [ "$RUNNER_OS" = "Windows" ]; then
+              (cd stage && 7z a -tzip "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Windows.zip" FreqArt.vst3 "FreqArt FX.vst3" > /dev/null)
+            else
+              (cd stage && zip -qry "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Linux.zip" FreqArt.vst3 "FreqArt FX.vst3")
+            fi
           fi
+          unzip -l dist/*.zip | grep -q "FreqArt FX.vst3/"
 
       - name: Upload plug-in
         uses: actions/upload-artifact@v4
@@ -193,7 +215,7 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
-      # A standard macOS installer (installer/macos) that puts the plug-in in
+      # A standard macOS installer (installer/macos) that puts both plug-ins in
       # /Library/Audio/Plug-Ins/VST3. It is not signed with a Developer ID or notarised, so
       # macOS asks before opening it.
       - name: Build macOS installer
@@ -205,21 +227,27 @@ jobs:
           bash installer/macos/build-pkg.sh build out "$version"
           test -f "out/FreqArt-$version-macOS.pkg"
 
-      # Prove it: install it on this machine and validate the installed copy.
+      # Prove it: install it on this machine and validate the installed copies.
       - name: Test-install the macOS installer
         if: runner.os == 'macOS'
         shell: bash
         run: |
           version=$(sed -n 's/^project(FreqArt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           sudo installer -pkg "out/FreqArt-$version-macOS.pkg" -target / -verbose
-          installed="/Library/Audio/Plug-Ins/VST3/FreqArt.vst3"
-          test -d "$installed"
-          test -f "$installed/Contents/MacOS/FreqArt"
-          # The very binary that was built and validated, not a relocated or older copy.
-          cmp "$installed/Contents/MacOS/FreqArt" build/FreqArt_artefacts/Release/VST3/FreqArt.vst3/Contents/MacOS/FreqArt
-          codesign --verify --strict "$installed"
-          pkgutil --pkg-info com.anymeans.freqart.vst3
-          "./${{ matrix.pluginval_bin }}" --strictness-level 5 --validate-in-process --validate "$installed"
+          check_installed()
+          {
+            local name="$1" target="$2" package="$3"
+            local installed="/Library/Audio/Plug-Ins/VST3/$name.vst3"
+            test -d "$installed"
+            test -f "$installed/Contents/MacOS/$name"
+            # The very binary that was built and validated, not a relocated or older copy.
+            cmp "$installed/Contents/MacOS/$name" "build/${target}_artefacts/Release/VST3/$name.vst3/Contents/MacOS/$name"
+            codesign --verify --strict "$installed"
+            pkgutil --pkg-info "$package"
+            "./${{ matrix.pluginval_bin }}" --strictness-level 5 --validate-in-process --validate "$installed"
+          }
+          check_installed "FreqArt" FreqArt com.anymeans.freqart.vst3
+          check_installed "FreqArt FX" FreqArtFX com.anymeans.freqartfx.vst3
 
       - name: Upload macOS installer
         if: runner.os == 'macOS'
@@ -275,13 +303,13 @@ jobs:
           test -f "dist/FreqArt-VST3-macOS.zip"
 
           cat > notes.md <<EOF
-          FreqArt $version by AnyMeans, built from commit ${GITHUB_SHA::7}. A VST3 instrument that turns text, pictures and brush strokes into sound whose spectrogram shows them. Universal (Apple Silicon and Intel), macOS 10.15 or later.
+          FreqArt $version by AnyMeans, built from commit ${GITHUB_SHA::7}. Turns text, pictures and brush strokes into sound whose spectrogram shows them, as two VST3 plug-ins from the same code: **FreqArt**, an instrument for MIDI / instrument tracks that plays the drawing, and **FreqArt FX**, an audio effect for audio tracks, buses and the master that carves the drawing into the song (Carve), keeps only it (Stencil), plays it in a hole carved for it (Carve + Draw) or plays it on top (Draw). Universal (Apple Silicon and Intel), macOS 10.15 or later.
 
-          **macOS:** download \`FreqArt-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`FreqArt.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`.
+          **macOS:** download \`FreqArt-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`FreqArt.vst3\` and \`FreqArt FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`.
 
-          **Manual install:** download \`FreqArt-VST3-macOS.zip\`, unzip it and copy \`FreqArt.vst3\` into \`~/Library/Audio/Plug-Ins/VST3\`. If your DAW will not load it, clear the download quarantine once: \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3\`. Windows and Linux builds are paused until the macOS version is finished.
+          **Manual install:** download \`FreqArt-VST3-macOS.zip\`, unzip it and copy \`FreqArt.vst3\` and \`FreqArt FX.vst3\` into \`~/Library/Audio/Plug-Ins/VST3\`. If your DAW will not load them, clear the download quarantine once: \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3 ~/Library/Audio/Plug-Ins/VST3/FreqArt\\ FX.vst3\`. Windows and Linux builds are paused until the macOS version is finished.
 
-          Then rescan plug-ins in your DAW, put FreqArt on an instrument track, open a spectrogram on its output (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
+          Then rescan plug-ins in your DAW. Put FreqArt on an instrument track, or FreqArt FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
           EOF
 
           # Never take the existing download away before the new one is up. An existing

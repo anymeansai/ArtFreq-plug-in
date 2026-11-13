@@ -146,6 +146,8 @@ void CanvasPlanImage::render (const ArtPlan* plan, const FrequencyScale& scale, 
 
     juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
     rowPixels.resize (static_cast<size_t> (width));
+    pixelLevels.assign (static_cast<size_t> (width) * static_cast<size_t> (height), 0);
+    ++renderCount;
 
     const auto writeRow = [&] (int y, const juce::PixelARGB* source)
     {
@@ -339,9 +341,14 @@ void CanvasPlanImage::render (const ArtPlan* plan, const FrequencyScale& scale, 
         }
 
         auto* pixels = rowPixels.data();
+        auto* rowLevels = pixelLevels.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
 
         for (int x = 0; x < width; ++x)
-            pixels[x] = table[static_cast<size_t> (std::min (255, static_cast<int> (acc[x] + 0.5f)))];
+        {
+            const auto level = std::min (255, static_cast<int> (acc[x] + 0.5f));
+            rowLevels[x] = static_cast<uint8_t> (level);
+            pixels[x] = table[static_cast<size_t> (level)];
+        }
 
         writeRow (y, pixels);
     }

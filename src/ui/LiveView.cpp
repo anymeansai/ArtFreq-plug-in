@@ -646,6 +646,32 @@ struct LiveView::Impl
         owner.repaint();
     }
 
+    void fillFromAudio (const std::vector<float>& audio, double sampleRate)
+    {
+        if (audio.empty() || ! (sampleRate > 0.0))
+            return;
+
+        auto analyzer = std::make_unique<LiveAnalyzer>();
+        analyzer->prepare (sampleRate);
+        analyzer->setActive (true);
+
+        updateSpan();
+        prepareHistory (sampleRate);
+
+        constexpr int blockSize = 512;
+
+        for (size_t done = 0; done < audio.size(); done += blockSize)
+        {
+            const auto n = static_cast<int> (std::min (static_cast<size_t> (blockSize), audio.size() - done));
+            analyzer->push (audio.data() + done, n);
+            analyzer->process ([this] (const float* magnitudesDb, int numBins) { addColumn (magnitudesDb, numBins); });
+        }
+
+        scrollInNewColumns();
+        signalShown = hasSignal();
+        owner.repaint();
+    }
+
     // ---- state ---------------------------------------------------------------------------
 
     LiveView& owner;
@@ -720,6 +746,11 @@ double LiveView::getVisibleSeconds() const
 void LiveView::fillFromPlanForSnapshot (double seconds)
 {
     impl->fillFromPlan (seconds);
+}
+
+void LiveView::fillFromAudioForSnapshot (const std::vector<float>& audio, double sampleRate)
+{
+    impl->fillFromAudio (audio, sampleRate);
 }
 
 void LiveView::timerCallback()

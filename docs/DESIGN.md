@@ -2,7 +2,9 @@
 
 FreqArt is an AnyMeans instrument plug-in (VST3, macOS first) that turns text, pictures and
 brush strokes into sound whose **spectrogram shows them**. Open a spectrogram (MiniMeters, or
-any analyser with a scrolling spectrogram) on the output and the drawing scrolls past.
+any analyser with a scrolling spectrogram) on the output and the drawing scrolls past. The same
+code is also built as **FreqArt FX**, an audio effect that carves the drawing into a song (see
+[FreqArt FX](#freqart-fx)).
 
 ## How it works
 
@@ -44,11 +46,12 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 ## Threads
 
 - **Message thread**: the document, undo history, compositor and plan building (debounced by a
-  timer, ~25 Hz), the editor, the live view analysis.
-- **Audio thread**: tracker + engine + level + safety clipper; pushes output to the live
-  analyser only while the live view is visible. No locks, no allocation.
-- **Plans** travel through `PlanExchange` (wait-free acquire on the audio thread, garbage
-  collected on the message thread).
+  timer, ~25 Hz; in FreqArt FX also the masks), the editor, the live view analysis.
+- **Audio thread**: tracker + engine + level + safety clipper (in FreqArt FX: tracker + carver,
+  and in the Draw modes the engine, level and clipper on the sines, then their delay); pushes
+  output to the live analyser only while the live view is visible. No locks, no allocation.
+- **Plans** travel through `PlanExchange`, the effect's masks through `MaskSetExchange` (wait-free
+  acquire on the audio thread, garbage collected on the message thread).
 - **Export** renders on a background thread from a shared (immutable) plan; a change that makes
   the render unwanted stops it (the message thread never waits for it).
 
@@ -70,6 +73,8 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | rangeLow | Analyser low | 10..1000 Hz | 20 Hz | no |
 | rangeHigh | Analyser high | 2000..24000 Hz | 20000 Hz | no |
 | slope | Analyser slope | 0, 3, 4.5, 6 dB/oct | 0 dB/oct | no |
+| mode | Mode (FreqArt FX only) | Carve, Carve + Draw, Stencil, Draw | Carve | yes |
+| depth | Depth (FreqArt FX only) | -120..0 dB | -80 dB | yes |
 
 Density, Contrast and Lows reshape the plan, which the message thread rebuilds on its timer (by
 wall-clock time, not in step with the audio): automated, they would land late, and somewhere
@@ -219,14 +224,12 @@ already looked fine, it stayed as good), so it is **Smooth**, the default for ne
   Still to judge by eye and ear: real photos in MiniMeters on macOS, and the sound of the lows (a
   rising, shimmering texture instead of steady tones).
 
-## Carving (work in progress)
+## Carving
 
 The producer asked for a "negative mode" for full songs: instead of playing the drawing, mute
 its frequencies in the incoming audio, so it shows as dark shapes in the song's spectrogram
-(Carve), or let only the drawing through (Stencil). How it will be offered (as a mode of this
-plug-in or as an effect alongside it, with Carve + Draw and a Depth control) is not settled yet;
-what exists so far is the engine side, shared by whatever packaging is chosen, and a lab to
-measure carving engines against each other:
+(Carve), or let only the drawing through (Stencil). FreqArt FX offers it (see
+[FreqArt FX](#freqart-fx)); this is the engine side, and the lab two engines were measured in:
 
 - **The mask plan** (`core/MaskPlan.h`) is built on the message thread from the same canvas as
   the sine plan: per canvas column a mask over frequency, 0 = untouched, 1 = carved by all of
@@ -262,7 +265,8 @@ measure carving engines against each other:
   is the delayed input bit for bit, and a frame reaching over the pass's start or end carves as
   the pass's nearest moment does, so the carve is complete from the pass's first sample and
   Stencil no longer mutes 15 ms either side of it. Latency 4096 samples (85.3 ms). Lab, depth
-  -60, mean over pink and the mix and the four drawings (baseline in brackets):
+  -60, mean over pink and the mix and the four drawings (baseline in brackets), as judged, before
+  the grafts below:
 
   | | Carve 4096 | Carve 8192 | Carve 16384 | Stencil 8192 |
   | --- | --- | --- | --- | --- |
@@ -280,6 +284,32 @@ measure carving engines against each other:
   the drawing where a bin is wide (near leakage 6 dB within two display rows below 250 Hz at
   FFT 4096, pre-echo 3.5 dB there); time edges a few ms wider; and narrow strokes still look
   hollow on a 16384-point analyser (that needs carving wider in time, the plan's halo in columns).
+- **Engine 1 won** against engine 2, a multi-resolution STFT (three bands of 171, 43 and 11 ms
+  with crossover weights): at the default Depth both look as visible (a tie at -80 dB), engine 1
+  costs a third of the CPU, has 43 ms less latency and much simpler code. Three things were
+  grafted onto it from engine 2:
+  - **The drawing over each hop.** A frame reads the drawing at points about every 128 samples
+    (8 at 48 kHz, an even number, 32 at most) over the hop around its centre (the second half of
+    the hop before the window's centre and the first half of the next), weighted by the gate
+    there, not at one moment: at a one-beat length a hop spans 40 columns, and a thin vertical
+    stroke between two frames' centres was missed. Carve and Stencil take the points' mean (a
+    stroke carves by its share); Carve + Draw (`holdLoudest`) their maximum, so the hole covers
+    the sines wherever they sound in the hop. At a shape's edges the centres decide
+    (`sharpEdges`): where the frame's centre is drawn it carves at least that much; where it is
+    not but the centre of a frame beside it is, that frame carves the shape and this one does not.
+    The mean alone spread every time edge over the frames whose hop reached it: in the lab 6 ms
+    wider edges at FFT 4096 and more leakage before shapes (pre 1.6 -> 2.8 dB); with the rule
+    edges, leakage and visibility are as judged (carve all, FFT 4096 / 8192 / 16384: edge time 52
+    / 87 / 120 ms, visibility 46.2 / 46.3 / 40.6, r 0.958 / 0.940 / 0.898; stencil edges 53 / 77
+    / 183 ms), every case is still exact across block sizes and outside the pass, and thin strokes
+    are carved (tests: `tunedCarverReadsThinVerticalStrokes`). Cost about 8 ms of CPU per second
+    of stereo audio here (7 - 8 in Carve, 10 in Stencil; the judge measured 7.1 before the grafts,
+    on an idle machine).
+  - **Column edges.** A point exactly on the edge between two columns (a pass is often a whole
+    number of samples per column) reads the later one: the position plus a billionth of the pass
+    (`columnNudge`), so where a host's rounding falls never changes which column is read.
+  - **The halo per mode** (`CarveSettings::haloBins`): Carve 1 bin, Carve + Draw 3 (35 Hz either
+    side, the low half of its dark edge), Stencil none.
 - **The lab** (`tools/CarveLab.cpp`, target `FreqArtCarveLab`) plays dense songs (pink noise, a
   busy synthetic mix, or a WAV) through an engine with four drawings (text, a filled sun, a
   ramp, a photo-like portrait), one 8 s pass from bar 2, in Carve and Stencil, and measures
@@ -288,6 +318,98 @@ measure carving engines against each other:
   frequency, leakage and pre-echo around the drawing, musical noise, a click's pre-echo,
   transparency, block-size independence, cost and latency (see the top of the file). It writes
   metrics.txt / metrics.json and pictures of the input, output and attenuation.
+
+## FreqArt FX
+
+The producer, on a full song: the played frequencies get lost in everything else, so could
+there be a negative mode that mutes them instead, and could FreqArt go on audio tracks and the
+master as well as MIDI tracks? Hosts decide from a VST3's category where it may go (Ableton Live,
+FL Studio and Cubase offer an instrument only on MIDI / instrument tracks and an effect only on
+audio tracks, buses and the master), so no one plug-in can be both. The same plug-in is
+therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and **FreqArt FX**
+(Fx, Filter; plug-in code FqFx, bundle id com.anymeans.freqartfx), one installer for both.
+
+- **One code base.** `FreqArtProcessor` takes a `Variant` (instrument | effect); the editor is the
+  same class and asks the processor which it is. Each CMake target (`freqart_add_plugin`) adds
+  only its own `createPluginFilter` (`src/plugin/`). The effect has stereo or mono in and out (as
+  many out as in), takes MIDI (hosts that send effects MIDI can trigger it), and reports one
+  carver frame of latency.
+- **Parameters.** Every instrument parameter, plus **Mode** (Carve, Carve + Draw, Stencil, Draw;
+  default Carve) and **Depth** (-120..0 dB, default -80), both automatable and both acting on
+  the audio thread at once: the exact and the halo masks are built together (`MaskPlanSet`) and
+  Depth is read per frame. -80 dB: a master's bass and kick sit around -15 dB in an analyser's
+  cells, so it takes 75 - 80 dB to reach a spectrogram's floor near -95 dB (the judge's sweep:
+  visibility 58 / 60 at FFT 4096 / 8192 against 46 at -60; the cost, frequency edges 2.3 display
+  rows wider and a little more kick smear).
+- **What it does per block.** The tracker makes the segments (Length, Trigger, Repeat, start bar,
+  tempo, MIDI, Preview: exactly the instrument's), the carver (engine 1) carves the block in
+  place with them, and in Carve + Draw and Draw the sine engine renders the same segments, at
+  Level (and through the safety clipper: the sines only, never the song), into a delay of the
+  carver's latency, so the sines come out with the audio they were played against (Draw adds
+  exactly the instrument's output, one latency late). Draw passes Depth 0 to the carver, which
+  then changes nothing; Carve + Draw passes the halo masks, 3 halo bins and holdLoudest. The
+  sines are not rendered in Carve and Stencil; turned on they start afresh with a fade-in, and
+  turned off fade out over 20 ms, as Level changes do. The playhead and "sounding" come from the
+  segments (no sines are needed to know where the pass is).
+- **Carve + Draw's halo**, measured by the judge (pink noise with sines at the song's level, FFT
+  4096): the hole is the drawing dilated by 4 canvas rows (2.7 %, about 2.4 display rows) and
+  carved 3 bins wider (35 Hz): the rows make the dark edge in the mids and highs (-36 / -44 and
+  -55 / -59 dB below / above), the bins in the lows (-18 / -20 dB; 2 bins lost the edge there
+  with louder sines). In time, about 60 ms either side (-28 to -30 dB at FFT 4096; 40 ms gave
+  only -12 to -17), in columns at the length in use (8 at 8 s), at most a sixteenth of the length
+  (`maxHaloColumns`), rebuilt when the length or the tempo changes it; the gate at the output
+  clips it to the pass. The dilation builds its window from doubling shifts, so its cost grows
+  with log (radius): both masks take a few ms on the message thread.
+- **Latency.** One frame: 4096 samples at 48 kHz, 85.3 ms at every rate (3764 at 44.1 kHz, 8192
+  at 96 kHz), set in prepareToPlay (and at 48 kHz in the constructor, for hosts that ask before
+  they prepare), the same in every mode, with any drawing and in bypass. Switching modes never
+  changes it, so the host's compensation never moves the song.
+- **Transparency.** Outside the pass (before and after a single pass, DAW stopped), with nothing
+  drawn or everything hidden (also in Stencil: the gate stays shut) and in Draw, the output is the
+  input one latency late, bit for bit (plus the sines in Draw); carving fades in and out with the
+  gate's 5 ms S-curve at the output. A frame reaching over the pass's start or end carves as the
+  pass's nearest moment.
+- **Bypass** (`processBlockBypassed`): the same path with Depth 0 and the gate closing: the carve
+  crossfades out over a frame, the sines fade out, then the output is the delayed input bit for
+  bit. The latency stays, so a host's bypass never shifts the audio. The carver is never reset
+  there (that would drop the audio in flight); the tracker and the sines are, once silent.
+- **Mode and Depth changes** never click: the carve's gains change from frame to frame and the
+  frames overlap-add (sin^3 windows, 75 %), the sines fade (tested with every mode switched in
+  turn and Depth jumping 80 dB).
+- **Preview** runs the pass from the start on whatever audio comes in, also while the DAW is
+  stopped (most hosts keep feeding effects), once or on a loop with Repeat, and plays the sines in
+  the Draw modes: the same as the instrument's Preview, on the song.
+- **MIDI.** The effect asks for MIDI: Reaper, Bitwig, Cubase and Studio One can send it to an
+  audio effect, so Trigger = MIDI works there. Ableton Live never sends MIDI to audio effects (nor
+  does FL Studio's mixer): Transport needs none.
+- **State.** The same XML as the instrument's (`FreqArtState`, now with a `plugin` attribute
+  naming the variant that saved it), so either loads the other's drawing and shared settings:
+  the instrument leaves out Mode and Depth (unknown parameters are dropped on load, so they are
+  not saved back as its own), the effect fills them in at their defaults.
+- **The editor** is the instrument's with:
+  - **Header**: "FreqArt FX" (FX in accent2); Canvas | Live beside the wordmark; then, centred
+    between it and undo, MODE and a segmented Carve | Carve + Draw | Stencil | Draw (284 px; its
+    tooltip says what each does) and DEPTH with a number field (72 px, "-80 dB": drag, click to
+    type; greyed in Draw). 24 px either side of the group; it fits from 75 to 200 % (the
+    snapshot tool checks nothing overlaps).
+  - **Canvas** (`ui/EffectPreview.h`): the effect needs a song the canvas does not have, so a
+    stand-in is drawn under the drawing: a texture with a song's shape (falling towards the highs,
+    -22 to -40 dB of the 60 dB colour window, sixteen beats of kick in the lows and hats in the
+    highs, held chords, grain on a fixed grid so resizing does not shimmer), carved by the
+    processor's own masks as deep as Depth: Carve, dark shapes; Stencil, the shapes filled with the
+    stand-in on black; Carve + Draw, the sines' picture (the instrument's canvas, as levels) bright
+    in a hole carved with the halo masks; Draw, the sines over the stand-in. Nothing drawn: the
+    stand-in as it is, as the effect leaves the song.
+  - **Live** shows what comes out (the song, carved): the processor pushes its output (the
+    channels' mean) to the analyser.
+  - **Footer**: Density, Contrast and Level are greyed in Carve and Stencil (they shape the sines
+    only; their tooltips say so; Level is the sines' level, the song keeps its own). Export: in
+    Carve and Stencil the column says "Bounce the track in your DAW" over "Carving needs the
+    song" (a bounce of the effect needs the song, which only the DAW has; no render runs then);
+    in the Draw modes Bounce WAV renders the sines as in the instrument ("The sines, one pass").
+    Preview's tooltip says it runs on the audio coming in.
+  - **Help**: its own steps (where it goes, the analyser, drawing, mode and depth, playing,
+    bouncing in the DAW), the modes, and timing, MIDI per host and the latency.
 
 ## Interface
 
@@ -480,7 +602,9 @@ while visible.
 
 ### Header
 
-Wordmark "FreqArt" (Inter SemiBold 20) and "by AnyMeans" (11 px dim). Segmented Canvas | Live.
+Wordmark "FreqArt" (Inter SemiBold 20; "FreqArt FX" in the effect, FX in accent2) and "by
+AnyMeans" (11 px dim). Segmented Canvas | Live (in the effect beside the wordmark, with Mode and
+Depth after it: see [FreqArt FX](#freqart-fx)).
 Undo / Redo icon buttons (also Cmd+Z / Cmd+Shift+Z). "?" opens the help panel; gear opens
 settings. Icons are drawn with juce::Path (no image assets).
 
@@ -541,9 +665,27 @@ untouched; Stencil; the latency, also through the transforms and at 96 kHz; the 
 any block sizes; the gate opening with the pass), and the tuned engine (the same, at 48 and
 44.1 kHz and for a window pair that needs the overlap normalised; half an octave at 70 Hz
 carved by nearly all of Depth and a stroke thinner than a bin by its share; the gate at the
-output: exact before and after a pass, the carve complete from its start to its end).
+output: exact before and after a pass, the carve complete from its start to its end; a stroke
+between two frames' centres carved at a one-beat length; columns read alike at their edges
+whatever the host's rounding; the halo per mode and holdLoudest; the wide dilation against a
+direct maximum). FreqArt FX (`EffectTests.cpp`, through the real processor): its name, buses and
+parameters, the latency at 44.1 - 96 kHz in every mode, the audio bit for bit outside the pass,
+with the DAW stopped and with nothing drawn or everything hidden, Carve and Stencil on a sine in
+a drawn band at -80 and -40 dB, Carve + Draw's wider hole, its sines and Level, Draw adding
+exactly the instrument's output one latency late, bypass keeping the latency (and no clicks into
+and out of it), every mode switch and Depth jumps without clicks, states between the two
+variants, mono and stereo, 44.1 and 96 kHz, block sizes from 1 to 4096 (the carve exact, the
+sines as the instrument's), MIDI and Preview with the DAW stopped. Its editor
+(`EffectUiTests.cpp`): Mode and Depth in the header and not overlapping, automation moving
+them, what each mode greys, the export's hint, both help panels fitting the window, and the
+canvas in each mode (black where Carve carves at -80 dB, Stencil the other way round, Carve +
+Draw's halo dark and its sines bright, nothing drawn leaving the stand-in).
 
-`FreqArtSnapshot <dir>` renders the editor in its main states to PNG (Repeat, MIDI with Repeat,
+`FreqArtSnapshot <dir>` renders the editor in its main states to PNG (FreqArt FX's as
+`freqart-fx-*.png`: each mode, a shallow Depth typed in, the Mode tooltip, the live view of a
+stand-in song carved by the real processor, the help, 75 / 100 / 200 %, with checks of the
+header's layout, Mode and Depth driven with the mouse, what they grey, the export's hint, Preview
+carving the audio coming in; and the instrument's: Repeat, MIDI with Repeat,
 a start bar and typing one among them, "layers": five objects, one hidden, one selected from the
 list, and the window at 75, 100, 150 and 200 %), and checks the editor's controls by driving
 them: the canvas interactions, the layer list, Lows (at the foot of the list, clear of the keys

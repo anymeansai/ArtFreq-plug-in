@@ -122,6 +122,7 @@ private:
     (or click, see Options) to type. Shows the parameter's value, or `overrideText` greyed when
     the field is "following" something else (e.g. the host tempo). */
 class NumberField final : public juce::Component,
+                          public juce::SettableTooltipClient,
                           private juce::TextEditor::Listener
 {
 public:
