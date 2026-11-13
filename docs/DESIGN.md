@@ -126,6 +126,43 @@ producer's rule: nothing plays by itself, and loops only while something is play
   the position, with a jump fade when it does not follow on (turning Repeat off inside the single
   pass, at the same place as the loop, carries on seamlessly).
 
+## Carving (work in progress)
+
+The producer asked for a "negative mode" for full songs: instead of playing the drawing, mute
+its frequencies in the incoming audio, so it shows as dark shapes in the song's spectrogram
+(Carve), or let only the drawing through (Stencil). How it will be offered (as a mode of this
+plug-in or as an effect alongside it, with Carve + Draw and a Depth control) is not settled yet;
+what exists so far is the engine side, shared by whatever packaging is chosen, and a lab to
+measure carving engines against each other:
+
+- **The mask plan** (`core/MaskPlan.h`) is built on the message thread from the same canvas as
+  the sine plan: per canvas column a mask over frequency, 0 = untouched, 1 = carved by all of
+  Depth (the canvas value itself, so a half-strength stroke carves half as many dB), with the
+  scale that maps its rows to Hz, so an engine can sample it at whatever frequencies its
+  analysis has (at a point, or averaged / maximised over a band). An optional halo widens
+  shapes by rows and columns. It travels to the audio thread like the sine plan
+  (`MaskPlanExchange`: `PlanExchange` is now one template for both).
+- **The engine interface** (`dsp/SpectralCarver.h`): prepare (rate, block, channels), a constant
+  latency, and an in-place process that takes the tracker's PlaySegments, so a carve follows
+  Length, Trigger, Repeat, start bar and tempo exactly as the sines do; the gate fades over
+  5 ms, a jump moves the mask at once (the audio jumped too). Outside the pass and with
+  nothing drawn the audio passes unchanged apart from the latency (also in Stencil). Depth
+  -120..0 dB; gain = 10 ^ (depth x amount / 20), amount = gate x mask (Carve) or gate x
+  (1 - mask) (Stencil). `createSpectralCarver (n)` picks an engine by number.
+- **The baseline engine** (`dsp/BaselineCarver.h`): an STFT of 2048 points at 48 kHz (about
+  43 ms at any rate), sqrt-Hann windows, 75 % overlap, the mask at each bin's centre frequency
+  at the frame's centre, no smoothing. Latency one frame (2048 samples, 42.7 ms). Frames that
+  change nothing skip the FFT; once every frame over a hop is such a frame the delayed input is
+  played bit for bit.
+- **The lab** (`tools/CarveLab.cpp`, target `FreqArtCarveLab`) plays dense songs (pink noise, a
+  busy synthetic mix, or a WAV) through an engine with four drawings (text, a filled sun, a
+  ramp, a photo-like portrait), one 8 s pass from bar 2, in Carve and Stencil, and measures
+  what an analyser like MiniMeters (log, 20 Hz - 20 kHz, FFT 4096 / 8192 / 16384) shows: carve
+  depth, visibility against the surroundings, fidelity to the drawing, edge widths in time and
+  frequency, leakage and pre-echo around the drawing, musical noise, a click's pre-echo,
+  transparency, block-size independence, cost and latency (see the top of the file). It writes
+  metrics.txt / metrics.json and pictures of the input, output and attenuation.
+
 ## Interface
 
 Window 1120 x 720 at 100 %, resizable from 75 % to 200 % with a fixed aspect ratio (corner
@@ -353,7 +390,12 @@ clicking and placing objects, the layer list: selecting, the keyboard, hiding, r
 deleting, the paint row; clicking again, Alt-click and the right-click menu on the canvas; the
 live view's span, unreadable pictures; under a virtual display on Linux). Hidden layers: the
 document round trip (order, visibility, file names, old documents shown) and the compositor
-leaving them out.
+leaving them out. Carving: the mask plan (rows to Hz, columns, band averages, clipping, the
+halo), mask plans through the exchange, and the baseline engine (bit-exact with nothing to
+carve, outside the pass and with nothing drawn; the input back to 1e-5 through the transforms
+where the mask is 0; a sine in a drawn band carved by the depth within 3 dB, one outside it
+untouched; Stencil; the latency, also through the transforms and at 96 kHz; the same output for
+any block sizes; the gate opening with the pass).
 
 `FreqArtSnapshot <dir>` renders the editor in its main states to PNG (Repeat, MIDI with Repeat,
 a start bar and typing one among them, "layers": five objects, one hidden, one selected from the
