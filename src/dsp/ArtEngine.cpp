@@ -37,6 +37,7 @@ namespace
     constexpr double twoPi = 6.283185307179586476925286766559;
     constexpr double nyquistGuard = 0.48;   // lines at or above this x the sample rate are skipped
     constexpr int noLimit = 1 << 30;
+    constexpr double endOfPass = 1.0 - 0x1.0p-53;  // the last position before 1
 
     double wrap (double x) noexcept
     {
@@ -338,6 +339,7 @@ void ArtEngine::reset() noexcept
 {
     envelope = 0.0f;
     gateOn = false;
+    once = false;
     fastFadeIn = false;
     jumpPending = false;
     position = 0.0;
@@ -520,9 +522,26 @@ void ArtEngine::applySegment (const PlaySegment& segment) noexcept
     // else: the gate closes while sound is heard; the fade-out runs on where it was.
 
     gateOn = segment.playing;
+    once = segment.once;
 
     if (! gateOn)
         fastFadeIn = false;
+}
+
+void ArtEngine::moveOn (int numSamples) noexcept
+{
+    const auto next = position + rate * numSamples;
+
+    if (once && next >= 1.0)
+    {
+        // A single pass has ended: it stays on its last column (silent by now, or fading out)
+        // instead of wrapping round to its start.
+        position = endOfPass;
+        rate = 0.0;
+        return;
+    }
+
+    position = wrap (next);
 }
 
 void ArtEngine::renderRange (float* out, int from, int to) noexcept
@@ -558,7 +577,7 @@ int ArtEngine::renderChunk (float* out, int maxSamples) noexcept
             finishPlanFade();
 
         std::fill (out, out + maxSamples, 0.0f);
-        position = wrap (position + rate * maxSamples);
+        moveOn (maxSamples);
         return maxSamples;
     }
 
@@ -645,7 +664,7 @@ int ArtEngine::renderChunk (float* out, int maxSamples) noexcept
     }
 
     // Move on.
-    position = wrap (position + rate * n);
+    moveOn (n);
 
     if (jumpPending)
         jumpTarget = wrap (jumpTarget + jumpRate * n);
@@ -687,7 +706,7 @@ int ArtEngine::gather (const ArtPlan* plan, const ArtPlan* second, const Bank& b
         const auto columns = p.numColumns;
         const auto x = position * columns;
         const auto c = juce::jlimit (0, columns - 1, static_cast<int> (std::floor (x)));
-        const auto next = (c + 1) % columns;
+        const auto next = c + 1 < columns ? c + 1 : (once ? c : 0);
         const auto lines = static_cast<size_t> (p.numLines);
 
         column.first = static_cast<size_t> (c) * lines;

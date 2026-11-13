@@ -6,6 +6,7 @@
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
+#include "ui/CanvasAxes.h"
 
 using namespace freqart;
 using namespace testutil;
@@ -33,6 +34,17 @@ ArtDocument textDocument (const juce::String& text, Band band = Band::mid)
     object.endTime = 1.0f;
     document.objects.push_back (object);
     return document;
+}
+
+/** The largest difference between neighbouring samples in [from, to). */
+float largestStep (const std::vector<float>& x, size_t from, size_t to)
+{
+    float largest = 0.0f;
+
+    for (auto i = std::max (from, static_cast<size_t> (1)); i < std::min (to, x.size()); ++i)
+        largest = std::max (largest, std::abs (x[i] - x[i - 1]));
+
+    return largest;
 }
 
 } // namespace
@@ -268,6 +280,61 @@ FREQART_TEST (processorMidiNoteStartsTheDrawing)
     processor->setPlayHead (nullptr);
 }
 
+FREQART_TEST (processorMidiPassEndsOnPanicAndStop)
+{
+    // A 4-bar pass lasts 8 s. All Sound Off, All Notes Off (on any channel) and stopping the
+    // DAW each end it within the gate fade; a note-off alone does not.
+    for (int variant = 0; variant < 4; ++variant)
+    {
+        auto processor = makeProcessor();
+        processor->setDocument (textDocument ("PANIC", Band::mid));
+        setParameter (*processor, params::id::trigger, 1.0f);   // MIDI note
+        processor->rebuildPlanIfNeeded();
+
+        FakePlayHead playHead;
+        playHead.set (true, 120.0, 0.0, 0.0);
+        processor->setPlayHead (&playHead);
+
+        constexpr int endBlock = 94;   // about 1 s in
+        const auto endSample = static_cast<size_t> (endBlock * blockSize + 100);
+
+        const auto out = render (*processor, 96000, blockSize, [&] (int start, int, juce::MidiBuffer& midi)
+        {
+            const auto seconds = static_cast<double> (start) / sampleRate;
+            playHead.set (variant != 3 || start < endBlock * blockSize, 120.0, seconds * 2.0, seconds);
+
+            if (start == 0)
+                midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+
+            if (start == endBlock * blockSize)
+            {
+                midi.addEvent (juce::MidiMessage::noteOff (1, 60), 50);
+
+                if (variant == 1)
+                    midi.addEvent (juce::MidiMessage::allSoundOff (1), 100);
+                else if (variant == 2)
+                    for (int channel = 1; channel <= 16; ++channel)
+                        midi.addEvent (juce::MidiMessage::allNotesOff (channel), 100);
+            }
+        });
+
+        CHECK_GREATER (rms (out, 9600, endSample - 960), 0.005);
+
+        if (variant == 0)
+        {
+            CHECK_GREATER (rms (out, endSample + 4800), 0.005);
+            CHECK (processor->isSounding());
+        }
+        else
+        {
+            CHECK_LESS (peak (out, endSample + 960), 1.0e-6);
+            CHECK (! processor->isSounding());
+        }
+
+        processor->setPlayHead (nullptr);
+    }
+}
+
 FREQART_TEST (processorPreviewPlaysWhileStopped)
 {
     auto processor = makeProcessor();
@@ -441,17 +508,128 @@ FREQART_TEST (processorBypassIsSilentAndRecovers)
     processor->setDocument (textDocument ("BYPASS"));
     processor->rebuildPlanIfNeeded();
     processor->setPreview (true);
-    render (*processor, 9600);
+    const auto before = render (*processor, 9600);
 
+    // Into bypass while sounding: the sound carries on into the gate's fade-out (no step down
+    // to zero mid-waveform) and is gone once it has run, on every channel.
     juce::AudioBuffer<float> buffer (2, blockSize);
     juce::MidiBuffer midi;
     buffer.clear();
     buffer.setSample (0, 0, 1.0f);
     processor->processBlockBypassed (buffer, midi);
+
+    std::vector<float> bypassed (buffer.getReadPointer (0), buffer.getReadPointer (0) + blockSize);
+    const auto fadeEnd = static_cast<size_t> (std::ceil (ArtEngine::gateFadeSeconds * sampleRate)) + 1;
+    const auto tail = before.size() - 2400;
+    CHECK_GREATER (peak (bypassed, 0, 48), 0.25f * peak (before, tail));
+    CHECK_LESS (std::abs (bypassed[0] - before.back()), 1.5f * largestStep (before, tail, before.size()) + 1.0e-6f);
+    CHECK_LESS (largestStep (bypassed, 0, blockSize), 1.5f * largestStep (before, tail, before.size()) + 1.0e-6f);
+    CHECK_LESS (peak (bypassed, fadeEnd), 1.0e-9f);
+    CHECK_LESS (std::abs (buffer.getSample (1, 10) - bypassed[10]), 1.0e-9f);
+    CHECK (! processor->isSounding());
+
+    buffer.setSample (0, 0, 1.0f);
+    processor->processBlockBypassed (buffer, midi);
     CHECK_LESS (buffer.getMagnitude (0, blockSize), 1.0e-9f);
 
+    // Out of bypass: back in with a fade-in from silence.
     const auto out = render (*processor, 24000);
+    CHECK_LESS (std::abs (out[0]), 1.0e-6f);
+    CHECK_LESS (peak (out, 0, 24), 0.25f * peak (out, 4800));
     CHECK_GREATER (rms (out, 4800), 0.005);
+}
+
+FREQART_TEST (processorFollowsTheHostTimeSignature)
+{
+    auto processor = makeProcessor();
+    processor->setDocument (textDocument ("BARS", Band::mid));
+    setParameter (*processor, params::id::length, 2.0f);   // 1 bar
+    processor->rebuildPlanIfNeeded();
+    CHECK (processor->getTimeSignature() == (juce::AudioPlayHead::TimeSignature { 4, 4 }));
+
+    // One bar of 4/4, then 3/4 from ppq 4, at 120 BPM (24000 samples a quarter note), the host
+    // reporting its bars. Every 3/4 bar starts the drawing again.
+    FakePlayHead playHead;
+    processor->setPlayHead (&playHead);
+    int64_t played = 0;
+    std::vector<double> atBars;
+
+    const auto playTo = [&] (double ppq)
+    {
+        const auto samples = static_cast<int> (std::llround (ppq * 24000.0) - played);
+        render (*processor, samples, 64, [&] (int start, int, juce::MidiBuffer&)
+        {
+            const auto at = static_cast<double> (played + start) / 24000.0;
+            playHead.set (true, 120.0, at, at * 0.5);
+
+            if (at >= 4.0)
+            {
+                playHead.info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 3, 4 });
+                playHead.info.setPpqPositionOfLastBarStart (4.0 + 3.0 * std::floor ((at - 4.0) / 3.0 + 1.0e-9));
+            }
+            else
+            {
+                playHead.info.setPpqPositionOfLastBarStart (0.0);
+            }
+        });
+
+        played += samples;
+    };
+
+    for (const auto bar : { 7.0, 10.0, 13.0 })
+    {
+        playTo (bar + 64.0 / 24000.0);   // to the end of the first block of the bar
+        atBars.push_back (processor->getPlayPosition());
+    }
+
+    for (const auto position : atBars)
+        CHECK_NEAR (position, 64.0 / 24000.0 / 3.0, 1.0e-6);
+
+    CHECK (processor->getTimeSignature() == (juce::AudioPlayHead::TimeSignature { 3, 4 }));
+    CHECK_NEAR (processor->getLengthSeconds(), 1.5, 1.0e-9);
+    processor->setPlayHead (nullptr);
+
+    // The canvas's grid in that signature: three beats to the bar, not four.
+    const auto fractionsOf = [] (const std::vector<ui::axes::TimeMark>& marks)
+    {
+        std::vector<double> fractions;
+
+        for (const auto& mark : marks)
+            fractions.push_back (mark.fraction);
+
+        return fractions;
+    };
+
+    const auto oneBar = ui::axes::timeMarks (2, 3, 4, 600.0f);
+    CHECK (oneBar.size() == 3);
+
+    if (oneBar.size() == 3)
+    {
+        CHECK_NEAR (oneBar[1].fraction, 1.0 / 3.0, 1.0e-9);
+        CHECK_NEAR (oneBar[2].fraction, 2.0 / 3.0, 1.0e-9);
+        CHECK (oneBar[0].major && oneBar[0].label == "1");
+        CHECK (! oneBar[1].major && oneBar[1].label == "1.2" && oneBar[2].label == "1.3");
+    }
+
+    // 4 bars of 3/4: 4 bars and 8 beats in between; 6/8: six eighths to the bar.
+    const auto fourBars = ui::axes::timeMarks (4, 3, 4, 600.0f);
+    CHECK (fourBars.size() == 12);
+    CHECK (fractionsOf (ui::axes::timeMarks (2, 6, 8, 600.0f)).size() == 6);
+
+    // 4/4 as before: 4 bars of 4 beats; under a bar, sixteenths.
+    CHECK (ui::axes::timeMarks (4, 4, 4, 600.0f).size() == 16);
+    CHECK (ui::axes::timeMarks (0, 3, 4, 600.0f).size() == 4);
+
+    // "2 beats" in 3/8 is a bar and a third: the second bar is short.
+    const auto uneven = fractionsOf (ui::axes::timeMarks (1, 3, 8, 600.0f));
+    CHECK (uneven.size() == 4);
+
+    if (uneven.size() == 4)
+    {
+        CHECK_NEAR (uneven[1], 0.25, 1.0e-9);
+        CHECK_NEAR (uneven[2], 0.5, 1.0e-9);
+        CHECK_NEAR (uneven[3], 0.75, 1.0e-9);
+    }
 }
 
 FREQART_TEST (processorLargerBlocksThanAnnounced)

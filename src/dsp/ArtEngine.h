@@ -23,6 +23,9 @@ struct PlaySegment
     double fractionPerSample = 0.0;  // how far the position moves per sample
     bool jump = false;               // the position does not follow on from the previous segment
                                      // (relocation, retrigger, preview start)
+    bool once = false;               // a single pass (a MIDI one-shot): the last column holds
+                                     // rather than leading back into the first, and the position
+                                     // stops at the end rather than wrapping
 };
 
 class ArtEngine
@@ -54,7 +57,7 @@ public:
     /** Renders the block (overwrites `out`). The segments cover [0, numSamples) in order.
 
         - Amplitudes are interpolated linearly between columns (wrapping from the last column
-          to the first) and move smoothly within the block.
+          to the first, unless the segment plays `once`) and move smoothly within the block.
         - A segment with jump == true while sound is audible fades out over jumpFadeSeconds at
           the old position, then continues from the new position (advanced by the fade time)
           with a fade in, so retriggers and relocations never click.
@@ -96,6 +99,7 @@ private:
     void startPlan (const ArtPlan* plan) noexcept;
     void finishPlanFade() noexcept;
     void applySegment (const PlaySegment& segment) noexcept;
+    void moveOn (int numSamples) noexcept;
     void renderRange (float* out, int from, int to) noexcept;
     int renderChunk (float* out, int maxSamples) noexcept;
     int samplesLeftInColumn (const ArtPlan& plan) const noexcept;
@@ -121,6 +125,7 @@ private:
     float gateStep = 0.0f;           // envelope change per sample for the gate fades
     float jumpStep = 0.0f;           // ... and for the jump fades
     bool gateOn = false;
+    bool once = false;               // a single pass: no wrap from the end to the start
     bool fastFadeIn = false;         // fading in after a jump: jump speed
     bool jumpPending = false;        // fading out before moving to jumpTarget
     double jumpTarget = 0.0;         // where the jump lands, advanced while the fade-out runs

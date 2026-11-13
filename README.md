@@ -23,7 +23,7 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
 10. **Choose the length, tempo and trigger.**
     - **Length** is how long one pass of the drawing takes: 1 beat, 2 beats, 1 bar, 2 bars, 4 bars (default), 8, 16 or 32 bars, at the song's tempo and time signature.
     - **Tempo**: **Host** follows the DAW's tempo; **Manual** uses the **BPM** you type (also used when a host gives no tempo).
-    - **Trigger**: **Transport** follows the DAW's timeline and loops every length from bar 1 (a 4-bar drawing starts again on bars 5, 9, 13 and so on), and plays only while the DAW plays. **MIDI** plays the drawing once from the start on every note-on (any key; a new note restarts it; note-offs are ignored), sample-accurately. **Loop** plays all the time, looping.
+    - **Trigger**: **Transport** follows the DAW's timeline and loops every length from bar 1 (a 4-bar drawing starts again on bars 5, 9, 13 and so on), starting on the DAW's bar lines also after a time-signature change, and plays only while the DAW plays. **MIDI** plays the drawing once from the start on every note-on (any key; a new note restarts it; note-offs are ignored), sample-accurately; stopping the DAW, All Notes Off or All Sound Off ends the pass. **Loop** plays all the time, looping.
 11. **Preview.** The round play button plays the drawing on a loop from its start, whatever the trigger, even while the DAW is stopped.
 12. **Bounce WAV.** **Bounce WAV** renders one pass of the drawing to a WAV file in the background, with your Level. Drag the **FreqArt.wav** chip that appears into your DAW, or click **Save...** to keep a copy where you want it (the bounced file itself lives in a temporary folder).
 
@@ -45,7 +45,7 @@ The **?** button shows these steps inside the plug-in.
 
 | Control | What it does |
 | --- | --- |
-| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats along the bottom. **Live** shows a scrolling spectrogram of FreqArt's own output (about 6 seconds), on the same scale. |
+| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats (in the song's time signature) along the bottom. **Live** shows a scrolling spectrogram of FreqArt's own output (about 6 seconds), on the same scale. |
 | **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, or one session of typing in a text box, is one step. |
 | **?** | The how-to, inside the window. |
 | **Gear** | Settings: match your analyser (Scale, Low, High, Slope), window size, and Reset drawing. |
@@ -100,7 +100,7 @@ Automation: Level, Density, Contrast, Length, Trigger, Tempo and BPM can be auto
 
 - **The drawing.** A paint layer plus any number of text and picture objects. Objects are placed by time (a fraction of the length) and by frequency in hertz, so "in the highs" keeps meaning the highs if you change the analyser scale. Everything is flattened into a 1024 × 1024 picture of loudness values (the maximum of all layers): the canvas.
 - **Sine lines.** The canvas becomes a bank of sine waves, one per line, spaced evenly in canvas height (so evenly on your analyser's scale). A sine at a fixed frequency shows in a spectrogram as a horizontal line at that height, and its loudness over time draws the picture along it. Each line takes the brightest part of the canvas rows it covers, so thin strokes never fall between lines. Brightness becomes level through Contrast; the analyser's Slope is compensated (around 1 kHz); and the whole drawing is scaled so its loudest moment sits at −12 dBFS RMS before Level.
-- **Playback.** One oscillator per line, its level following the drawing as playback moves across it. Starts, stops, jumps and retriggers fade in a few milliseconds, and a change to the drawing crossfades in 20 ms, so nothing clicks. Lines too close to the top of the sample rate's range are skipped, so nothing aliases. A safety clipper (transparent below −1 dBFS) follows Level.
+- **Playback.** One oscillator per line, its level following the drawing as playback moves across it. Starts, stops, jumps, retriggers and the host's bypass fade in a few milliseconds, and a change to the drawing crossfades in 20 ms, so nothing clicks. Lines too close to the top of the sample rate's range are skipped, so nothing aliases. A safety clipper (transparent below −1 dBFS) follows Level.
 - **Timing.** The position in the drawing comes from the DAW's transport, from MIDI notes, or from a free-running loop, at the host's tempo or yours.
 - **Real time.** The canvas and the sine plan are rebuilt on the message thread within a few tens of milliseconds of each edit and handed to the audio thread without locks; the audio thread never allocates or waits.
 
@@ -173,7 +173,7 @@ sudo apt-get install libasound2-dev libx11-dev libxext-dev libxrandr-dev \
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, MIDI one-shots, free loop, preview, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, MIDI, level and clipper bounds); and the WAV export. It compiles the processor and the editor too, so it also catches build problems anywhere in the plug-in.
+or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and how they end, free loop, preview, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, MIDI and panic, bypass fades, the time signature, level and clipper bounds); and the WAV export. It compiles the processor and the editor too, so it also catches build problems anywhere in the plug-in.
 
 ### Snapshot tool
 

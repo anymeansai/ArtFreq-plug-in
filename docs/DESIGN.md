@@ -21,11 +21,13 @@ any analyser with a scrolling spectrogram) on the output and the drawing scrolls
    compensated for the analyser's slope, and normalised so the loudest moment sits at -12 dBFS
    RMS before the output level.
 5. **The engine** (`dsp/ArtEngine.h`) plays the plan on the audio thread: one sine per line,
-   amplitudes interpolated across columns, click-free fades on start/stop/retrigger, crossfades
-   when the plan changes.
+   amplitudes interpolated across columns, click-free fades on start/stop/retrigger/bypass,
+   crossfades when the plan changes.
 6. **The tracker** (`dsp/PlayheadTracker.h`) decides the position in the drawing: follow the
-   DAW transport (loop every length, aligned to bar 1), play once per MIDI note, or free loop;
-   tempo from the host or typed in.
+   DAW transport (loop every length, starting on the host's bar lines, in its time signature;
+   tempo changes and ramps bend the position, only relocations jump), play once per MIDI note
+   (ended early by All Notes Off, All Sound Off or the DAW stopping), or free loop; tempo from
+   the host or typed in.
 
 Why sound and not MIDI: a spectrogram shows the frequencies present at each moment. MIDI notes
 can only make the few pitches of a synth patch, on a semitone grid, with harmonics drawn on top;
@@ -115,7 +117,8 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   as visible scan lines and high density looks solid. Background = colour map at silence.
   Faint frequency grid lines (from `gridFrequencies`) and bar/beat lines.
 - Hz labels on the left axis; bar/beat labels along the bottom (e.g. "1", "2", "3", "4" for
-  4 bars; beats for lengths under a bar).
+  4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
+  bar in 3/4, six eighths in 6/8).
 - Playhead: a 2 px accent2 vertical line at the play position while sounding.
 - **Select tool**: click an object to select it (top-most whose rectangle contains the point);
   selected object shows its rectangle (1 px accent) and 8 handles; drag inside to move, drag a
@@ -187,8 +190,9 @@ shapes, lower for a scan-line look.
 background, transparency, outline); text rendering coverage; compositor placement; plan
 (frequencies, spacing, normalisation, contrast, slope); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
-speed); tracker (transport positions, MIDI one-shots, free loop, preview, jumps); end-to-end:
-a canvas rendered to audio and analysed back must correlate with the canvas; processor (state
-round trip, process with MIDI, level/clipper bound); WAV export.
+speed); tracker (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and
+their end, all-offs and stop, free loop, preview, jumps); end-to-end: a canvas rendered to audio
+and analysed back must correlate with the canvas; processor (state round trip, process with
+MIDI, panic, bypass fades, time signature, level/clipper bound); WAV export.
 
 `FreqArtSnapshot <dir>` renders the editor in its main states to PNG.

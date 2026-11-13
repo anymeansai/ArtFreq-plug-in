@@ -35,6 +35,11 @@ uint64_t versionOf (const ArtPlan* plan) noexcept
     return plan != nullptr ? plan->version : 0;
 }
 
+double quarterNotesPerBar (juce::AudioPlayHead::TimeSignature signature) noexcept
+{
+    return static_cast<double> (signature.numerator) * 4.0 / static_cast<double> (signature.denominator);
+}
+
 /** True on the message thread, and also when there is no message thread at all (a console
     app driving the processor directly), where every call comes from the one thread there is. */
 bool onMessageThread() noexcept
@@ -151,8 +156,9 @@ TrackerSettings FreqArtProcessor::currentTrackerSettings() const noexcept
     settings.mode = params::triggerForIndex (juce::roundToInt (triggerParam->load()));
     settings.useHostTempo = juce::roundToInt (tempoSourceParam->load()) == 0;
     settings.manualBpm = static_cast<double> (bpmParam->load());
+    settings.quarterNotesPerBar = quarterNotesPerBar (timeSignature.load());
     settings.lengthQuarterNotes = params::lengthInQuarterNotes (juce::roundToInt (lengthParam->load()),
-                                                                quarterNotesPerBar.load());
+                                                                settings.quarterNotesPerBar);
     return settings;
 }
 
@@ -161,6 +167,21 @@ void FreqArtProcessor::renderChunk (float* out, int numSamples, const HostTiming
 {
     const auto numSegments = tracker.process (timing, midi, numSamples, settings, segments);
     engine.render (out, numSamples, segments, numSegments);
+}
+
+void FreqArtProcessor::writeOutput (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept
+{
+    // The level and the safety clipper on the mono render, then every channel and the analyser.
+    auto* out = mono.get();
+
+    for (int i = 0; i < numSamples; ++i)
+        out[i] = softClip (out[i] * outputGain.getNextValue());
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+        buffer.copyFrom (channel, start, out, numSamples);
+
+    if (analyzer.isActive())
+        analyzer.push (out, numSamples);
 }
 
 void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -194,8 +215,7 @@ void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
             if (const auto signature = position->getTimeSignature(); signature.hasValue()
                 && signature->numerator > 0 && signature->denominator > 0)
             {
-                quarterNotesPerBar.store (static_cast<double> (signature->numerator) * 4.0
-                                          / static_cast<double> (signature->denominator));
+                timeSignature.store (*signature);
             }
         }
     }
@@ -234,15 +254,7 @@ void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
             renderChunk (out, length, chunkTiming, chunkMidi, settings);
         }
 
-        for (int i = 0; i < length; ++i)
-            out[i] = softClip (out[i] * outputGain.getNextValue());
-
-        for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
-            buffer.copyFrom (channel, start, out, length);
-
-        if (analyzer.isActive())
-            analyzer.push (out, length);
-
+        writeOutput (buffer, start, length);
         start += length;
     }
 
@@ -258,19 +270,42 @@ void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
 void FreqArtProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
+    juce::ScopedNoDenormals noDenormals;
+
+    const auto numSamples = buffer.getNumSamples();
     buffer.clear();
     midi.clear();
 
-    // Coming back from bypass starts cleanly (with a fade-in) rather than mid-sound.
     if (auto* plan = planExchange.acquire())
         engine.setPlan (plan);
 
-    engine.reset();
-    tracker.reset();
+    // Going into bypass while the drawing sounds: the gate closes and its fade-out is heard
+    // first (over this block and, for short blocks, the next ones), so the sound does not stop
+    // mid-waveform.
+    for (int start = 0; start < numSamples && monoCapacity > 0 && engine.isSounding();)
+    {
+        const auto length = juce::jmin (monoCapacity, numSamples - start);
+
+        PlaySegment closing;
+        closing.length = length;
+        closing.fraction = engine.getFraction();
+        engine.render (mono.get(), length, &closing, 1);
+
+        writeOutput (buffer, start, length);
+        start += length;
+    }
+
+    // Silent: coming back from bypass starts cleanly (with a fade-in) rather than mid-sound.
+    if (! engine.isSounding())
+    {
+        engine.reset();
+        tracker.reset();
+    }
+
     planExchange.reportInUse (versionOf (engine.getPlan()), versionOf (engine.getFadingPlan()));
 
-    playPosition.store (0.0);
-    sounding.store (false);
+    playPosition.store (engine.getFraction());
+    sounding.store (engine.isSounding());
 }
 
 void FreqArtProcessor::setPreview (bool shouldPreview) noexcept
@@ -289,7 +324,7 @@ double FreqArtProcessor::getEffectiveTempo() const noexcept
 double FreqArtProcessor::getLengthSeconds() const noexcept
 {
     const auto lengthQn = params::lengthInQuarterNotes (juce::roundToInt (lengthParam->load()),
-                                                        quarterNotesPerBar.load());
+                                                        quarterNotesPerBar (timeSignature.load()));
     const auto tempo = juce::jlimit (20.0, 400.0, getEffectiveTempo());
     return lengthQn * 60.0 / tempo;
 }
