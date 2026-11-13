@@ -257,6 +257,19 @@ FREQART_TEST (endToEndTextInTheMids)
     CHECK_GREATER (result.energyInside, 0.95);
 }
 
+FREQART_TEST (endToEndTextInTheLows)
+{
+    // The lows are merged into lines at least 25 Hz apart (about 8 lines between 40 and 250 Hz
+    // at 256 lines), so it is compared on a grid as coarse as its lines. Each row must play on
+    // its nearest line, so the energy stays in the band instead of sinking to the 20 Hz line
+    // below it (which took about 17 % when merged lines played at the bottom of their rows).
+    // Down here the analysis window's main lobe (+-23 Hz) reaches past the band's 6 % margin,
+    // hence the lower bar than in the mids and highs.
+    const auto result = measure (textIn ("LOW", Band::low), 0, 0, 256.0f, "text LOW, lows, log, 256 lines (8 rows)", 8);
+    CHECK_GREATER (result.correlation, 0.4);
+    CHECK_GREATER (result.energyInside, 0.9);
+}
+
 FREQART_TEST (endToEndPicture)
 {
     ArtDocument document;

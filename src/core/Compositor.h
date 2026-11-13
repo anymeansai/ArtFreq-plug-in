@@ -36,11 +36,21 @@ juce::Rectangle<float> objectRectNorm (const ArtObject& object, const FrequencyS
     (top < bottom, y = 0 at the top) covers on the scale. */
 HzRange normSpanToHz (float top, float bottom, const FrequencyScale& scale) noexcept;
 
+/** Where a height on the canvas falls on the paint layer, through the frequency at that height:
+    canvasY runs from the TOP of a canvas on `scale` (0) to its bottom (1); the result is in
+    paint-layer pixels from the top of a layer painted on `paintScale` (0) to its bottom
+    (ArtDocument::paintHeight). Heights off the canvas, or off the paint's range, give rows off
+    the layer. On the scale the paint was made on it is a plain stretch. The brush uses it to
+    place strokes and the compositor to draw them back, so the two always agree. */
+double canvasToPaintY (double canvasY, const FrequencyScale& scale, const FrequencyScale& paintScale) noexcept;
+
 class Compositor
 {
 public:
     /** Draws everything into `out` (which is cleared first):
-          - the paint layer, resampled bilinearly from 1024 x 512 to the canvas (row 0 = top);
+          - the paint layer (1024 x 512), mapped by frequency from its paintScale to `scale`
+            (bilinear where stretched, the loudest paint row where squeezed; nothing outside
+            the paint's range), so it stays at its frequencies like the objects;
           - each object, multiplied by its intensity, into the canvas pixels of objectRectNorm:
               text:  renderTextInto (stretched to fill the rectangle)
               image: processImage (mode, cleanup), stretched to fill the rectangle (area-averaged

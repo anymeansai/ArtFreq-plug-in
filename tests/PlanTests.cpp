@@ -261,23 +261,83 @@ FREQART_TEST (planSingleRowBecomesOneLine)
 
 FREQART_TEST (planMergedLinesKeepTheirRows)
 {
-    // Log, density 1024: the bottom rows are merged into few lines. A thin stroke on any row
-    // must still sound (it lands in the span of the line it was merged into).
-    const auto settings = settingsFor (ScaleType::log, 1024);
-
-    for (const auto row : { 1023, 1015, 1000, 990 })
+    // Where lines are merged (the lows on a log scale) a thin stroke on any row must still
+    // sound, and on its NEAREST line: a merged line keeps its lowest cell's frequency and the
+    // jitter moves lines, so taking the rows of the merged cells would play low art too low.
+    // A row on the boundary between two lines may sound on both, so the other one can be up to
+    // a row further away.
+    const auto checkRow = [] (const PlanSettings& settings, int row)
     {
         Canvas canvas;
         fillRow (canvas, row, 1.0f);
         const auto plan = buildPlan (canvas, settings);
-        CHECK_MSG (! plan->silent, "row " << row);
+        CHECK_MSG (! plan->silent, "density " << settings.density << " row " << row);
 
-        // The sounding line sits at or below the row's height (merged lines keep the lowest).
         const auto rowNorm = (Canvas::height - 1 - row + 0.5) / Canvas::height;
+        auto nearest = 1.0;
+
+        for (int l = 0; l < plan->numLines; ++l)
+            nearest = std::min (nearest, std::abs (plan->lineNorm[static_cast<size_t> (l)] - rowNorm));
 
         for (int l = 0; l < plan->numLines; ++l)
             if (plan->amplitude (0, l) > 0.0f)
-                CHECK (plan->lineNorm[static_cast<size_t> (l)] <= rowNorm + 1.0e-6);
+                CHECK_MSG (std::abs (plan->lineNorm[static_cast<size_t> (l)] - rowNorm) <= nearest + 1.0 / Canvas::height + 1.0e-6,
+                           "density " << settings.density << " row " << row << ": line at " << plan->frequencies[static_cast<size_t> (l)] << " Hz");
+    };
+
+    // Log, density 1024, 5 Hz spacing: the bottom rows are merged into few lines.
+    for (const auto row : { 1023, 1015, 1000, 990 })
+        checkRow (settingsFor (ScaleType::log, 1024), row);
+
+    // The product's spacing (25 Hz): everything below about 900 Hz is merged at density 256.
+    for (const auto density : { 64, 256, 1024 })
+    {
+        auto settings = settingsFor (ScaleType::log, density);
+        settings.minLineSpacingHz = PlanSettings().minLineSpacingHz;
+
+        for (int row = Canvas::height - 1; row >= Canvas::height / 2; row -= 3)
+            checkRow (settings, row);
+    }
+
+    // The finding that made this test: with the defaults a stroke at 44 Hz played on the
+    // 20 Hz line although a line sits at 43 Hz, and a 40 Hz - 250 Hz block (Band Low) lit the
+    // 20 Hz line, an octave below it.
+    PlanSettings defaults;
+    const auto rowAt = [&defaults] (double hz)
+    {
+        return Canvas::height - 1 - static_cast<int> (defaults.scale.toNorm (hz) * Canvas::height);
+    };
+
+    {
+        Canvas canvas;
+        fillRow (canvas, rowAt (44.0), 1.0f);
+        const auto plan = buildPlan (canvas, defaults);
+
+        for (int l = 0; l < plan->numLines; ++l)
+            if (plan->amplitude (0, l) > 0.0f)
+                CHECK_NEAR (plan->frequencies[static_cast<size_t> (l)], 44.0, 6.0);
+    }
+
+    {
+        Canvas canvas;
+        for (auto row = rowAt (250.0); row <= rowAt (40.0); ++row)
+            fillRow (canvas, row, 1.0f);
+
+        const auto plan = buildPlan (canvas, defaults);
+        auto lowest = 0.0f, highest = 0.0f;
+
+        for (int l = 0; l < plan->numLines; ++l)
+        {
+            if (plan->amplitude (0, l) > 0.0f)
+            {
+                lowest = lowest > 0.0f ? lowest : plan->frequencies[static_cast<size_t> (l)];
+                highest = plan->frequencies[static_cast<size_t> (l)];
+            }
+        }
+
+        CHECK_GREATER (lowest, 35.0f);
+        CHECK_GREATER (highest, 235.0f);
+        CHECK_LESS (highest, 275.0f);
     }
 }
 

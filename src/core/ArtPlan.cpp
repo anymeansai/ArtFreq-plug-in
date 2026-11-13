@@ -15,8 +15,9 @@ constexpr double lowestLineHz = 10.0;   // below this nothing is audible or visi
 constexpr float silenceThreshold = 0.001f;
 constexpr int minDensity = 16, maxDensity = 1024;
 
-/** A kept line: its frequency and the canvas cells (one per density step, 0 = bottom) whose
-    rows it takes its values from (its own and those of the lines merged into it). */
+/** A kept line: its frequency and the canvas cells (one per density step, 0 = bottom) it stands
+    for (its own and those of the lines merged into it). Only the outer edges of the first and
+    last lines' cells bound the rows that sound; between lines, each row goes to the nearest. */
 struct LineLayout
 {
     double hz = 0.0;
@@ -168,7 +169,10 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
         return plan;
 
     // ---- Values: the maximum over each line's span of rows ---------------------------------
-    // A line's span covers its cells, i.e. halfway to the neighbouring lines. Rows are counted
+    // A line's span runs halfway (in canvas height) to the final heights of its neighbours, so
+    // every row plays on its nearest line. Spanning its merged cells instead would put a merged
+    // line at the bottom of its span (it keeps its lowest cell's frequency) and the jitter moves
+    // lines within theirs: low art would play up to a whole line step too low. Rows are counted
     // from the bottom here; canvas row = height - 1 - rowFromBottom.
     const LoudnessTable loudness (contrastDb);
     auto& amplitudes = plan->amplitudes;
@@ -178,8 +182,10 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
 
     for (size_t l = 0; l < lines; ++l)
     {
-        const auto bottomNorm = static_cast<double> (layout[l].firstCell) / density;
-        const auto topNorm = static_cast<double> (layout[l].lastCell + 1) / density;
+        const auto bottomNorm = l == 0 ? static_cast<double> (layout[l].firstCell) / density
+                                       : 0.5 * (layout[l - 1].norm + layout[l].norm);
+        const auto topNorm = l + 1 == lines ? static_cast<double> (layout[l].lastCell + 1) / density
+                                            : 0.5 * (layout[l].norm + layout[l + 1].norm);
         firstRow[l] = std::clamp (static_cast<int> (std::floor (bottomNorm * Canvas::height + 1.0e-6)), 0, Canvas::height - 1);
         lastRow[l] = std::clamp (static_cast<int> (std::ceil (topNorm * Canvas::height - 1.0e-6)) - 1, firstRow[l], Canvas::height - 1);
 

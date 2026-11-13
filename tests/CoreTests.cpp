@@ -933,6 +933,50 @@ FREQART_TEST (documentToleratesGarbage)
     }
 }
 
+FREQART_TEST (documentPaintScale)
+{
+    // The paint layer remembers the scale it was painted on, through a save and a load.
+    ArtDocument document;
+    CHECK (document.paintScale == FrequencyScale {});
+    document.paintStroke ({ { 100.5f, 100.5f }, { 300.5f, 100.5f }, 4.0f, 4.0f, 0.0f, 1.0f, false });
+    document.paintScale = makeScale (ScaleType::mel, 40.0, 16000.0);
+
+    const auto xml = document.toValueTree().createXml();
+    CHECK (xml != nullptr);
+    const auto tree = juce::ValueTree::fromXml (*xml);
+    const auto loaded = ArtDocument::fromValueTree (tree);
+    CHECK (loaded.paint == document.paint);
+    CHECK (loaded.paintScale == document.paintScale);
+
+    // Documents saved before the paint was tagged were painted on the default scale.
+    auto old = tree.createCopy();
+
+    for (const auto* name : { "paintScale", "paintMinHz", "paintMaxHz" })
+        old.removeProperty (name, nullptr);
+
+    const auto fromOld = ArtDocument::fromValueTree (old);
+    CHECK (fromOld.paint == document.paint);
+    CHECK (fromOld.paintScale == FrequencyScale {});
+
+    // Nonsense becomes a usable scale.
+    auto garbage = tree.createCopy();
+    garbage.setProperty ("paintScale", 7, nullptr);
+    garbage.setProperty ("paintMinHz", "abc", nullptr);
+    garbage.setProperty ("paintMaxHz", -5.0, nullptr);
+    const auto fromGarbage = ArtDocument::fromValueTree (garbage).paintScale;
+    CHECK (fromGarbage == fromGarbage.sanitised());
+    CHECK (fromGarbage.type == ScaleType::mel);
+
+    // An empty layer carries no tag, and clearing the paint (Clear, Reset) drops it.
+    CHECK (! ArtDocument().toValueTree().hasProperty ("paintScale"));
+    CHECK (ArtDocument::createDefault().paintScale == FrequencyScale {});
+
+    auto cleared = document;
+    cleared.clearPaint();
+    CHECK (! cleared.hasPaint());
+    CHECK (cleared.paintScale == FrequencyScale {});
+}
+
 FREQART_TEST (documentHistory)
 {
     DocumentHistory history (3);
@@ -1093,6 +1137,80 @@ FREQART_TEST (compositorPaintUpsampling)
     std::fill (document.paint.begin(), document.paint.end(), static_cast<uint8_t> (255));
     compositor.render (document, makeScale (ScaleType::log), canvas);
     CHECK_NEAR (minIn (canvas, { 0, 0, Canvas::width, Canvas::height }), 1.0f, 1.0e-6f);
+}
+
+FREQART_TEST (compositorPaintKeepsItsFrequencies)
+{
+    // Paint stays at its frequencies when the canvas scale or range changes, as objects do (they
+    // are placed in Hz). It used to keep its height on screen instead, so a bass line painted on
+    // Log became a 7 kHz line on Linear, running through the text above it.
+    const auto paintScale = makeScale (ScaleType::log);
+
+    // The frequencies a canvas row covers, from its bottom edge to its top edge.
+    const auto rowSpan = [] (const FrequencyScale& scale, int row) -> HzRange
+    {
+        return { scale.toHz (1.0 - (row + 1.0) / Canvas::height), scale.toHz (1.0 - static_cast<double> (row) / Canvas::height) };
+    };
+
+    for (const auto& scale : { makeScale (ScaleType::log), makeScale (ScaleType::linear), makeScale (ScaleType::mel),
+                               makeScale (ScaleType::log, 40.0, 16000.0), makeScale (ScaleType::linear, 100.0, 5000.0) })
+    {
+        for (const auto hz : { 200.0, 1000.0, 4000.0 })
+        {
+            // A thin stroke where the brush puts it: at the height of `hz` on the canvas shown.
+            ArtDocument document;
+            document.paintScale = paintScale;
+            const auto y = static_cast<float> (canvasToPaintY (1.0 - scale.toNorm (hz), scale, paintScale));
+            document.paintStroke ({ { 0.0f, y }, { 1023.0f, y }, 1.0f, 1.0f, 0.0f, 1.0f, false });
+
+            Compositor compositor;
+            Canvas canvas;
+            compositor.render (document, scale, canvas);
+
+            // Drawn back at `hz`, at full strength even where many paint rows share a canvas row
+            // (the lows of a linear canvas), and nowhere else.
+            const auto row = static_cast<int> ((1.0 - scale.toNorm (hz)) * Canvas::height);
+            CHECK_MSG (canvas.get (512, row) > 0.9f, "type " << static_cast<int> (scale.type) << " " << hz << " Hz");
+
+            for (int r = 0; r < Canvas::height; ++r)
+            {
+                const auto span = rowSpan (scale, r);
+
+                if (canvas.get (512, r) > 0.01f)
+                    CHECK_MSG (span.high > hz * 0.96 && span.low < hz * 1.04,
+                               "type " << static_cast<int> (scale.type) << " " << hz << " Hz: lit at " << span.low << " Hz");
+            }
+        }
+    }
+
+    // On its own scale the mapping is a plain stretch; parts of the canvas outside the paint's
+    // range get nothing; switching back and forth loses nothing.
+    for (const auto y : { -0.25, 0.0, 0.3, 1.0 })
+        CHECK (juce::exactlyEqual (canvasToPaintY (y, paintScale, paintScale), y * ArtDocument::paintHeight));
+
+    ArtDocument narrow;
+    narrow.paintScale = makeScale (ScaleType::log, 100.0, 10000.0);
+    std::fill (narrow.paint.begin(), narrow.paint.end(), static_cast<uint8_t> (255));
+
+    Compositor compositor;
+    Canvas canvas, before, after;
+    const auto wide = makeScale (ScaleType::log);
+    compositor.render (narrow, wide, canvas);
+
+    for (int r = 0; r < Canvas::height; ++r)
+    {
+        const auto span = rowSpan (wide, r);
+
+        if (span.high < 100.0 || span.low > 10000.0)
+            CHECK_NEAR (canvas.get (300, r), 0.0f, 1.0e-6f);
+        else if (span.low > 100.0 && span.high < 10000.0)
+            CHECK_NEAR (canvas.get (300, r), 1.0f, 1.0e-6f);
+    }
+
+    compositor.render (narrow, narrow.paintScale, before);
+    compositor.render (narrow, makeScale (ScaleType::mel), canvas);
+    compositor.render (narrow, narrow.paintScale, after);
+    CHECK (before.values == after.values);
 }
 
 FREQART_TEST (compositorClipsAndDrawsText)
