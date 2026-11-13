@@ -468,7 +468,10 @@ namespace
             footer.refresh();
 
             if (effectControls != nullptr)
+            {
                 effectControls->refresh();
+                inspector.refreshEffectMode();
+            }
         }
 
         FreqArtProcessor& processor;

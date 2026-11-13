@@ -458,7 +458,12 @@ void NumberField::closeEditor (bool commit)
     if (commit)
     {
         const auto range = parameter.getNormalisableRange();
-        const auto typed = parseNumber (outgoing->getText(), value);
+        auto typed = parseNumber (outgoing->getText(), value);
+
+        // A range that only goes below zero (Depth) takes "60" to mean -60.
+        if (range.end <= 0.0f)
+            typed = -std::abs (typed);
+
         attachment.setValueAsCompleteGesture (juce::jlimit (range.start, range.end, static_cast<float> (typed)));
     }
 

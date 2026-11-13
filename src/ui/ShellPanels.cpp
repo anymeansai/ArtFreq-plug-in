@@ -409,7 +409,7 @@ namespace
         static const std::vector<Paragraph> list {
             { "As in FreqArt.", "Length, Trigger, Repeat and Tempo work as in the instrument; outside the pass the "
                                 "audio passes untouched." },
-            { "MIDI note", "works where the DAW sends MIDI to effects (Reaper, Bitwig, Cubase, Studio One). Ableton "
+            { "MIDI note", "works where the DAW sends MIDI to effects (Reaper, Bitwig, Cubase, Studio One, FL Studio). Ableton "
                            "Live does not: use Transport there." },
             { "Latency:", "85 ms, the same in every mode and in bypass. Your DAW makes up for it." },
         };

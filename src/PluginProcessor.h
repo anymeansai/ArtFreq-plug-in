@@ -67,7 +67,14 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    // The effect always has one frame of audio in flight (and its sines in the Draw modes), so a
+    // host that stops calling it on silent input must keep going that long; the instrument fades
+    // within a block.
+    double getTailLengthSeconds() const override
+    {
+        const auto rate = getSampleRate();
+        return isEffect() && rate > 0.0 ? getLatencySamples() / rate + 0.05 : 0.0;
+    }
 
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }

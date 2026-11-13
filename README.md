@@ -64,7 +64,7 @@ On a full song the drawing's own sound can get lost in everything else going on.
 
 **Preview** runs the drawing's pass from its start on whatever audio comes in, even while the DAW is stopped (once, or on a loop with Repeat), and plays the sines in the Draw modes. Most DAWs keep feeding audio to effects while stopped (a track monitoring its input, the master with other plug-ins playing); with silence coming in, Carve and Stencil have nothing to show, and the Live view stays dark.
 
-**MIDI.** FreqArt FX accepts MIDI, so Trigger = MIDI works where the DAW sends MIDI to an audio effect: **Reaper** (MIDI on the track reaches its effects), **Bitwig**, **Cubase** (pick FreqArt FX as a MIDI track's output) and **Studio One** (route a note track to it). **Ableton Live does not send MIDI to audio effects** (nor does FL Studio's mixer): use Transport there, which needs no MIDI.
+**MIDI.** FreqArt FX accepts MIDI, so Trigger = MIDI works where the DAW sends MIDI to an audio effect: **Reaper** (MIDI on the track reaches its effects), **Bitwig**, **Cubase** (pick FreqArt FX as a MIDI track's output) and **Studio One** (route a note track to it). **FL Studio** can too (in the effect's wrapper, set its MIDI input port, and send a MIDI Out channel or controller to that port). **Ableton Live does not send MIDI to audio effects**: use Transport there, which needs no MIDI.
 
 ### Moving between the two
 

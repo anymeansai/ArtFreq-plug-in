@@ -24,6 +24,10 @@ public:
         its contents. */
     void focusTextField();
 
+    /** FreqArt FX: greys Lows in the modes that play no sines (it shapes only the sines). Called
+        from the editor's timer, as the footer's knobs are. */
+    void refreshEffectMode();
+
     void paint (juce::Graphics&) override;
     void resized() override;
 

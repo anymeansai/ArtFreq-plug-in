@@ -835,7 +835,8 @@ struct Inspector::Impl
         {
             g.setColour (theme::line);
             g.fillRect (lowsRow.getX(), lowsRow.getY() - lowsGap / 2 - 1, lowsRow.getWidth(), 1);
-            shell::drawCaps (g, "Lows", lowsRow.withRight (lowsControl.getX() - 8), juce::Justification::centredLeft, theme::textDim);
+            shell::drawCaps (g, "Lows", lowsRow.withRight (lowsControl.getX() - 8), juce::Justification::centredLeft,
+                             lowsControl.isEnabled() ? theme::textDim : theme::textFaint);
         }
 
         if (! timeReadoutArea.isEmpty())
@@ -1019,6 +1020,20 @@ Inspector::~Inspector()
 
     if (impl->installedFocusCallback)
         impl->state.focusTextField = nullptr;
+}
+
+void Inspector::refreshEffectMode()
+{
+    if (! impl->processor.isEffect())
+        return;
+
+    const auto sines = playsSines (impl->processor.getEffectMode());
+
+    if (impl->lowsControl.isEnabled() != sines)
+    {
+        impl->lowsControl.setEnabled (sines);
+        repaint();
+    }
 }
 
 void Inspector::focusTextField()

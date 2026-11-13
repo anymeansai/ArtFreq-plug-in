@@ -241,7 +241,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect
             FloatAttributes()
                 .withLabel ("dB")
                 .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
-                .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
+                // Depth only goes down: "60" or "60 dB" typed in means -60 dB, not 0 dB (which
+                // would silently switch the carving off).
+                .withValueFromStringFunction ([] (const juce::String& t) { return -std::abs (parseNumber (t)); })));
     }
 
     return layout;

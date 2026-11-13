@@ -409,9 +409,9 @@ therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and *
 - **Preview** runs the pass from the start on whatever audio comes in, also while the DAW is
   stopped (most hosts keep feeding effects), once or on a loop with Repeat, and plays the sines in
   the Draw modes: the same as the instrument's Preview, on the song.
-- **MIDI.** The effect asks for MIDI: Reaper, Bitwig, Cubase and Studio One can send it to an
-  audio effect, so Trigger = MIDI works there. Ableton Live never sends MIDI to audio effects (nor
-  does FL Studio's mixer): Transport needs none.
+- **MIDI.** The effect asks for MIDI: Reaper, Bitwig, Cubase, Studio One and FL Studio (through
+  the wrapper's MIDI input port) can send it to an audio effect, so Trigger = MIDI works there.
+  Ableton Live never sends MIDI to audio effects: Transport needs none.
 - **State.** The same XML as the instrument's (`FreqArtState`, now with a `plugin` attribute
   naming the variant that saved it), so either loads the other's drawing and shared settings:
   the instrument leaves out Mode and Depth (unknown parameters are dropped on load, so they are
