@@ -67,7 +67,8 @@ public:
     // ---- the drawing (message thread only) -----------------------------------------------
     // Every change to the document goes through editDocument, so undo, the plan and the
     // editor stay in step. The processor sends a change message (ChangeBroadcaster) after
-    // every edit, undo, redo and state load, and after every new plan.
+    // every edit, undo, redo and state load, and after every new plan. Edits, undo and redo
+    // (not loads) also tell the host the project has unsaved changes.
 
     const ArtDocument& getDocument() const noexcept { return document; }
 
@@ -114,7 +115,7 @@ public:
     // ---- editor preferences, kept with the session ---------------------------------------
     int getEditorWidth() const noexcept { return editorWidth.load(); }
     int getEditorHeight() const noexcept { return editorHeight.load(); }
-    void setEditorSize (int width, int height) noexcept { editorWidth.store (width); editorHeight.store (height); }
+    void setEditorSize (int width, int height);  // message thread; a change marks the project changed
 
     /** The sample rate the host prepared the plug-in with (48 kHz before that). */
     double getCurrentSampleRate() const noexcept { return currentSampleRate.load(); }
@@ -124,6 +125,7 @@ private:
     void timerCallback() override;
     void handleAsyncUpdate() override;
     void documentChanged();
+    void markProjectChanged();
     void refreshSavedDocument();
     void applyDocumentState (const juce::ValueTree& documentTree);
     TrackerSettings currentTrackerSettings() const noexcept;
@@ -143,8 +145,8 @@ private:
     std::atomic<bool> parametersDirty { true };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };  // 0 = default size
 
-    // The document as last serialised, for hosts that save state from another thread.
-    // Refreshed on the message thread shortly after edits stop.
+    // The document as last serialised (or as loaded), for hosts that save state from another
+    // thread. Refreshed on the message thread shortly after edits stop.
     juce::CriticalSection savedStateLock;
     juce::ValueTree savedDocument;
     bool savedDocumentStale = true;

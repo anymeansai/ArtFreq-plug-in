@@ -848,6 +848,74 @@ FREQART_TEST (documentRoundTrip)
     CHECK (ArtDocument::fromValueTree (ArtDocument().toValueTree()).isEmpty());
 }
 
+FREQART_TEST (documentRemembersPictureEncodings)
+{
+    // The text of a saved picture, by identity: the same address means it was not encoded again.
+    const auto encodingOf = [] (const juce::ValueTree& tree, int index)
+    {
+        return static_cast<const void*> (tree.getChild (index)["image"].toString().getCharPointer().getAddress());
+    };
+
+    // More pictures than a small fixed-size cache would hold.
+    constexpr int numPictures = 9;
+    ArtDocument document;
+
+    for (int i = 0; i < numPictures; ++i)
+        document.objects.push_back (ArtDocument::makeImageObject (
+            prepareImportedImage (makeImage (48, 32, juce::Colours::black, { i, 2, 8, 8 }, juce::Colours::white)),
+            3500.0f, 16000.0f));
+
+    // Every save after the first reuses every picture's encoding.
+    const auto first = document.toValueTree();
+    const auto second = document.toValueTree();
+
+    for (int i = 0; i < numPictures; ++i)
+        CHECK_MSG (encodingOf (second, i) == encodingOf (first, i), "picture " << i << " was encoded again");
+
+    // A loaded drawing keeps the text it was loaded from: saving it encodes nothing.
+    const auto xml = first.createXml();
+    CHECK (xml != nullptr);
+    const auto tree = juce::ValueTree::fromXml (*xml);
+    const auto loaded = ArtDocument::fromValueTree (tree);
+    CHECK (loaded.objects.size() == static_cast<size_t> (numPictures));
+    const auto resaved = loaded.toValueTree();
+
+    for (int i = 0; i < juce::jmin (numPictures, resaved.getNumChildren()); ++i)
+        CHECK_MSG (encodingOf (resaved, i) == encodingOf (tree, i), "loaded picture " << i << " was encoded again");
+
+    // An encoding goes once nothing else refers to its picture (no document, no undo step),
+    // even if the drawing saved next has no pictures at all.
+    struct DeletionWatcher final : public juce::ImagePixelData::Listener
+    {
+        void imageDataChanged (juce::ImagePixelData*) override {}
+        void imageDataBeingDeleted (juce::ImagePixelData*) override { deleted = true; }
+        bool deleted = false;
+    };
+
+    DeletionWatcher watcher;
+    juce::ImagePixelData* pixels = nullptr;
+
+    {
+        ArtDocument temporary;
+        temporary.objects.push_back (ArtDocument::makeImageObject (
+            prepareImportedImage (makeImage (40, 30, juce::Colours::red)), 100.0f, 200.0f));
+        pixels = temporary.objects[0].image.getPixelData().get();
+        pixels->listeners.add (&watcher);
+        auto history = temporary;  // an undo step holding the same picture
+
+        temporary.toValueTree();
+        temporary.objects.clear();
+        temporary.toValueTree();
+        CHECK (! watcher.deleted);  // the undo step still refers to it
+    }
+
+    ArtDocument().toValueTree();
+    CHECK (watcher.deleted);
+
+    if (! watcher.deleted)
+        pixels->listeners.remove (&watcher);  // still alive (held by the cache)
+}
+
 FREQART_TEST (documentToleratesGarbage)
 {
     CHECK (ArtDocument::fromValueTree ({}).isEmpty());

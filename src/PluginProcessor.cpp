@@ -374,6 +374,32 @@ void FreqArtProcessor::documentChanged()
     savedDocumentStale = true;
     lastEditTime = juce::Time::getMillisecondCounter();
     sendChangeMessage();
+    markProjectChanged();
+}
+
+void FreqArtProcessor::markProjectChanged()
+{
+    // The drawing and the window size are saved state but not parameters, so the host cannot
+    // see them change: without this a VST3 host would not offer to save the project, and the
+    // change would be lost when it closes. (The wrapper merges these calls asynchronously, so
+    // one per brush dab or key press is cheap.)
+    updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
+}
+
+void FreqArtProcessor::setEditorSize (int width, int height)
+{
+    const auto oldWidth = editorWidth.exchange (width);
+    const auto oldHeight = editorHeight.exchange (height);
+
+    // 0 x 0 is "never resized", which shows at the default size: only a real change counts.
+    const auto shown = [] (int w, int h)
+    {
+        return w > 0 && h > 0 ? juce::Point<int> (w, h)
+                              : juce::Point<int> (FreqArtEditor::baseWidth, FreqArtEditor::baseHeight);
+    };
+
+    if (shown (oldWidth, oldHeight) != shown (width, height))
+        markProjectChanged();
 }
 
 void FreqArtProcessor::editDocument (const std::function<void (ArtDocument&)>& edit, const juce::String& coalesceKey)
@@ -531,7 +557,16 @@ void FreqArtProcessor::applyDocumentState (const juce::ValueTree& documentTree)
 
     documentDirty = true;
     rebuildPlanIfNeeded();
-    refreshSavedDocument();
+
+    // A save straight after a load returns the drawing as loaded, so there is nothing to
+    // serialise again (and its pictures keep the text they were loaded from). A load is not a
+    // user edit, so the host is not told the project changed.
+    {
+        const juce::ScopedLock lock (savedStateLock);
+        savedDocument = documentTree;
+        savedDocumentStale = false;
+    }
+
     sendChangeMessage();
 }
 

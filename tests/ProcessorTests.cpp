@@ -6,6 +6,10 @@
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
+#include "ui/Editor.h"
+
+#include <chrono>
+#include <cstdio>
 
 using namespace freqart;
 using namespace testutil;
@@ -59,10 +63,15 @@ FREQART_TEST (processorParameterDefaults)
     CHECK (level->getCurrentValueAsText() == "-6.0 dB");
     CHECK_NEAR (level->getValueForText ("-12 dB"), level->convertTo0to1 (-12.0f), 1.0e-4);
 
-    // The analyser settings are not automation targets; the sound and timing controls are.
+    // The analyser settings are not automation targets, nor are Density and Contrast (the plan
+    // they shape is rebuilt on the message thread, out of step with an offline bounce); level
+    // and the timing controls are.
     CHECK (! processor->getParameters().getParameter (params::id::scale)->isAutomatable());
     CHECK (! processor->getParameters().getParameter (params::id::rangeLow)->isAutomatable());
-    CHECK (processor->getParameters().getParameter (params::id::density)->isAutomatable());
+    CHECK (! processor->getParameters().getParameter (params::id::density)->isAutomatable());
+    CHECK (! processor->getParameters().getParameter (params::id::contrast)->isAutomatable());
+    CHECK (processor->getParameters().getParameter (params::id::level)->isAutomatable());
+    CHECK (processor->getParameters().getParameter (params::id::length)->isAutomatable());
 
     // Density's skew puts ~200 lines in the middle of the knob.
     CHECK_NEAR (density->convertFrom0to1 (0.5f), 200.0f, 2.0f);
@@ -198,6 +207,149 @@ FREQART_TEST (processorGarbageState)
     processor->setPreview (true);
     const auto out = render (*processor, 4096);
     CHECK_LESS (peak (out), 1.0e-6);
+}
+
+FREQART_TEST (processorSavesManyPicturesQuickly)
+{
+    using clock = std::chrono::steady_clock;
+    const auto msSince = [] (clock::time_point start)
+    {
+        return std::chrono::duration<double, std::milli> (clock::now() - start).count();
+    };
+
+    // Eight pictures with some grain (which PNG cannot squeeze away, as in a photo): more than a
+    // small cache of encodings would hold. Half the size of an imported photo, to keep the test
+    // quick; at full size (1024 x 768) the first save takes ~3 s here and, before encodings were
+    // kept for every picture in use, so did every save after an edit.
+    constexpr int numPictures = 8, width = 512, height = 384;
+    ArtDocument document;
+
+    for (int i = 0; i < numPictures; ++i)
+    {
+        juce::Image picture (juce::Image::ARGB, width, height, true, juce::SoftwareImageType());
+        {
+            juce::Graphics g (picture);
+            g.setGradientFill (juce::ColourGradient (juce::Colour::fromHSV (0.11f * static_cast<float> (i), 0.7f, 1.0f, 1.0f),
+                                                     0.0f, 0.0f, juce::Colours::black,
+                                                     static_cast<float> (width), static_cast<float> (height), false));
+            g.fillAll();
+        }
+
+        juce::Random random (i + 1);
+        {
+            const juce::Image::BitmapData data (picture, juce::Image::BitmapData::readWrite);
+
+            for (int y = 0; y < data.height; ++y)
+                for (int x = 0; x < data.width; ++x)
+                    data.setPixelColour (x, y, data.getPixelColour (x, y).brighter (0.1f * random.nextFloat()));
+        }
+
+        auto object = ArtDocument::makeImageObject (prepareImportedImage (picture), 3500.0f, 16000.0f);
+        object.startTime = 0.12f * static_cast<float> (i);
+        object.endTime = object.startTime + 0.1f;
+        document.objects.push_back (object);
+    }
+
+    auto source = makeProcessor();
+    source->setDocument (document);
+
+    juce::MemoryBlock state;
+    auto start = clock::now();
+    source->getStateInformation (state);
+    const auto firstSave = msSince (start);
+
+    // An edit that leaves every picture as it was (a move), then a save, as hosts that keep
+    // their own undo history do after each edit.
+    constexpr int rounds = 3;
+    double editedSave = 0.0;
+
+    for (int round = 0; round < rounds; ++round)
+    {
+        source->editDocument ([round] (ArtDocument& d) { d.objects[0].startTime = 0.01f * static_cast<float> (round); });
+        start = clock::now();
+        source->getStateInformation (state);
+        editedSave += msSince (start) / rounds;
+    }
+
+    auto restored = makeProcessor();
+    start = clock::now();
+    restored->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    const auto load = msSince (start);
+
+    juce::MemoryBlock restoredState;
+    start = clock::now();
+    restored->getStateInformation (restoredState);
+    const auto savedAfterLoad = msSince (start);
+
+    std::printf ("    %d pictures, state %.1f MB: first save %.0f ms, save after an edit %.0f ms, load %.0f ms, "
+                 "save after the load %.0f ms\n", numPictures, static_cast<double> (state.getSize()) / 1.0e6,
+                 firstSave, editedSave, load, savedAfterLoad);
+
+    CHECK (restored->getDocument().objects.size() == static_cast<size_t> (numPictures));
+
+    // A state saved straight after loading holds the very drawing that was loaded.
+    const auto sourceXml = juce::AudioProcessor::getXmlFromBinary (state.getData(), static_cast<int> (state.getSize()));
+    const auto restoredXml = juce::AudioProcessor::getXmlFromBinary (restoredState.getData(), static_cast<int> (restoredState.getSize()));
+    CHECK (sourceXml != nullptr && restoredXml != nullptr);
+
+    if (sourceXml != nullptr && restoredXml != nullptr)
+    {
+        const auto* a = sourceXml->getChildByName ("FreqArtDocument");
+        const auto* b = restoredXml->getChildByName ("FreqArtDocument");
+        CHECK (a != nullptr && b != nullptr && a->isEquivalentTo (b, false));
+    }
+
+    // Saving after an edit or a load encodes no picture again: it costs a fraction of the first
+    // save, which encodes all of them.
+    CHECK_LESS (editedSave, 0.5 * firstSave);
+    CHECK_LESS (savedAfterLoad, 0.5 * firstSave);
+}
+
+FREQART_TEST (processorTellsTheHostAboutUnsavedChanges)
+{
+    // What the VST3 wrapper listens to: it marks the project dirty (IComponentHandler2::setDirty)
+    // only for nonParameterStateChanged.
+    struct HostListener final : public juce::AudioProcessorListener
+    {
+        void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
+
+        void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
+        {
+            if (details.nonParameterStateChanged)
+                ++dirty;
+        }
+
+        int dirty = 0;
+    };
+
+    auto processor = makeProcessor();
+    HostListener host;
+    processor->addListener (&host);
+
+    processor->editDocument ([] (ArtDocument& document) { document.objects.clear(); });
+    CHECK (host.dirty == 1);
+    processor->setDocument (textDocument ("DIRTY"));
+    CHECK (host.dirty == 2);
+    CHECK (processor->undo());
+    CHECK (host.dirty == 3);
+    CHECK (processor->redo());
+    CHECK (host.dirty == 4);
+
+    // Loading a project is not a change to it.
+    juce::MemoryBlock state;
+    processor->getStateInformation (state);
+    processor->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+    CHECK (host.dirty == 4);
+
+    // The window size is saved too: resizing counts, opening at the size it had does not.
+    processor->setEditorSize (FreqArtEditor::baseWidth, FreqArtEditor::baseHeight);  // never resized = this size
+    CHECK (host.dirty == 4);
+    processor->setEditorSize (1400, 900);
+    CHECK (host.dirty == 5);
+    processor->setEditorSize (1400, 900);
+    CHECK (host.dirty == 5);
+
+    processor->removeListener (&host);
 }
 
 FREQART_TEST (processorTransportStoppedIsSilent)

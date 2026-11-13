@@ -47,8 +47,8 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | id | name | range / choices | default | automatable |
 | --- | --- | --- | --- | --- |
 | level | Level | -60..0 dB | -6 dB | yes |
-| density | Density | 16..1024 lines | 256 | yes |
-| contrast | Contrast | 12..72 dB | 40 dB | yes |
+| density | Density | 16..1024 lines | 256 | no |
+| contrast | Contrast | 12..72 dB | 40 dB | no |
 | length | Length | 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars, 16 bars, 32 bars | 4 bars | yes |
 | trigger | Trigger | Transport, MIDI note, Free loop | Transport | yes |
 | tempoSource | Tempo | Host, Manual | Host | yes |
@@ -58,7 +58,17 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | rangeHigh | Analyser high | 2000..24000 Hz | 20000 Hz | no |
 | slope | Analyser slope | 0, 3, 4.5, 6 dB/oct | 0 dB/oct | no |
 
+Density and Contrast reshape the plan, which the message thread rebuilds on its timer (by
+wall-clock time, not in step with the audio): automated, they would land late, and somewhere
+different on every faster-than-real-time bounce. So, like the analyser settings, they are not
+automation targets.
+
 State = APVTS tree + document tree + editor size, saved as XML in binary (`copyXmlToBinary`).
+Neither the drawing nor the editor size is a parameter, so edits, undo/redo and resizes tell the
+host the project changed (`updateHostDisplay` with `nonParameterStateChanged`); loading state
+does not. Each picture is PNG-encoded once and its text kept while any document or undo step
+still holds the picture (a loaded picture keeps the text it was loaded from), and a load keeps
+the loaded tree as the state to save, so saving after an edit or a load encodes nothing again.
 
 ## Interface
 

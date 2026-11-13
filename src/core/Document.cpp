@@ -128,11 +128,15 @@ juce::String encodePng (const juce::Image& image)
     return juce::Base64::toBase64 (png.getData(), png.getDataSize());
 }
 
-/** PNG + base64 of a picture, remembered for the last few pictures: encoding a large photo
-    takes ~100 ms and hosts may ask for the state often. Pictures are never modified in place,
-    and each entry keeps its picture alive, so the pixel-data pointer identifies the content.
-    The state can be saved from any thread, hence the lock (never taken on the audio thread). */
-juce::String encodeImage (const juce::Image& image)
+/** The PNG + base64 text of every picture still in use: encoding a large photo takes
+    ~100-400 ms, and hosts may ask for the state often (some after every edit, for their own
+    undo history). Pictures are never modified in place and each entry keeps its picture alive,
+    so the picture's pixel data identifies the content. There is no fixed number of entries (a
+    limit below the number of pictures in use made every save encode every picture again);
+    instead an entry goes once no document, undo step or copy refers to its picture, i.e. once
+    the entry holds the only reference. The state can be saved from any thread, hence the lock
+    (never taken on the audio thread). */
+struct EncodedPictures
 {
     struct Entry
     {
@@ -140,39 +144,65 @@ juce::String encodeImage (const juce::Image& image)
         juce::String encoded;
     };
 
-    static std::mutex lock;
-    static std::vector<Entry> recent;
-    constexpr size_t maxEntries = 6;
+    std::mutex lock;
+    std::vector<Entry> entries;
 
-    const auto* pixels = image.getPixelData().get();
-
+    static EncodedPictures& get()
     {
-        const std::lock_guard<std::mutex> guard (lock);
+        static EncodedPictures pictures;
+        return pictures;
+    }
 
-        for (size_t i = 0; i < recent.size(); ++i)
-        {
-            if (recent[i].image.getPixelData().get() == pixels)
-            {
-                // Most recently used goes to the back.
-                auto entry = std::move (recent[i]);
-                recent.erase (recent.begin() + static_cast<std::ptrdiff_t> (i));
-                recent.push_back (entry);
-                return entry.encoded;
-            }
-        }
+    // Call these with the lock held.
+    void forgetUnused()
+    {
+        entries.erase (std::remove_if (entries.begin(), entries.end(),
+                                       [] (const Entry& entry) { return entry.image.getReferenceCount() <= 1; }),
+                       entries.end());
+    }
+
+    const Entry* find (const juce::Image& image) const
+    {
+        for (const auto& entry : entries)
+            if (entry.image == image)  // the same pixel data
+                return &entry;
+
+        return nullptr;
+    }
+};
+
+void forgetUnusedEncodings()
+{
+    auto& pictures = EncodedPictures::get();
+    const std::lock_guard<std::mutex> guard (pictures.lock);
+    pictures.forgetUnused();
+}
+
+void rememberEncoding (const juce::Image& image, const juce::String& encoded)
+{
+    auto& pictures = EncodedPictures::get();
+    const std::lock_guard<std::mutex> guard (pictures.lock);
+    pictures.forgetUnused();
+
+    // Another thread may have encoded the same picture meanwhile.
+    if (pictures.find (image) == nullptr)
+        pictures.entries.push_back ({ image, encoded });
+}
+
+juce::String encodeImage (const juce::Image& image)
+{
+    {
+        auto& pictures = EncodedPictures::get();
+        const std::lock_guard<std::mutex> guard (pictures.lock);
+
+        if (const auto* entry = pictures.find (image))
+            return entry->encoded;
     }
 
     auto encoded = encodePng (image);
 
     if (encoded.isNotEmpty())
-    {
-        const std::lock_guard<std::mutex> guard (lock);
-
-        if (recent.size() >= maxEntries)
-            recent.erase (recent.begin());
-
-        recent.push_back ({ image, encoded });
-    }
+        rememberEncoding (image, encoded);
 
     return encoded;
 }
@@ -184,7 +214,19 @@ juce::Image decodeImage (const juce::String& base64)
     if (base64.isEmpty() || ! juce::Base64::convertFromBase64 (data, base64) || data.getDataSize() == 0)
         return {};
 
-    return prepareImportedImage (juce::ImageFileFormat::loadFrom (data.getData(), data.getDataSize()));
+    const auto raw = juce::ImageFileFormat::loadFrom (data.getData(), data.getDataSize());
+    auto image = prepareImportedImage (raw);
+
+    // Decoding this text again gives exactly these pixels, so it serves as the picture's
+    // encoding and saving a drawing that was just loaded encodes nothing. Not when the text is
+    // not a PNG (the saved format) or the picture was shrunk on the way in (the text is then
+    // larger than it needs to be).
+    juce::MemoryInputStream header (data.getData(), data.getDataSize(), false);
+
+    if (image.isValid() && image.getBounds() == raw.getBounds() && juce::PNGImageFormat().canUnderstand (header))
+        rememberEncoding (image, base64);
+
+    return image;
 }
 
 /** 0 (text) or 1 (image), from the number or the words "text" / "image"; -1 if neither. */
@@ -402,6 +444,10 @@ void ArtDocument::clearPaint()
 
 juce::ValueTree ArtDocument::toValueTree() const
 {
+    // Lets go of the encodings of pictures that were deleted (with their undo steps) since the
+    // last save, even when this drawing has no pictures left to encode.
+    forgetUnusedEncodings();
+
     juce::ValueTree tree (ids::document);
     tree.setProperty (ids::version, documentVersion, nullptr);
 
