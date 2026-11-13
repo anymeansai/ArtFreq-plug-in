@@ -22,6 +22,11 @@
 //   freqart-dragging.png         the picture being dragged (its frequency range shown)
 //   freqart-painting.png         a brush stroke just painted, the brush cursor over it
 //   freqart-empty.png            after Clear: the empty canvas and its hint
+//   freqart-layers.png           the layer list: five objects, one hidden, one selected from the
+//                                list, the mouse over another row
+//   freqart-layers-hidden.png    the hidden object selected from the list (its outline on the canvas)
+//   freqart-layers-drag.png      a row being dragged to another place in the list
+//   freqart-layers-menu.png      an object's right-click menu on the canvas
 //   freqart-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
 //   freqart-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
 //   freqart-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
@@ -37,10 +42,11 @@
 // as on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
 // WAV file of the right length), that the window size is remembered, and drives the editor with
 // synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar,
-// the footer's Trigger, Repeat, start bar and Preview), checking what each does to the drawing
-// or the settings and that undo takes it back. It exits with 1 if a file cannot be written or a
-// check fails. At the end it puts the window on the (virtual) desktop to check the live view's
-// own timer: the analyser on while shown, scrolling, off when hidden.
+// the footer's Trigger, Repeat, start bar and Preview, the layer list, picking overlapping
+// objects), checking what each does to the drawing or the settings and that undo takes it back.
+// It exits with 1 if a file cannot be written or a check fails. At the end it puts the window on
+// the (virtual) desktop to check the live view's own timer: the analyser on while shown,
+// scrolling, off when hidden.
 //
 // On Linux run it under a virtual display:  xvfb-run -a FreqArtSnapshot out
 
@@ -52,6 +58,7 @@
 #include "ui/CanvasView.h"
 #include "ui/Editor.h"
 #include "ui/CanvasAxes.h"
+#include "ui/LayerList.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
 #include "ui/ShellFooter.h"
@@ -165,6 +172,7 @@ void makeRichDrawing (freqart::FreqArtProcessor& processor, juce::Uuid& textId, 
     document.objects.push_back (text);
 
     auto picture = ArtDocument::makeImageObject (prepareImportedImage (makeTestPicture()), 70.0f, 2200.0f);
+    picture.fileName = "logo.png";
     picture.startTime = 0.56f;
     picture.endTime = 0.96f;
     imageId = picture.id;
@@ -226,10 +234,10 @@ juce::MouseEvent mouseEventAt (juce::Component& c, juce::Point<float> position, 
              0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, downPosition, now, clicks, dragged };
 }
 
-void clickOn (juce::Component& c, juce::Point<float> at)
+void clickOn (juce::Component& c, juce::Point<float> at, juce::ModifierKeys mods = {})
 {
-    c.mouseDown (mouseEventAt (c, at, at, juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
-    c.mouseUp (mouseEventAt (c, at, at, {}));
+    c.mouseDown (mouseEventAt (c, at, at, mods.withFlags (juce::ModifierKeys::leftButtonModifier)));
+    c.mouseUp (mouseEventAt (c, at, at, mods));
 }
 
 /** Presses at `from`, moves to `to` in steps (as a real drag arrives) and lets go, unless
@@ -787,6 +795,233 @@ void checkFooter (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& pro
     settle();
 }
 
+/** The layer list and picking overlapping objects, with synthetic events: selecting from the
+    list (no undo step), the keyboard, hiding, reordering (which decides what a click on the
+    canvas picks), deleting, clicking again and Alt-clicking on the canvas, the right-click menu,
+    adding at the front. Everything is undone again, so the drawing ends as it began. */
+void checkLayers (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor,
+                  const juce::Uuid& textId, const juce::Uuid& imageId,
+                  const std::function<void (const juce::String&, bool)>& save)
+{
+    using namespace freqart;
+
+    auto* canvas = find<ui::CanvasView> (editor, "canvas");
+    auto* list = find<ui::LayerList> (editor, "layer-list");
+
+    if (canvas == nullptr || list == nullptr)
+        return;
+
+    const auto start = processor.getDocument();
+    const auto scale = processor.getScale();
+    const auto shown = [&] (const juce::String& id)
+    {
+        auto* c = findComponentWithId (editor, id);
+        return c != nullptr && c->isVisible();
+    };
+    const auto row = [&] (int index) { return list->getRowBounds (index).toFloat().getCentre(); };
+    const auto selected = [&] { return editor.getSelectedObject(); };
+    const auto frontId = [&] { return processor.getDocument().objects.back().id; };
+    const auto visible = [&] (const juce::Uuid& id)
+    {
+        const auto* o = processor.getDocument().find (id);
+        return o != nullptr && o->visible;
+    };
+
+    // Five objects. Back to front: the rich drawing's text and picture, a line of text in the
+    // lows, "WORLD" in the mids, and a picture with a long name over the end of "HELLO".
+    auto document = start;
+    const auto low = bandRange (Band::low, scale), mid = bandRange (Band::mid, scale), high = bandRange (Band::high, scale);
+
+    auto bass = ArtDocument::makeTextObject ("Bass drop\nsecond line", static_cast<float> (low.low), static_cast<float> (low.high));
+    bass.startTime = 0.04f;
+    bass.endTime = 0.40f;
+    auto world = ArtDocument::makeTextObject ("WORLD", static_cast<float> (mid.low), static_cast<float> (mid.high));
+    world.startTime = 0.10f;
+    world.endTime = 0.45f;
+    auto sunset = ArtDocument::makeImageObject (prepareImportedImage (makeTestPicture()), static_cast<float> (high.low), static_cast<float> (high.high));
+    sunset.fileName = "sunset-over-the-harbour-at-dusk.jpeg";
+    sunset.startTime = 0.36f;
+    sunset.endTime = 0.62f;
+
+    for (const auto& object : { bass, world, sunset })
+        document.objects.push_back (object);
+
+    processor.setDocument (document);
+    editor.selectObject (juce::Uuid::null());
+    pump (40);
+
+    check (shown ("layer-list") && list->getNumObjectRows() == 5, "with nothing selected the inspector lists the layers");
+
+    // ---- selecting from the list --------------------------------------------------------------------
+    // Rows are front first: sunset, WORLD, Bass drop, logo.png, HELLO.
+    clickOn (*list, row (4));
+    pump (20);
+    check (selected() == textId && shown ("layer-list") && ! shown ("inspector-band"),
+           "clicking a row selects its object and keeps the list");
+
+    list->keyPressed (juce::KeyPress (juce::KeyPress::upKey));
+    list->keyPressed (juce::KeyPress (juce::KeyPress::upKey));
+    check (selected() == bass.id, "Up moves the selection up the list");
+    list->keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+    check (selected() == imageId, "Down moves it down");
+
+    list->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (20);
+    check (shown ("inspector-mode") && ! shown ("layer-list") && shown ("inspector-layers"),
+           "Return opens the selected object's settings, with a way back to the list");
+
+    if (auto* back = find<juce::Button> (editor, "inspector-layers"))
+    {
+        clickOn (*back, back->getLocalBounds().getCentre().toFloat());
+        pump (20);
+        check (shown ("layer-list") && selected() == imageId, "\"Layers\" goes back to the list, the selection kept");
+    }
+
+    // Selecting is no undo step: the next undo takes back the five objects.
+    check (processor.undo() && processor.getDocument().objects.size() == 2, "selecting from the list is no undo step");
+    processor.redo();
+    pump (20);
+
+    // ---- hiding -------------------------------------------------------------------------------------
+    clickOn (*list, list->getEyeBounds (1).toFloat().getCentre());
+    pump (20);
+    check (! visible (world.id) && visible (sunset.id) && visible (textId), "the eye hides an object");
+    check (processor.undo() && visible (world.id), "hiding is one undo step");
+    processor.redo();
+    pump (20);
+
+    {
+        // A hidden object is silent: the drawing sounds as if it were not there at all.
+        auto without = processor.getDocument();
+        auto shownAgain = processor.getDocument();
+        without.remove (world.id);
+
+        if (auto* w = shownAgain.find (world.id))
+            w->visible = true;
+
+        Compositor compositor;
+        Canvas withHidden, withoutIt, withShown;
+        compositor.render (processor.getDocument(), scale, withHidden);
+        compositor.render (without, scale, withoutIt);
+        compositor.render (shownAgain, scale, withShown);
+        check (withHidden.values == withoutIt.values && withShown.values != withHidden.values,
+               "a hidden object is silent (the canvas is as if it were not there)");
+    }
+
+    // The picture: WORLD hidden, HELLO selected from the list, the mouse over "Bass drop".
+    clickOn (*list, row (4));
+    list->mouseMove (mouseEventAt (*list, row (2), row (2), {}));
+    save ("layers", true);
+    list->mouseExit (mouseEventAt (*list, { -5.0f, -5.0f }, row (2), {}));
+
+    clickOn (*list, row (1));
+    save ("layers-hidden", true);
+    check (selected() == world.id && ! visible (world.id), "a hidden object can be selected from the list");
+
+    // ---- order decides what a click on the canvas picks --------------------------------------------
+    const auto overlap = onCanvas (*canvas, start.objects.front(), scale).getIntersection (onCanvas (*canvas, sunset, scale)).getCentre();
+    editor.selectObject (juce::Uuid::null());
+    pump (20);
+    canvas->mouseMove (mouseEventAt (*canvas, overlap + juce::Point<float> (0.0f, 50.0f), overlap, {}));
+    clickOn (*canvas, overlap);
+    check (selected() == sunset.id, "a click where objects overlap picks the front-most");
+    clickOn (*canvas, overlap);
+    check (selected() == textId, "clicking again on the same spot picks the one underneath");
+    clickOn (*canvas, overlap);
+    check (selected() == sunset.id, "... and again goes round to the front");
+    clickOn (*canvas, overlap, juce::ModifierKeys::altModifier);
+    check (selected() == textId, "Alt-click picks the one underneath");
+
+    editor.selectObject (juce::Uuid::null());
+    pump (20);
+    dragOn (*list, row (4), list->getRowBounds (0).toFloat().getTopLeft() + juce::Point<float> (60.0f, 3.0f), {}, false);
+    save ("layers-drag", false);
+    list->mouseUp (mouseEventAt (*list, list->getRowBounds (0).toFloat().getTopLeft() + juce::Point<float> (60.0f, 3.0f), row (4), {}, 1, true));
+    check (frontId() == textId, "dragging a row to the top brings its object to the front");
+
+    editor.selectObject (juce::Uuid::null());
+    canvas->mouseMove (mouseEventAt (*canvas, overlap + juce::Point<float> (0.0f, 50.0f), overlap, {}));
+    clickOn (*canvas, overlap);
+    check (selected() == textId, "... where a click on the canvas now picks it");
+    processor.undo();
+    check (frontId() == sunset.id, "reordering is one undo step");
+    pump (20);
+
+    // ---- the right-click menu ------------------------------------------------------------------------
+    const auto rightClick = [&]
+    {
+        canvas->mouseMove (mouseEventAt (*canvas, overlap + juce::Point<float> (0.0f, 50.0f), overlap, {}));
+        canvas->mouseDown (mouseEventAt (*canvas, overlap, overlap, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier)));
+    };
+
+    editor.selectObject (juce::Uuid::null());
+    rightClick();
+    check (selected() == sunset.id, "a right-click selects the object under the mouse");
+    canvas->mouseUp (mouseEventAt (*canvas, overlap, overlap, {}));
+    juce::PopupMenu::dismissAllActiveMenus();
+    pump (30);
+
+    // Drawn at once (off screen, an open menu closes itself at its first timer tick), with the
+    // inspector already showing the selection.
+    rightClick();
+    save ("layers-menu", false);
+
+    if (auto* contentComponent = findComponentWithId (editor, "content"))
+    {
+        juce::Component* menuWindow = nullptr;
+
+        for (auto* child : contentComponent->getChildren())
+            if (child->getName() == "menu" && child->isVisible())
+                menuWindow = child;
+
+        const auto click = contentComponent->getLocalPoint (canvas, overlap);
+        check (menuWindow != nullptr && std::abs (static_cast<float> (menuWindow->getX()) - click.x) < 8.0f
+                                     && std::abs (static_cast<float> (menuWindow->getY()) - click.y) < 8.0f,
+               "the menu opens at the mouse");
+    }
+
+    canvas->mouseUp (mouseEventAt (*canvas, overlap, overlap, {}));
+    check (juce::PopupMenu::dismissAllActiveMenus(), "... and opens its menu");
+    pump (30);
+
+    ui::EditorState scratch;
+    ui::actions::performObjectMenuItem (processor, scratch, sunset.id, ui::actions::menuItems::sendToBack);
+    check (processor.getDocument().objects.front().id == sunset.id, "Send to back");
+    processor.undo();
+    ui::actions::performObjectMenuItem (processor, scratch, sunset.id, ui::actions::menuItems::hide);
+    check (! visible (sunset.id), "Hide");
+    processor.undo();
+
+    // ---- deleting, adding --------------------------------------------------------------------------
+    editor.selectObject (juce::Uuid::null());
+    pump (20);
+    list->mouseMove (mouseEventAt (*list, row (2), row (2), {}));
+    clickOn (*list, list->getDeleteBounds (2).toFloat().getCentre());
+    check (processor.getDocument().find (bass.id) == nullptr && processor.getDocument().objects.size() == 4,
+           "a row's delete button removes its object");
+    processor.undo();
+    check (processor.getDocument().objects[2].id == bass.id, "... and undo puts it back in its place");
+    pump (20);
+
+    if (auto* addText = find<juce::Button> (editor, "inspector-add-text"))
+    {
+        addText->onClick();
+        pump (20);
+        check (processor.getDocument().objects.size() == 6 && selected() == frontId() && shown ("inspector-text"),
+               "a new object goes in front, selected, its settings shown");
+        processor.undo();
+        pump (20);
+    }
+
+    // Back to the drawing as it was: WORLD shown again, then the five objects taken away.
+    processor.undo();
+    check (visible (world.id), "(WORLD shown again)");
+    processor.undo();
+    editor.selectObject (juce::Uuid::null());
+    pump (30);
+    check (sameDrawing (processor.getDocument(), start), "after the layer checks the drawing is back where it began");
+}
+
 int countDifferentPixels (const juce::Image& a, const juce::Image& b)
 {
     if (a.getBounds() != b.getBounds())
@@ -953,6 +1188,8 @@ int main (int argc, char* argv[])
         checkInteractions (*editor, processor, *content, textId, imageId,
                            [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
         checkFooter (*editor, processor, [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
+        checkLayers (*editor, processor, textId, imageId,
+                     [&] (const juce::String& name, bool settle) { save (name, pixelScale, settle); });
 
         // ---- the look of standard controls: a menu, a tooltip, typing a value --------------------------
         if (auto* length = find<juce::ComboBox> (*editor, "length"))

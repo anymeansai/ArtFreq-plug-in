@@ -2,10 +2,12 @@
 
 #include "Actions.h"
 #include "CanvasPlanImage.h"
+#include "LayerList.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "core/Compositor.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace freqart::ui
@@ -21,6 +23,9 @@ namespace
     constexpr int textFieldHeight = 64;
     constexpr int thumbnailHeight = 96;
     constexpr int thumbnailSource = 384;  // the thumbnail is worked out from a copy this size at most
+    constexpr int headingHeight = 34;     // a section title with its divider
+    constexpr int hintHeight = 16;
+    constexpr int brushSectionHeight = headingHeight + 4 + 3 * (labelHeight + controlHeight + sectionGap);
 
     constexpr float fillStart = 0.04f;    // "Fill length"
     constexpr float fillEnd = 0.96f;
@@ -81,6 +86,42 @@ namespace
         bool wheelMoving = false;
     };
 
+    /** "< Layers" in an object's title row: back to the list of layers. */
+    class LayersBackButton final : public juce::Button
+    {
+    public:
+        LayersBackButton() : juce::Button ("Layers")
+        {
+            setTooltip ("Back to the list of layers");
+        }
+
+        static juce::Font labelFont() { return fonts::ui (12.5f, fonts::UiWeight::medium); }
+
+        int getIdealWidth() const
+        {
+            return 4 + 14 + 3 + static_cast<int> (std::ceil (juce::GlyphArrangement::getStringWidth (labelFont(), getButtonText()))) + 7;
+        }
+
+        void paintButton (juce::Graphics& g, bool highlighted, bool down) override
+        {
+            const auto bounds = getLocalBounds().toFloat();
+
+            if (highlighted || down)
+            {
+                g.setColour (down ? theme::raised.darker (0.3f) : theme::raisedHover);
+                g.fillRoundedRectangle (bounds, 5.0f);
+            }
+
+            const auto colour = highlighted || down ? theme::text : theme::textDim;
+            const auto iconTop = std::round ((bounds.getHeight() - 14.0f) * 0.5f);
+            g.setColour (colour);
+            g.fillPath (icons::chevronLeft(), juce::AffineTransform::scale (14.0f / 24.0f).translated (4.0f, iconTop));
+
+            g.setFont (labelFont());
+            g.drawText (getButtonText(), bounds.withTrimmedLeft (21.0f), juce::Justification::centredLeft, false);
+        }
+    };
+
     /** "Delete": quiet until hovered, then the danger colour. */
     class InspectorDeleteButton final : public juce::Button
     {
@@ -124,20 +165,21 @@ struct Inspector::Impl
 {
     enum class Mode
     {
-        drawing,
+        layers,   // the list of layers (always with nothing selected), the brush settings
         text,
         image
     };
 
     Impl (Inspector& ownerToUse, FreqArtProcessor& processorToUse, EditorState& stateToUse)
         : owner (ownerToUse), processor (processorToUse), state (stateToUse),
+          layerList (processorToUse, stateToUse),
           addTextButton ("Add text", icons::text(), "Add text"),
           addImageButton ("Add image", icons::image(), "Add image..."),
           styleControl ({ "Solid", "Outline" }),
           bandControl ({ "Low", "Mid", "High", "Full" }),
           modeControl (imageModeNames)
     {
-        // ---- nothing selected ----
+        // ---- the layer list (nothing selected, or back from an object's settings) ----
         addTextButton.setTooltip ("Add a text object (in the mid band, or another band if that is taken)");
         addTextButton.onClick = [this] { actions::addText (processor, state); };
         addImageButton.setTooltip ("Add a picture (" + actions::pictureFormatNames() + ")");
@@ -155,6 +197,8 @@ struct Inspector::Impl
         sizeSlider.setDoubleClickReturnValue (true, 16.0);
         softnessSlider.setDoubleClickReturnValue (true, 50.0);
         strengthSlider.setDoubleClickReturnValue (true, 100.0);
+
+        backButton.onClick = [this] { state.showLayerList (true); };
 
         // ---- text ----
         textField.setMultiLine (true, true);
@@ -225,6 +269,8 @@ struct Inspector::Impl
         replaceButton.onClick = [this] { actions::chooseImage (processor, state, owner, true); };
 
         // Ids for the snapshot tool and tests, which drive the inspector like a user would.
+        layerList.setComponentID ("layer-list");
+        backButton.setComponentID ("inspector-layers");
         addTextButton.setComponentID ("inspector-add-text");
         addImageButton.setComponentID ("inspector-add-image");
         sizeSlider.setComponentID ("inspector-size");
@@ -247,7 +293,7 @@ struct Inspector::Impl
 
     std::vector<juce::Component*> allControls()
     {
-        return { &addTextButton, &addImageButton, &sizeSlider, &softnessSlider, &strengthSlider,
+        return { &layerList, &backButton, &addTextButton, &addImageButton, &sizeSlider, &softnessSlider, &strengthSlider,
                  &textField, &fontBox, &styleControl, &bandControl, &fillButton, &intensitySlider,
                  &deleteButton, &modeControl, &cleanupSlider, &replaceButton };
     }
@@ -335,26 +381,34 @@ struct Inspector::Impl
 
     void refresh()
     {
+        // The list follows every change, shown or not, so it is right the moment it shows.
+        layerList.refresh();
+
         const auto* object = selectedObject();
-        const auto newMode = object == nullptr ? Mode::drawing
+        const auto newMode = object == nullptr || state.isLayerListShown() ? Mode::layers
                            : object->type == ArtObject::Type::text ? Mode::text : Mode::image;
-        const auto newId = object != nullptr ? object->id : juce::Uuid::null();
+        const auto shownObject = newMode == Mode::layers ? nullptr : object;
+        const auto newId = shownObject != nullptr ? shownObject->id : juce::Uuid::null();
         const auto tool = state.getTool();
 
-        if (needsLayout || newMode != mode || newId != shownId || tool != shownTool)
+        // The list takes the room its rows need, so the panel is laid out again when that changes.
+        const auto listHeight = newMode == Mode::layers ? layerList.getContentHeight() : laidOutListHeight;
+
+        if (needsLayout || newMode != mode || newId != shownId || tool != shownTool || listHeight != laidOutListHeight)
         {
             needsLayout = false;
 
             if (newId != shownId)
             {
                 ++typingSession;  // another object: another undo step
-                lastWrittenText = object != nullptr ? object->text : juce::String();
+                lastWrittenText = shownObject != nullptr ? shownObject->text : juce::String();
             }
 
             mode = newMode;
             shownId = newId;
             shownTool = tool;
-            brushControlsShown = newMode == Mode::drawing && tool != Tool::select;
+            laidOutListHeight = listHeight;
+            brushControlsShown = newMode == Mode::layers && tool != Tool::select;
             updateVisibility();
             layout();
             owner.repaint();
@@ -364,23 +418,25 @@ struct Inspector::Impl
 
         switch (mode)
         {
-            case Mode::drawing: updateDrawing(); break;
-            case Mode::text:    updateText (*object); break;
-            case Mode::image:   updateImage (*object); break;
+            case Mode::layers: updateLayers(); break;
+            case Mode::text:   updateText (*shownObject); break;
+            case Mode::image:  updateImage (*shownObject); break;
         }
     }
 
     void updateVisibility()
     {
-        const auto drawing = mode == Mode::drawing;
+        const auto layers = mode == Mode::layers;
         const auto text = mode == Mode::text;
         const auto image = mode == Mode::image;
 
-        addTextButton.setVisible (drawing);
-        addImageButton.setVisible (drawing);
-        sizeSlider.setVisible (drawing && brushControlsShown);
-        softnessSlider.setVisible (drawing && brushControlsShown);
-        strengthSlider.setVisible (drawing && brushControlsShown);
+        layerList.setVisible (layers);
+        backButton.setVisible (! layers);
+        addTextButton.setVisible (layers);
+        addImageButton.setVisible (layers);
+        sizeSlider.setVisible (layers && brushControlsShown);
+        softnessSlider.setVisible (layers && brushControlsShown);
+        strengthSlider.setVisible (layers && brushControlsShown);
 
         textField.setVisible (text);
         fontBox.setVisible (text);
@@ -390,10 +446,10 @@ struct Inspector::Impl
         cleanupSlider.setVisible (image);
         replaceButton.setVisible (image);
 
-        bandControl.setVisible (! drawing);
-        fillButton.setVisible (! drawing);
-        intensitySlider.setVisible (! drawing);
-        deleteButton.setVisible (! drawing);
+        bandControl.setVisible (! layers);
+        fillButton.setVisible (! layers);
+        intensitySlider.setVisible (! layers);
+        deleteButton.setVisible (! layers);
     }
 
     void setTitleRow (const juce::String& newTitle, const juce::String& newReadout)
@@ -413,16 +469,24 @@ struct Inspector::Impl
             slider.setValue (value, juce::dontSendNotification);
     }
 
-    void updateDrawing()
+    void updateLayers()
     {
-        const auto count = static_cast<int> (processor.getDocument().objects.size());
-        const auto painted = processor.getDocument().hasPaint();
+        const auto& objects = processor.getDocument().objects;
+        const auto count = static_cast<int> (objects.size());
+        const auto hidden = static_cast<int> (std::count_if (objects.begin(), objects.end(), [] (const ArtObject& o) { return ! o.visible; }));
         auto summary = count == 0 ? juce::String() : juce::String (count) + (count == 1 ? " object" : " objects");
 
-        if (painted)
-            summary << (summary.isEmpty() ? "" : " + ") << "paint";
+        if (hidden > 0)
+            summary << ", " << hidden << " hidden";
 
-        setTitleRow ("Drawing", summary);
+        setTitleRow ("Layers", summary);
+
+        // How to use the list, once it has something in it.
+        if (const auto hint = count > 0; hint != hintShown)
+        {
+            hintShown = hint;
+            owner.repaint (hintArea);
+        }
 
         // Brush settings mirror the toolbar's.
         setSliderValue (sizeSlider, static_cast<double> (state.getBrushSize()));
@@ -576,15 +640,19 @@ struct Inspector::Impl
     void layout()
     {
         captions.clear();
-        helpArea = {};
         shortcutsArea = {};
         thumbnailArea = {};
         timeReadoutArea = {};
         modeCaptionArea = {};
+        hintArea = {};
 
         auto area = owner.getLocalBounds().reduced (pad);
-        titleArea = area.removeFromTop (titleHeight).expanded (pad, 4);
+        const auto titleRow = area.removeFromTop (titleHeight);
+        titleArea = titleRow.expanded (pad, 4);
         area.removeFromTop (14);
+
+        // "< Layers" leads an object's title, a step back up to the list.
+        backButton.setBounds (titleRow.withX (titleRow.getX() - 4).withWidth (backButton.getIdealWidth()));
 
         const auto section = [&] (const juce::String& caption, int height)
         {
@@ -594,24 +662,37 @@ struct Inspector::Impl
             return r;
         };
 
-        if (mode == Mode::drawing)
+        if (mode == Mode::layers)
         {
             auto row = area.removeFromTop (controlHeight);
             const auto half = (row.getWidth() - 8) / 2;
             addTextButton.setBounds (row.removeFromLeft (half));
             addImageButton.setBounds (row.removeFromRight (half));
-            area.removeFromTop (14);
-            helpArea = area.removeFromTop (76);
+            area.removeFromTop (12);
+
+            // The list takes what its rows need, and the keys follow it while they fit too. With
+            // more layers than that, the list takes all the room (and scrolls once it is full),
+            // so there is no gap where the keys were; the brush settings always keep their place.
+            const auto keysHeight = sectionGap + headingHeight + static_cast<int> (std::size (shortcuts)) * shortcutRowHeight;
+            const auto room = area.getHeight() - 6 - hintHeight - (brushControlsShown ? sectionGap + brushSectionHeight : 0);
+            const auto content = layerList.getContentHeight();
+            const auto keysFit = ! brushControlsShown && content + keysHeight <= room;
+            const auto minimum = juce::jmin (room, 2 * LayerList::rowHeight + 8);
+            const auto listHeight = keysFit || brushControlsShown ? juce::jmin (content, room) : room;
+
+            layerList.setBounds (area.removeFromTop (juce::jmax (minimum, listHeight)));
+            area.removeFromTop (6);
+            hintArea = area.removeFromTop (hintHeight);
             area.removeFromTop (sectionGap);
 
-            if (! brushControlsShown)
+            if (keysFit)
             {
-                captions.push_back ({ "Keys", area.removeFromTop (34), true });
+                captions.push_back ({ "Keys", area.removeFromTop (headingHeight), true });
                 shortcutsArea = area.removeFromTop (static_cast<int> (std::size (shortcuts)) * shortcutRowHeight);
             }
-            else
+            else if (brushControlsShown)
             {
-                captions.push_back ({ state.getTool() == Tool::erase ? "Eraser" : "Brush", area.removeFromTop (34), true });
+                captions.push_back ({ state.getTool() == Tool::erase ? "Eraser" : "Brush", area.removeFromTop (headingHeight), true });
                 area.removeFromTop (4);
                 sizeSlider.setBounds (section ("Size", controlHeight));
                 softnessSlider.setBounds (section ("Softness", controlHeight));
@@ -665,16 +746,29 @@ struct Inspector::Impl
         g.fillRect (0, 0, 1, owner.getHeight());
 
         auto titleRow = owner.getLocalBounds().reduced (pad).removeFromTop (titleHeight);
+
+        if (mode != Mode::layers)
+        {
+            // A breadcrumb: "< Layers / Text".
+            titleRow.setLeft (backButton.getRight() + 5);
+            g.setColour (theme::textFaint);
+            g.setFont (fonts::ui (theme::titleSize));
+            g.drawText ("/", titleRow, juce::Justification::centredLeft, false);
+            titleRow.setLeft (titleRow.getX() + 12);
+        }
+
+        const auto titleFont = fonts::ui (theme::titleSize, fonts::UiWeight::semiBold);
         g.setColour (theme::text);
-        g.setFont (fonts::ui (theme::titleSize, fonts::UiWeight::semiBold));
+        g.setFont (titleFont);
         g.drawText (title, titleRow, juce::Justification::centredLeft, false);
 
         if (readout.isNotEmpty())
         {
-            // Frequencies in mono (numbers line up); the drawing's summary is words.
-            g.setColour (mode == Mode::drawing ? theme::textFaint : theme::textDim);
-            g.setFont (mode == Mode::drawing ? fonts::ui (12.0f) : fonts::mono (11.0f));
-            g.drawText (readout, titleRow, juce::Justification::centredRight, false);
+            // Frequencies in mono (numbers line up); the list's summary is words.
+            const auto titleWidth = static_cast<int> (std::ceil (juce::GlyphArrangement::getStringWidth (titleFont, title)));
+            g.setColour (mode == Mode::layers ? theme::textFaint : theme::textDim);
+            g.setFont (mode == Mode::layers ? fonts::ui (12.0f) : fonts::mono (11.0f));
+            g.drawText (readout, titleRow.withTrimmedLeft (titleWidth + 8), juce::Justification::centredRight, true);
         }
 
         g.setFont (theme::labelFont());
@@ -696,13 +790,11 @@ struct Inspector::Impl
             g.drawText (caption.text.toUpperCase(), caption.area.withTrimmedBottom (4), juce::Justification::bottomLeft, false);
         }
 
-        if (! helpArea.isEmpty())
+        if (! hintArea.isEmpty() && hintShown)
         {
-            g.setColour (theme::textDim);
-            g.setFont (fonts::ui (12.5f));
-            g.drawFittedText ("Click an object on the canvas to change it: drag to move, drag a handle to resize. "
-                              "Brush and Erase paint freely. Drop a picture on the canvas to add it there.",
-                              helpArea, juce::Justification::topLeft, 5, 1.0f);
+            g.setColour (theme::textFaint);
+            g.setFont (fonts::ui (11.5f));
+            g.drawText ("Double-click to edit, drag to reorder", hintArea, juce::Justification::centredLeft, true);
         }
 
         if (! shortcutsArea.isEmpty())
@@ -790,16 +882,18 @@ struct Inspector::Impl
     FreqArtProcessor& processor;
     EditorState& state;
 
-    Mode mode = Mode::drawing;
+    Mode mode = Mode::layers;
     juce::Uuid shownId = juce::Uuid::null();
     Tool shownTool = Tool::select;
     bool brushControlsShown = false;
     bool updating = false;
     bool needsLayout = true;  // nothing is shown until the first refresh
     bool installedFocusCallback = false;
+    int laidOutListHeight = 0;
+    bool hintShown = false;
 
-    juce::String title { "Drawing" }, readout, timeReadout;
-    juce::Rectangle<int> titleArea, helpArea, thumbnailArea, timeReadoutArea, shortcutsArea;
+    juce::String title { "Layers" }, readout, timeReadout;
+    juce::Rectangle<int> titleArea, hintArea, thumbnailArea, timeReadoutArea, shortcutsArea;
 
     struct Shortcut
     {
@@ -807,11 +901,16 @@ struct Inspector::Impl
         const char* action;
     };
 
-    static constexpr int shortcutRowHeight = 28;
+    static constexpr int shortcutRowHeight = 26;
     static constexpr Shortcut shortcuts[] {
         { "Delete", "Remove the selection" },
         { "Arrows", "Nudge (Shift: 10 px)" },
         { "Shift-drag", "Move on one axis" },
+       #if JUCE_MAC
+        { "Option-click", "Pick the one underneath" },
+       #else
+        { "Alt-click", "Pick the one underneath" },
+       #endif
         { "Esc", "Deselect" },
         { "Double-click", "Edit the text" },
     };
@@ -839,6 +938,8 @@ struct Inspector::Impl
     juce::Rectangle<int> modeCaptionArea;
 
     // Controls
+    LayerList layerList;
+    LayersBackButton backButton;
     IconButton addTextButton, addImageButton;
     juce::Slider sizeSlider, softnessSlider, strengthSlider;
     InspectorTextField textField;
@@ -882,7 +983,9 @@ Inspector::~Inspector()
 
 void Inspector::focusTextField()
 {
-    // The selection may have changed a moment ago (its change message is still on its way).
+    // Typing needs the object's settings, also when it was picked in the layer list. The
+    // selection may have changed a moment ago (its change message is still on its way).
+    impl->state.showLayerList (false);
     impl->refresh();
 
     if (impl->mode == Impl::Mode::text && impl->textField.isShowing())

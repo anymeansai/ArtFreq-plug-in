@@ -11,6 +11,9 @@
 namespace freqart::ui::actions
 {
 
+// New objects go in front of the others (the end of the document's list) and are selected, so
+// the inspector shows their settings straight away.
+
 /** Adds a text object ("Text" placeholder content selected for typing) at newObjectPlacement,
     selects it, switches to the Select tool and asks for the text field focus. */
 void addText (FreqArtProcessor& processor, EditorState& state);
@@ -49,6 +52,54 @@ void reportUnreadablePicture (EditorState& state, const juce::File& file);
 
 /** Removes the selected object (no-op without a selection). */
 void deleteSelected (FreqArtProcessor& processor, EditorState& state);
+
+// ---- layers ----------------------------------------------------------------------------------
+// Each of these is one undo step (and does nothing if the object is gone or nothing changes).
+
+/** What the layer list calls an object: a text's first line, or the picture's file name
+    ("Picture" if it has none, "Empty text" for text with no words). */
+juce::String layerName (const ArtObject& object);
+
+/** Shows or hides an object. A hidden object stays in the drawing, silent and not drawn. */
+void setObjectVisible (FreqArtProcessor& processor, const juce::Uuid& id, bool visible);
+
+/** Shows or hides the paint layer. */
+void setPaintVisible (FreqArtProcessor& processor, bool visible);
+
+/** Moves an object to `newIndex` in the document's order (0 = the back, the last = the front),
+    which decides which of two overlapping objects the canvas picks. */
+void moveObject (FreqArtProcessor& processor, const juce::Uuid& id, int newIndex);
+void bringToFront (FreqArtProcessor& processor, const juce::Uuid& id);
+void sendToBack (FreqArtProcessor& processor, const juce::Uuid& id);
+
+/** Removes an object; if it was selected, nothing is selected afterwards. */
+void deleteObject (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id);
+
+/** Empties the paint layer (text and pictures stay). */
+void clearPaint (FreqArtProcessor& processor);
+
+/** The menu an object's right-click opens (on the canvas and in the layer list): Bring to
+    front, Send to back, Hide (Show for a hidden object), Delete. Items that would change
+    nothing are greyed out. performObjectMenuItem carries out the item with that id. */
+juce::PopupMenu objectMenu (const FreqArtProcessor& processor, const juce::Uuid& id);
+void performObjectMenuItem (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id, int itemId);
+
+/** Opens objectMenu at `position` (in `target`'s coordinates), inside the editor's window. The
+    chosen item is ignored if `target` has been deleted meanwhile. */
+void showObjectMenu (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id,
+                     juce::Component& target, juce::Point<int> position);
+
+namespace menuItems
+{
+    enum
+    {
+        bringToFront = 1,
+        sendToBack,
+        hide,
+        show,
+        remove
+    };
+} // namespace menuItems
 
 /** Moves the selected object to a band (keeps its time span). */
 void setSelectedBand (FreqArtProcessor& processor, EditorState& state, Band band);

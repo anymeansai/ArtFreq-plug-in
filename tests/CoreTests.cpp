@@ -848,6 +848,75 @@ FREQART_TEST (documentRoundTrip)
     CHECK (ArtDocument::fromValueTree (ArtDocument().toValueTree()).isEmpty());
 }
 
+FREQART_TEST (documentLayersRoundTrip)
+{
+    // Back to front: a picture, a hidden text, a text; the paint layer hidden.
+    ArtDocument document;
+    auto picture = ArtDocument::makeImageObject (prepareImportedImage (makeImage (24, 16, juce::Colours::white)), 40.0f, 250.0f);
+    picture.fileName = "logo.png";
+    auto hidden = ArtDocument::makeTextObject ("Hidden", 300.0f, 3000.0f);
+    hidden.visible = false;
+    auto front = ArtDocument::makeTextObject ("Front", 3500.0f, 16000.0f);
+
+    for (const auto& object : { picture, hidden, front })
+        document.objects.push_back (object);
+
+    document.paintStroke ({ { 10.0f, 10.0f }, { 900.0f, 400.0f }, 12.0f, 6.0f, 0.4f, 0.8f, false });
+    document.paintVisible = false;
+
+    // Through XML text, as the plug-in state travels: the order, what is hidden, the file name.
+    const auto xml = document.toValueTree().createXml();
+    CHECK (xml != nullptr);
+
+    if (xml == nullptr)
+        return;
+
+    const auto tree = juce::ValueTree::fromXml (*xml);
+    const auto loaded = ArtDocument::fromValueTree (tree);
+    CHECK (loaded.objects.size() == 3);
+    CHECK (! loaded.paintVisible && loaded.paint == document.paint);
+
+    if (loaded.objects.size() == 3)
+    {
+        CHECK (loaded.objects[0].id == picture.id && loaded.objects[1].id == hidden.id && loaded.objects[2].id == front.id);
+        CHECK (loaded.objects[0].visible && ! loaded.objects[1].visible && loaded.objects[2].visible);
+        CHECK (loaded.objects[0].fileName == "logo.png");
+        CHECK (loaded.objects[2].fileName.isEmpty());
+    }
+
+    // Documents saved before layers could be hidden show everything.
+    auto old = tree.createCopy();
+    old.removeProperty ("paintVisible", nullptr);
+
+    for (auto child : old)
+    {
+        child.removeProperty ("visible", nullptr);
+        child.removeProperty ("fileName", nullptr);
+    }
+
+    const auto fromOld = ArtDocument::fromValueTree (old);
+    CHECK (fromOld.paintVisible && fromOld.objects.size() == 3);
+
+    for (const auto& object : fromOld.objects)
+        CHECK (object.visible);
+
+    // Visibility written as words is read too; anything else is "shown".
+    auto words = tree.createCopy();
+    words.setProperty ("paintVisible", "true", nullptr);
+    words.getChild (0).setProperty ("visible", "false", nullptr);
+    words.getChild (1).setProperty ("visible", "banana", nullptr);
+    const auto fromWords = ArtDocument::fromValueTree (words);
+    CHECK (fromWords.paintVisible && fromWords.objects.size() == 3);
+
+    if (fromWords.objects.size() == 3)
+        CHECK (! fromWords.objects[0].visible && fromWords.objects[1].visible);
+
+    // Clearing the paint shows the (now empty) layer again: the next stroke must show.
+    auto cleared = loaded;
+    cleared.clearPaint();
+    CHECK (cleared.paintVisible && ! cleared.hasPaint());
+}
+
 FREQART_TEST (documentRemembersPictureEncodings)
 {
     // The text of a saved picture, by identity: the same address means it was not encoded again.
@@ -1178,6 +1247,50 @@ FREQART_TEST (compositorIntensityAndMax)
     document.clearPaint();
     compositor.render (document, scale, canvas);
     CHECK_NEAR (maxIn (canvas, { 0, 0, Canvas::width, Canvas::height }), 0.0f, 1.0e-9f);
+}
+
+FREQART_TEST (compositorSkipsHiddenLayers)
+{
+    const auto scale = makeScale (ScaleType::log);
+    const auto row = juce::roundToInt ((1.0 - scale.toNorm (2000.0)) * Canvas::height);
+
+    ArtDocument document;
+    auto a = whiteImageObject (0.1f, 0.4f, 1000.0f, 4000.0f);
+    auto b = whiteImageObject (0.6f, 0.9f, 1000.0f, 4000.0f);
+    document.objects.push_back (a);
+    document.objects.push_back (b);
+    document.paintStroke ({ { 512.0f, 0.0f }, { 512.0f, 511.0f }, 6.0f, 6.0f, 0.0f, 1.0f, false });
+
+    Compositor compositor;
+    Canvas all, hidden;
+    compositor.render (document, scale, all);
+    CHECK (all.get (250, row) > 0.99f && all.get (768, row) > 0.99f && all.get (512, 10) > 0.99f);
+
+    // A hidden object and a hidden paint layer are silent; the rest is untouched.
+    document.objects[1].visible = false;
+    document.paintVisible = false;
+    compositor.render (document, scale, hidden);
+    CHECK (hidden.get (250, row) > 0.99f);
+    CHECK_NEAR (maxIn (hidden, { 560, 0, Canvas::width - 560, Canvas::height }), 0.0f, 1.0e-9f);
+    CHECK_NEAR (maxIn (hidden, { 500, 0, 24, Canvas::height }), 0.0f, 1.0e-9f);
+
+    // Everything hidden: silence, though the drawing is not empty.
+    document.objects[0].visible = false;
+    compositor.render (document, scale, hidden);
+    CHECK (! document.isEmpty());
+    CHECK_NEAR (maxIn (hidden, { 0, 0, Canvas::width, Canvas::height }), 0.0f, 1.0e-9f);
+
+    // Shown again: exactly as before (a hidden picture keeps its cached processing).
+    document.objects[0].visible = true;
+    document.objects[1].visible = true;
+    document.paintVisible = true;
+    compositor.render (document, scale, hidden);
+    CHECK (hidden.values == all.values);
+
+    // The order of objects (the layer order) does not change the sound.
+    std::swap (document.objects[0], document.objects[1]);
+    compositor.render (document, scale, hidden);
+    CHECK (hidden.values == all.values);
 }
 
 FREQART_TEST (compositorPaintUpsampling)

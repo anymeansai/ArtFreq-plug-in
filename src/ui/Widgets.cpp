@@ -367,6 +367,33 @@ namespace icons
         return stroked ("M6 4 L18 4 A2 2 0 0 1 20 6 L20 18 A2 2 0 0 1 18 20 L6 20 A2 2 0 0 1 4 18 L4 6 A2 2 0 0 1 6 4 Z "
                         "M9.25 9.25 L14.75 14.75 M14.75 9.25 L9.25 14.75");
     }
+
+    // An almond with its pupil: shown. The same, struck through: hidden.
+    constexpr const char* eyeShape = "M2.5 12 C4.8 7.6 8.2 5.5 12 5.5 C15.8 5.5 19.2 7.6 21.5 12 "
+                                     "C19.2 16.4 15.8 18.5 12 18.5 C8.2 18.5 4.8 16.4 2.5 12 Z "
+                                     "M15 12 A3 3 0 1 1 9 12 A3 3 0 1 1 15 12 Z";
+
+    juce::Path eye()
+    {
+        return stroked (eyeShape);
+    }
+
+    juce::Path eyeOff()
+    {
+        auto path = stroked (eyeShape);
+        path.addPath (stroked ("M4 4 L20 20"));
+        return path;
+    }
+
+    juce::Path chevronLeft()
+    {
+        return stroked ("M14.5 6 L8.5 12 L14.5 18");
+    }
+
+    juce::Path chevronRight()
+    {
+        return stroked ("M9.5 6 L15.5 12 L9.5 18");
+    }
 } // namespace icons
 
 //==============================================================================

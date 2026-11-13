@@ -56,6 +56,7 @@ public:
               image: processImage (mode, cleanup), stretched to fill the rectangle (area-averaged
                      when shrinking, bilinear when enlarging);
         combined by taking the maximum. Objects partly off the visible range are clipped.
+        Hidden objects (and a hidden paint layer) are left out.
 
         Processed images are cached between calls (keyed by the image's pixel data, mode and
         clean-up), so re-rendering after moving an object or painting is cheap. */

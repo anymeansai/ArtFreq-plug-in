@@ -369,6 +369,23 @@ namespace
         return steps;
     }
 
+    const std::vector<Paragraph>& layerTips()
+    {
+       #if JUCE_MAC
+        static const juce::String altClick ("Option-click");
+       #else
+        static const juce::String altClick ("Alt-click");
+       #endif
+
+        static const std::vector<Paragraph> list {
+            { "The Layers list", "on the right shows every text and picture, front first. Click to select, "
+                                 "double-click for settings, drag to reorder; the eye hides one (silent, but kept)." },
+            { "Overlapping objects.", altClick + ", or click again on the same spot, to pick the one underneath. "
+                                      "Right-click for Bring to front, Send to back, Hide and Delete." },
+        };
+        return list;
+    }
+
     const std::vector<Paragraph>& triggerModes()
     {
         static const std::vector<Paragraph> modes {
@@ -466,6 +483,12 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
 
         for (const auto& [number, p] : helpSteps())
             paragraph (Block::Kind::step, number, leadText (p), textIndent, 14.0f);
+
+        y += 4.0f;
+        heading ("Layers");
+
+        for (const auto& p : layerTips())
+            paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
     }
     else
     {

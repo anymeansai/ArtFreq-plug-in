@@ -294,11 +294,15 @@ void Compositor::render (const ArtDocument& document, const FrequencyScale& scal
     else
         out.clear();
 
-    if (document.hasPaint())
+    // Hidden layers are left out (they stay in the document, silent).
+    if (document.paintVisible && document.hasPaint())
         drawPaint (document.paint, scale, document.paintScale, out);
 
     for (const auto& object : document.objects)
     {
+        if (! object.visible)
+            continue;
+
         const auto intensity = std::isfinite (object.intensity) ? juce::jlimit (0.0f, 1.0f, object.intensity) : 0.0f;
 
         if (intensity <= 0.0f)
@@ -316,7 +320,8 @@ void Compositor::render (const ArtDocument& document, const FrequencyScale& scal
     }
 
     // Work for pictures that are gone (or whose mode or clean-up changed) is dropped right away:
-    // each processed picture can be several megabytes.
+    // each processed picture can be several megabytes. A hidden picture keeps its work, so
+    // showing it again is instant.
     trimCache (document);
 }
 

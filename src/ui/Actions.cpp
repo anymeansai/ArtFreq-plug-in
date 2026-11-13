@@ -1,5 +1,6 @@
 #include "Actions.h"
 
+#include "LookAndFeel.h"
 #include "core/Compositor.h"
 
 #include <algorithm>
@@ -51,6 +52,7 @@ namespace
         tool so it can be moved straight away. */
     void addAndSelect (FreqArtProcessor& processor, EditorState& state, const ArtObject& object)
     {
+        // At the end of the list: in front of everything already there.
         processor.editDocument ([object] (ArtDocument& document) { document.objects.push_back (object); });
         state.setTool (Tool::select);
         state.setSelected (object.id);
@@ -207,16 +209,20 @@ void chooseImage (FreqArtProcessor& processor, EditorState& state, juce::Compone
 
             if (selected != nullptr && selected->type == ArtObject::Type::image)
             {
-                processor.editDocument ([id, image] (ArtDocument& document)
+                processor.editDocument ([id, image, name = file.getFileName()] (ArtDocument& document)
                 {
                     if (auto* object = document.find (id))
+                    {
                         object->image = image;
+                        object->fileName = name;
+                    }
                 });
                 return;
             }
         }
 
         auto object = ArtDocument::makeImageObject (image, 0.0f, 1.0f);
+        object.fileName = file.getFileName();
         placeNewObject (object, processor);
         addAndSelect (processor, state, object);
     });
@@ -236,6 +242,7 @@ bool addImageFile (FreqArtProcessor& processor, EditorState& state, const juce::
     const auto band = bandRange (bandAtHeight (1.0 - static_cast<double> (y), scale), scale);
 
     auto object = ArtDocument::makeImageObject (image, static_cast<float> (band.low), static_cast<float> (band.high));
+    object.fileName = file.getFileName();
     object.startTime = juce::jlimit (0.0f, 1.0f - droppedSpan, x - droppedSpan * 0.5f);
     object.endTime = object.startTime + droppedSpan;
 
@@ -290,6 +297,157 @@ void deleteSelected (FreqArtProcessor& processor, EditorState& state)
         processor.editDocument ([id] (ArtDocument& document) { document.remove (id); });
 
     state.setSelected (juce::Uuid::null());
+}
+
+//==============================================================================
+juce::String layerName (const ArtObject& object)
+{
+    if (object.type == ArtObject::Type::image)
+        return object.fileName.isNotEmpty() ? object.fileName : juce::String ("Picture");
+
+    // The first line with any words on it.
+    for (const auto& line : juce::StringArray::fromLines (object.text))
+        if (line.trim().isNotEmpty())
+            return line.trim();
+
+    return "Empty text";
+}
+
+void setObjectVisible (FreqArtProcessor& processor, const juce::Uuid& id, bool visible)
+{
+    const auto* object = processor.getDocument().find (id);
+
+    if (object == nullptr || object->visible == visible)
+        return;
+
+    processor.editDocument ([id, visible] (ArtDocument& document)
+    {
+        if (auto* o = document.find (id))
+            o->visible = visible;
+    });
+}
+
+void setPaintVisible (FreqArtProcessor& processor, bool visible)
+{
+    if (processor.getDocument().paintVisible != visible)
+        processor.editDocument ([visible] (ArtDocument& document) { document.paintVisible = visible; });
+}
+
+void moveObject (FreqArtProcessor& processor, const juce::Uuid& id, int newIndex)
+{
+    const auto& objects = processor.getDocument().objects;
+    const auto it = std::find_if (objects.begin(), objects.end(), [&id] (const ArtObject& o) { return o.id == id; });
+
+    if (it == objects.end())
+        return;
+
+    const auto from = static_cast<int> (std::distance (objects.begin(), it));
+    const auto to = juce::jlimit (0, static_cast<int> (objects.size()) - 1, newIndex);
+
+    if (from == to)
+        return;
+
+    processor.editDocument ([from, to] (ArtDocument& document)
+    {
+        auto& list = document.objects;
+
+        // A rotation keeps every other object in its order.
+        if (from < to)
+            std::rotate (list.begin() + from, list.begin() + from + 1, list.begin() + to + 1);
+        else
+            std::rotate (list.begin() + to, list.begin() + from, list.begin() + from + 1);
+    });
+}
+
+void bringToFront (FreqArtProcessor& processor, const juce::Uuid& id)
+{
+    moveObject (processor, id, static_cast<int> (processor.getDocument().objects.size()) - 1);
+}
+
+void sendToBack (FreqArtProcessor& processor, const juce::Uuid& id)
+{
+    moveObject (processor, id, 0);
+}
+
+void deleteObject (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id)
+{
+    if (processor.getDocument().find (id) != nullptr)
+        processor.editDocument ([id] (ArtDocument& document) { document.remove (id); });
+
+    if (state.getSelected() == id)
+        state.setSelected (juce::Uuid::null());
+}
+
+void clearPaint (FreqArtProcessor& processor)
+{
+    if (processor.getDocument().hasPaint())
+        processor.editDocument ([] (ArtDocument& document) { document.clearPaint(); });
+}
+
+juce::PopupMenu objectMenu (const FreqArtProcessor& processor, const juce::Uuid& id)
+{
+    juce::PopupMenu menu;
+    const auto& objects = processor.getDocument().objects;
+    const auto* object = processor.getDocument().find (id);
+
+    if (object == nullptr)
+        return menu;
+
+    const auto inFront = objects.back().id == id;
+    const auto atBack = objects.front().id == id;
+
+    menu.addItem (menuItems::bringToFront, "Bring to front", ! inFront);
+    menu.addItem (menuItems::sendToBack, "Send to back", ! atBack);
+    menu.addSeparator();
+
+    if (object->visible)
+        menu.addItem (menuItems::hide, "Hide");
+    else
+        menu.addItem (menuItems::show, "Show");
+
+    menu.addItem (menuItems::remove, "Delete");
+    return menu;
+}
+
+void performObjectMenuItem (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id, int itemId)
+{
+    switch (itemId)
+    {
+        case menuItems::bringToFront: bringToFront (processor, id); break;
+        case menuItems::sendToBack:   sendToBack (processor, id); break;
+        case menuItems::hide:         setObjectVisible (processor, id, false); break;
+        case menuItems::show:         setObjectVisible (processor, id, true); break;
+        case menuItems::remove:       deleteObject (processor, state, id); break;
+        default: break;
+    }
+}
+
+void showObjectMenu (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id,
+                     juce::Component& target, juce::Point<int> position)
+{
+    auto menu = objectMenu (processor, id);
+
+    if (menu.getNumItems() == 0)
+        return;
+
+    // A one-pixel target at the click: the menu opens beside the mouse, as a context menu does.
+    const auto at = target.localPointToGlobal (position);
+    auto options = juce::PopupMenu::Options()
+                       .withTargetScreenArea ({ at.x, at.y, 1, 1 })
+                       .withStandardItemHeight (28);
+
+    // Inside the window: scaled like the rest, never a separate desktop window.
+    if (auto* parent = FreqArtLookAndFeel::findPopupParent (target))
+        options = options.withParentComponent (parent);
+
+    // The processor and editor state outlive the target; if it has gone, so has the editor.
+    juce::Component::SafePointer<juce::Component> safeTarget (&target);
+
+    menu.showMenuAsync (options, [safeTarget, &processor, &state, id] (int result)
+    {
+        if (safeTarget != nullptr && result != 0)
+            performObjectMenuItem (processor, state, id, result);
+    });
 }
 
 void setSelectedBand (FreqArtProcessor& processor, EditorState& state, Band band)

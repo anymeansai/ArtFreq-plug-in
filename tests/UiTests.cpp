@@ -1,6 +1,7 @@
 // The editor, driven like a user would (synthetic mouse, wheel and key events delivered straight
 // to its components, no window): bounces, undo steps of wheel and arrow-key gestures, clicking
-// and placing objects, the live view's span, pictures that cannot be read.
+// and placing objects, the layer list, picking overlapping objects, the live view's span,
+// pictures that cannot be read.
 //
 // These need JUCE's GUI classes, so on Linux run them under a virtual display (xvfb-run -a).
 
@@ -14,6 +15,7 @@
 #include "ui/Actions.h"
 #include "ui/CanvasView.h"
 #include "ui/Editor.h"
+#include "ui/LayerList.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
 
@@ -75,10 +77,15 @@ juce::MouseEvent mouseEventAt (juce::Component& c, juce::Point<float> position, 
              0.0f, 0.0f, 0.0f, 0.0f, &c, &c, time, downPosition, time, 1, dragged };
 }
 
-void clickOn (juce::Component& c, juce::Point<float> at)
+void clickOn (juce::Component& c, juce::Point<float> at, juce::ModifierKeys mods = {})
 {
-    c.mouseDown (mouseEventAt (c, at, at, juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
-    c.mouseUp (mouseEventAt (c, at, at, {}));
+    c.mouseDown (mouseEventAt (c, at, at, mods.withFlags (juce::ModifierKeys::leftButtonModifier)));
+    c.mouseUp (mouseEventAt (c, at, at, mods));
+}
+
+juce::Point<float> centreOf (juce::Rectangle<int> r)
+{
+    return r.toFloat().getCentre();
 }
 
 void dragOn (juce::Component& c, juce::Point<float> from, juce::Point<float> to)
@@ -441,6 +448,312 @@ FREQART_TEST (uiClickInsideTheSelectionKeepsIt)
     CHECK (processor->getDocument().find (a.id)->startTime < a.startTime);
     CHECK (samePlacement (*processor->getDocument().find (b.id), b));
     CHECK (selected() == "A");
+}
+
+FREQART_TEST (uiLayerListSelectsHidesReordersAndDeletes)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    auto processor = makeProcessor();
+
+    // Back to front: A, B, C. The list shows them front first: C, B, A.
+    ArtDocument document;
+    document.objects.push_back (textIn (Band::low, 0.10f, 0.50f, "A"));
+    document.objects.push_back (textIn (Band::mid, 0.10f, 0.50f, "\n  B first line\nB second line"));
+    document.objects.push_back (textIn (Band::high, 0.10f, 0.50f, "C"));
+    processor->setDocument (document);
+    const auto a = document.objects[0], b = document.objects[1], c = document.objects[2];
+
+    auto editor = makeEditor (*processor);
+    auto* list = find<ui::LayerList> (*editor, "layer-list");
+    CHECK (list != nullptr && list->isVisible());
+
+    if (list == nullptr)
+        return;
+
+    const auto order = [&]
+    {
+        juce::String result;
+
+        for (const auto& o : processor->getDocument().objects)
+            result << o.text.trim().substring (0, 1);
+
+        return result;
+    };
+    const auto object = [&] (const ArtObject& o) { return processor->getDocument().find (o.id); };
+
+    CHECK (list->getNumObjectRows() == 3);
+    CHECK (ui::actions::layerName (b) == "B first line");
+
+    // Clicking a row selects its object and keeps the list; it is no undo step.
+    clickOn (*list, centreOf (list->getRowBounds (1)));
+    pump (20);
+    CHECK (editor->getSelectedObject() == b.id && editor->isLayerListShown() && list->isVisible());
+    CHECK (processor->undo() && processor->getDocument().objects.size() == 1);   // straight back to the default drawing
+    CHECK (processor->redo() && order() == "ABC");
+    pump (20);
+
+    // Up and Down walk the list (front first) and stop at its ends.
+    list->keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+    CHECK (editor->getSelectedObject() == a.id);
+    list->keyPressed (juce::KeyPress (juce::KeyPress::downKey));
+    CHECK (editor->getSelectedObject() == a.id);
+
+    for (int i = 0; i < 3; ++i)
+        list->keyPressed (juce::KeyPress (juce::KeyPress::upKey));
+
+    CHECK (editor->getSelectedObject() == c.id && editor->isLayerListShown());
+
+    // Return opens the settings; "< Layers" goes back to the list, the selection kept.
+    list->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
+    pump (20);
+    auto* field = find<juce::TextEditor> (*editor, "inspector-text");
+    CHECK (! editor->isLayerListShown() && field != nullptr && field->isVisible() && field->getText() == "C");
+    CHECK (! list->isVisible());
+
+    if (auto* back = find<juce::Button> (*editor, "inspector-layers"))
+    {
+        CHECK (back->isVisible());
+        back->onClick();
+        pump (20);
+    }
+
+    CHECK (editor->isLayerListShown() && list->isVisible() && editor->getSelectedObject() == c.id);
+
+    // A double-click on a row, or its chevron, opens the settings too.
+    list->mouseDown (mouseEventAt (*list, centreOf (list->getRowBounds (2)), centreOf (list->getRowBounds (2)),
+                                   juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier)));
+    list->mouseUp (mouseEventAt (*list, centreOf (list->getRowBounds (2)), centreOf (list->getRowBounds (2)), {}));
+    juce::MouseEvent second (juce::Desktop::getInstance().getMainMouseSource(), centreOf (list->getRowBounds (2)),
+                             juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier), juce::MouseInputSource::defaultPressure,
+                             0.0f, 0.0f, 0.0f, 0.0f, list, list, juce::Time::getCurrentTime(), centreOf (list->getRowBounds (2)),
+                             juce::Time::getCurrentTime(), 2, false);
+    list->mouseDown (second);
+    pump (20);
+    CHECK (editor->getSelectedObject() == a.id && ! editor->isLayerListShown());
+    editor->selectObject (juce::Uuid::null());
+    pump (20);
+    clickOn (*list, centreOf (list->getSettingsBounds (0)));
+    pump (20);
+    CHECK (editor->getSelectedObject() == c.id && ! editor->isLayerListShown());
+    editor->selectObject (juce::Uuid::null());
+    pump (20);
+
+    // The eye hides an object (one undo step) and shows it again.
+    clickOn (*list, centreOf (list->getEyeBounds (1)));
+    CHECK (! object (b)->visible && object (a)->visible && object (c)->visible);
+    CHECK (processor->undo() && object (b)->visible);
+    CHECK (processor->redo() && ! object (b)->visible);
+    pump (20);
+    clickOn (*list, centreOf (list->getEyeBounds (1)));
+    CHECK (object (b)->visible);
+    CHECK (processor->undo() && ! object (b)->visible && processor->undo() && object (b)->visible);
+    pump (20);
+
+    // Dragging a row reorders (one undo step): A from the back to the front.
+    dragOn (*list, centreOf (list->getRowBounds (2)), list->getRowBounds (0).toFloat().getTopLeft() + juce::Point<float> (40.0f, 3.0f));
+    CHECK_MSG (order() == "BCA", "order " << order());
+    CHECK (processor->undo() && order() == "ABC");
+    pump (20);
+
+    // ... and C from the front to between A and B.
+    dragOn (*list, centreOf (list->getRowBounds (0)), list->getRowBounds (2).toFloat().getTopLeft() + juce::Point<float> (40.0f, 2.0f));
+    CHECK_MSG (order() == "ACB", "order " << order());
+    CHECK (processor->undo() && order() == "ABC");
+    pump (20);
+
+    // A drag that lands where it started changes nothing (the step undone above is still there
+    // to redo: no edit was made).
+    dragOn (*list, centreOf (list->getRowBounds (1)), centreOf (list->getRowBounds (1)) + juce::Point<float> (0.0f, 8.0f));
+    CHECK (order() == "ABC" && processor->canRedo());
+
+    // The delete button removes the row's object (one undo step, back in its place).
+    clickOn (*list, centreOf (list->getDeleteBounds (0)));
+    CHECK (order() == "AB");
+    CHECK (processor->undo() && order() == "ABC");
+    pump (20);
+
+    // Delete with the list focused removes the selection and selects its neighbour.
+    clickOn (*list, centreOf (list->getRowBounds (1)));
+    list->keyPressed (juce::KeyPress (juce::KeyPress::deleteKey));
+    pump (20);
+    CHECK (order() == "AC" && editor->getSelectedObject() == a.id && editor->isLayerListShown());
+    CHECK (processor->undo() && order() == "ABC");
+    pump (20);
+
+    // Esc deselects.
+    clickOn (*list, centreOf (list->getRowBounds (1)));
+    list->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    CHECK (editor->getSelectedObject().isNull());
+
+    // The paint layer's row: the eye hides the paint, Clear empties it; one undo step each.
+    processor->editDocument ([] (ArtDocument& d)
+    {
+        d.paintStroke ({ { 100.0f, 100.0f }, { 400.0f, 120.0f }, 10.0f, 10.0f, 0.0f, 1.0f, false });
+    });
+    pump (20);
+    clickOn (*list, centreOf (list->getPaintEyeBounds()));
+    CHECK (! processor->getDocument().paintVisible && processor->getDocument().hasPaint());
+    clickOn (*list, centreOf (list->getPaintClearBounds()));
+    CHECK (! processor->getDocument().hasPaint() && processor->getDocument().paintVisible && order() == "ABC");
+    CHECK (processor->undo() && processor->getDocument().hasPaint() && ! processor->getDocument().paintVisible);
+    CHECK (processor->undo() && processor->getDocument().paintVisible);
+}
+
+FREQART_TEST (uiLayerListScrollsToTheSelection)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    auto processor = makeProcessor();
+
+    ArtDocument document;
+
+    for (int i = 0; i < 24; ++i)
+        document.objects.push_back (textIn (Band::mid, 0.01f * static_cast<float> (i), 0.5f, "Layer " + juce::String (i)));
+
+    processor->setDocument (document);
+    auto editor = makeEditor (*processor);
+    auto* list = find<ui::LayerList> (*editor, "layer-list");
+    CHECK (list != nullptr);
+
+    if (list == nullptr)
+        return;
+
+    const auto inView = [&] (juce::Rectangle<int> r) { return list->getLocalBounds().contains (r); };
+
+    // More rows than room: the list scrolls, starting at the top.
+    CHECK (list->getContentHeight() > list->getHeight());
+    CHECK (inView (list->getRowBounds (0)) && ! inView (list->getRowBounds (23)) && ! inView (list->getPaintRowBounds()));
+
+    // Up with nothing selected picks the last row (the back-most object), and brings it into view.
+    list->keyPressed (juce::KeyPress (juce::KeyPress::upKey));
+    pump (20);
+    CHECK (editor->getSelectedObject() == document.objects.front().id);
+    CHECK (inView (list->getRowBounds (23)) && ! inView (list->getRowBounds (0)));
+
+    // The wheel scrolls back up, and down to the paint layer.
+    wheel (*list, 60, 0.1f);
+    CHECK (inView (list->getRowBounds (0)));
+    wheel (*list, 60, -0.1f);
+    CHECK (inView (list->getPaintRowBounds()));
+
+    // A selection made on the canvas (or a new object) is scrolled to as well.
+    editor->selectObject (document.objects.back().id);
+    pump (20);
+    CHECK (inView (list->getRowBounds (0)));
+}
+
+FREQART_TEST (uiClickingAgainPicksTheObjectUnderneath)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    auto processor = makeProcessor();
+
+    // Back to front: A, B, and C, hidden, over both.
+    ArtDocument document;
+    document.objects.push_back (textIn (Band::mid, 0.10f, 0.60f, "A"));
+    document.objects.push_back (textIn (Band::mid, 0.40f, 0.90f, "B"));
+    document.objects.push_back (textIn (Band::mid, 0.30f, 0.70f, "C"));
+    document.objects.back().visible = false;
+    processor->setDocument (document);
+    const auto a = document.objects[0], b = document.objects[1], c = document.objects[2];
+
+    auto editor = makeEditor (*processor);
+    auto* canvas = find<ui::CanvasView> (*editor, "canvas");
+    CHECK (canvas != nullptr);
+
+    if (canvas == nullptr)
+        return;
+
+    const auto scale = processor->getScale();
+    const auto shared = onCanvas (*canvas, a, scale).getIntersection (onCanvas (*canvas, b, scale)).getCentre();
+    const auto selected = [&] { return editor->getSelectedObject(); };
+
+    // The front-most visible object (the hidden one cannot be clicked), then, clicking again on
+    // the same spot, the one underneath, and round again.
+    clickOn (*canvas, shared);
+    CHECK (selected() == b.id);
+    clickOn (*canvas, shared);
+    CHECK (selected() == a.id);
+    clickOn (*canvas, shared);
+    CHECK (selected() == b.id);
+
+    // Moving the mouse away in between makes it a fresh click: the selection stays.
+    canvas->mouseMove (mouseEventAt (*canvas, shared + juce::Point<float> (0.0f, 40.0f), shared, {}));
+    canvas->mouseMove (mouseEventAt (*canvas, shared, shared, {}));
+    clickOn (*canvas, shared);
+    CHECK (selected() == b.id);
+
+    // Alt (Option) - click picks the next one down at once.
+    canvas->mouseMove (mouseEventAt (*canvas, shared + juce::Point<float> (0.0f, 40.0f), shared, {}));
+    clickOn (*canvas, shared, juce::ModifierKeys::altModifier);
+    CHECK (selected() == a.id);
+    clickOn (*canvas, shared, juce::ModifierKeys::altModifier);
+    CHECK (selected() == b.id);
+
+    // A press and drag on the selection moves it, and picks nothing else.
+    clickOn (*canvas, shared, juce::ModifierKeys::altModifier);
+    CHECK (selected() == a.id);
+    dragOn (*canvas, shared, shared + juce::Point<float> (-30.0f, 0.0f));
+    CHECK (selected() == a.id && processor->getDocument().find (a.id)->startTime < a.startTime);
+    CHECK (samePlacement (*processor->getDocument().find (b.id), b));
+    CHECK (processor->undo());
+
+    // A hidden object picked in the layer list can be moved on the canvas, where it shows
+    // only as an outline.
+    if (auto* list = find<ui::LayerList> (*editor, "layer-list"))
+    {
+        editor->selectObject (juce::Uuid::null());
+        pump (20);
+        clickOn (*list, centreOf (list->getRowBounds (0)));
+        CHECK (selected() == c.id);
+        dragOn (*canvas, shared, shared + juce::Point<float> (0.0f, 30.0f));
+        CHECK (selected() == c.id && ! samePlacement (*processor->getDocument().find (c.id), c));
+        CHECK (! processor->getDocument().find (c.id)->visible);
+        CHECK (processor->undo());
+    }
+
+    // Right-click selects the object under the mouse and opens its menu.
+    editor->selectObject (juce::Uuid::null());
+    pump (20);
+    const auto right = juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier);
+    canvas->mouseDown (mouseEventAt (*canvas, shared, shared, right));
+    canvas->mouseUp (mouseEventAt (*canvas, shared, shared, {}));
+    CHECK (selected() == b.id);
+    CHECK (juce::PopupMenu::dismissAllActiveMenus());
+    pump (20);
+
+    // The menu: Bring to front, Send to back (greyed where it would change nothing), Hide or
+    // Show, Delete; each one undo step.
+    namespace items = ui::actions::menuItems;
+    const auto menu = ui::actions::objectMenu (*processor, b.id);
+    juce::StringArray names;
+
+    for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+        if (! it.getItem().isSeparator)
+            names.add (it.getItem().text + (it.getItem().isEnabled ? "" : " (off)"));
+
+    CHECK_MSG (names.joinIntoString (", ") == "Bring to front, Send to back, Hide, Delete", names.joinIntoString (", ").toStdString());
+
+    ui::EditorState state;
+    ui::actions::performObjectMenuItem (*processor, state, a.id, items::bringToFront);
+    CHECK (processor->getDocument().objects.back().id == a.id);
+    CHECK (processor->undo() && processor->getDocument().objects.front().id == a.id);
+    ui::actions::performObjectMenuItem (*processor, state, c.id, items::sendToBack);
+    CHECK (processor->getDocument().objects.front().id == c.id);
+    CHECK (processor->undo() && processor->getDocument().objects.back().id == c.id);
+    ui::actions::performObjectMenuItem (*processor, state, c.id, items::show);
+    CHECK (processor->getDocument().find (c.id)->visible);
+    CHECK (processor->undo() && ! processor->getDocument().find (c.id)->visible);
+    state.setSelected (a.id);
+    ui::actions::performObjectMenuItem (*processor, state, a.id, items::remove);
+    CHECK (processor->getDocument().find (a.id) == nullptr && ! state.hasSelection());
+    CHECK (processor->undo() && processor->getDocument().find (a.id) != nullptr);
+
+    const auto hiddenMenu = ui::actions::objectMenu (*processor, c.id);
+    auto showsShow = false;
+
+    for (juce::PopupMenu::MenuItemIterator it (hiddenMenu); it.next();)
+        showsShow = showsShow || it.getItem().text == "Show";
+
+    CHECK (showsShow);
 }
 
 FREQART_TEST (uiNewObjectsDoNotLandOnOthers)
