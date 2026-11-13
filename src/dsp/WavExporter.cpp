@@ -37,7 +37,8 @@ float softClip (float x) noexcept
 
 bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
                       const juce::File& target, juce::String& error,
-                      const std::function<bool()>& shouldCancel)
+                      const std::function<bool()>& shouldCancel,
+                      const std::function<void (double)>& onProgress)
 {
     if (! (settings.sampleRate >= 8000.0 && settings.sampleRate <= 384000.0))
     {
@@ -171,6 +172,9 @@ bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
         }
 
         done += blockLength;
+
+        if (onProgress != nullptr)
+            onProgress (static_cast<double> (done) / static_cast<double> (totalSamples));
     }
 
     // Finish the header now, while the stream can still say whether everything got there.
@@ -192,6 +196,83 @@ bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
     }
 
     return true;
+}
+
+//==============================================================================
+juce::String fileNamePart (const juce::String& text, int maxLength)
+{
+    // Letters, digits and punctuation that means nothing to a file system, a shell or a DAW's
+    // browser. Everything else (/ \ : * ? " < > |, dots, line breaks, emoji ...) separates words.
+    const juce::String harmless ("-_()'&+!");
+    juce::String spaced;
+
+    for (auto c = text.getCharPointer(); ! c.isEmpty();)
+    {
+        const auto character = c.getAndAdvance();
+        const auto keep = (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z')
+                       || (character >= '0' && character <= '9') || harmless.containsChar (character)
+                       || (character >= 0xc0 && character <= 0x24f && character != 0xd7 && character != 0xf7);
+        spaced += keep ? character : static_cast<juce::juce_wchar> (' ');
+    }
+
+    juce::StringArray words;
+    words.addTokens (spaced, " ", {});
+    words.removeEmptyStrings();
+
+    juce::String result;
+
+    for (const auto& word : words)
+    {
+        const auto longer = result.isEmpty() ? word : result + " " + word;
+
+        if (longer.length() > maxLength)
+        {
+            // Whole words where they fit; a single word longer than the limit is cut.
+            if (result.isEmpty())
+                result = word.substring (0, juce::jmax (0, maxLength));
+
+            break;
+        }
+
+        result = longer;
+    }
+
+    return result;
+}
+
+juce::String bounceLabel (const ArtDocument& document)
+{
+    constexpr int longestLabel = 20;
+
+    for (const auto& object : document.objects)
+        if (object.type == ArtObject::Type::text)
+            if (const auto label = fileNamePart (object.text, longestLabel); label.isNotEmpty())
+                return label;
+
+    return "Drawing";
+}
+
+juce::File reserveBounceFile (const juce::File& folder, const juce::String& label, juce::Time when)
+{
+    if (folder.createDirectory().failed())
+        return {};
+
+    const auto name = label.isEmpty() ? juce::String ("FreqArt")
+                    : label.startsWith ("FreqArt") ? label
+                    : "FreqArt " + label;
+    const auto stem = name + " " + when.formatted ("%H-%M-%S");
+
+    for (int number = 1; number < 1000; ++number)
+    {
+        const auto file = folder.getChildFile ((number == 1 ? stem : stem + " " + juce::String (number)) + ".wav");
+
+        // Created at once, so the name is taken before the render starts: every instance in a
+        // host chooses names on the one message thread, so none can slip in between.
+        if (! file.exists())
+            return file.create().wasOk() ? file : juce::File();
+    }
+
+    return {};
 }
 
 } // namespace freqart

@@ -364,7 +364,7 @@ namespace
                                                        "in the panel on the right. Density sets how many lines draw it." } },
             { "6", { "Press play in your DAW.", "Or press Preview to hear the drawing while the DAW is stopped "
                                                 "(once, or on a loop with Repeat)." } },
-            { "7", { "Bounce to WAV.", "Export renders one pass. Drag the file into your DAW, or save it." } },
+                                       "your DAW, or save it." } },
         };
         return steps;
     }

@@ -15,7 +15,8 @@
 //   freqart-settings.png         the settings panel open
 //   freqart-settings-reset.png   the same, asking to confirm "Reset drawing"
 //   freqart-help.png             the help panel open
-//   freqart-export.png           after "Bounce WAV": the chip and "Save..."
+//   freqart-export.png           after "Bounce WAV": the chip (the file's name) and "Save..."
+//   freqart-export-updating.png  just after a change: the chip says "Updating..." until the new file
 //   freqart-menu.png             the Length menu open
 //   freqart-tooltip.png          a tooltip (Density's)
 //   freqart-edit.png             typing a value into the Level knob
@@ -38,9 +39,10 @@
 //   freqart-150.png              window at 150 %, one image pixel per logical pixel
 //   freqart-200.png              window at 200 %, one image pixel per logical pixel
 //
-// All but the last four are rendered at <pixel-scale> image pixels per logical pixel (default 2,
-// as on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
-// WAV file of the right length), that the window size is remembered, and drives the editor with
+// All but the last two are rendered at <pixel-scale> image pixels per logical pixel (default 2, as
+// on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
+// WAV file of the right length, named on the chip, which says "Updating..." after a change until
+// a new file takes its place), that the window size is remembered, and drives the editor with
 // synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar,
 // the footer's Trigger, Repeat, start bar and Preview, the layer list, picking overlapping
 // objects), checking what each does to the drawing or the settings and that undo takes it back.
@@ -1261,6 +1263,14 @@ int main (int argc, char* argv[])
         // ---- export -------------------------------------------------------------------------------
         if (auto* exporter = find<ui::shell::ExportPanel> (*editor, "export"))
         {
+            auto* chip = findComponentWithId (*editor, "export-chip");
+            auto* saveButton = find<juce::Button> (*editor, "export-save");
+            const auto updating = "Updating" + juce::String::fromUTF8 ("\xe2\x80\xa6");
+            const auto chipSays = [&] (const juce::String& text) { return chip != nullptr && chip->isVisible() && chip->getTitle() == text; };
+
+            // Shown, as in a host: the export renders by itself only while it can be seen.
+            editor->setVisible (true);
+
             if (auto* bounce = find<juce::Button> (*editor, "bounce"))
             {
                 check (bounce->isEnabled(), "Bounce WAV is enabled for a drawing");
@@ -1270,22 +1280,33 @@ int main (int argc, char* argv[])
             check (exporter->isBouncing(), "the bounce runs in the background");
             check (exporter->waitForBounce (60000), "the bounce finishes");
             check (exporter->hasCurrentFile(), "the bounce made a file: " + exporter->getLastError());
-            check (checkWav (exporter->getBounceFile(), processor.getLengthSeconds()), "the bounce is one pass, stereo");
+
+            const auto first = exporter->getBounceFile();
+            check (checkWav (first, processor.getLengthSeconds()), "the bounce is one pass, stereo");
+            check (first.getFileName().startsWith ("FreqArt HELLO "), "the file is named after the drawing's text: " + first.getFileName());
+            check (chipSays (first.getFileName()) && saveButton != nullptr && saveButton->isEnabled(), "ready: the chip shows the file's name");
             save ("export", pixelScale);
 
-            // A different drawing makes the file stale: back to "Bounce WAV".
+            // A change: at once the chip says "Updating..." and hands nothing out, ...
             setParameter (processor, params::id::density, 200.0f);
-            processor.rebuildPlanIfNeeded();
-            pump (80);
             exporter->refresh();
-            check (! exporter->hasCurrentFile(), "changing the drawing retires the bounce");
+            check (chipSays (updating) && exporter->getFileToHandOut() == juce::File() && saveButton != nullptr && ! saveButton->isEnabled(),
+                   "updating: the chip says so, and cannot be dragged or saved");
+            save ("export-updating", pixelScale);
+            check (chipSays (updating) && ! exporter->hasCurrentFile(), "... while the drawing settles");
 
-            // The next bounce is a file of its own; the one before (never dragged out) goes.
-            const auto first = exporter->getBounceFile();
-            exporter->startBounce();
-            check (exporter->waitForBounce (60000) && exporter->hasCurrentFile(), "a second bounce finishes");
-            check (exporter->getBounceFile().existsAsFile() && exporter->getBounceFile() != first && ! first.exists(),
-                   "every bounce has its own file, and replaces the one before");
+            // ... until the new file takes its place by itself, under a new name.
+            for (int waited = 0; waited < 60000 && ! exporter->hasCurrentFile(); waited += 20)
+                pump (20);
+
+            const auto second = exporter->getBounceFile();
+            check (exporter->hasCurrentFile() && second != first && checkWav (second, processor.getLengthSeconds()),
+                   "the new drawing is rendered without a click");
+            check (chipSays (second.getFileName()) && second.getFileName() != first.getFileName() && saveButton != nullptr && saveButton->isEnabled(),
+                   "ready again: the chip shows the new name");
+            check (! first.exists(), "the file it replaces (never dragged out) is gone");
+
+            editor->setVisible (false);
         }
 
         // ---- window sizes -------------------------------------------------------------------------

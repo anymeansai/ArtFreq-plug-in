@@ -48,7 +48,8 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
   analyser only while the live view is visible. No locks, no allocation.
 - **Plans** travel through `PlanExchange` (wait-free acquire on the audio thread, garbage
   collected on the message thread).
-- **Export** renders on a background thread from a shared (immutable) plan.
+- **Export** renders on a background thread from a shared (immutable) plan; a change that makes
+  the render unwanted stops it (the message thread never waits for it).
 
 ## Parameters
 
@@ -279,13 +280,32 @@ while visible.
   click to type, Enter commits, Esc cancels, out-of-range values clamp to 1..999.
 - Preview: a round play/stop button (accent2 when on). Plays the drawing from its start, on a
   loop with Repeat, else once (then it turns itself off).
-- Export: "Bounce WAV" button renders one pass in the background; then a draggable chip
-  "FreqArt.wav  (drag into your DAW)" plus "Save..." (async FileChooser). Every bounce is a new
-  file, FreqArt-<uuid>.wav in a FreqArt folder in the temp directory, so no bounce (of this
-  instance or another) replaces a file already handed out. The previous bounce is deleted when the
-  next one finishes and when the window closes, unless it was dragged out (a DAW may read it where
-  it is); FreqArt-*.wav files a day old are deleted when an editor opens. Closing the window stops
-  a running bounce (the render checks once per block) instead of waiting for it.
+- Export: "Bounce WAV" renders one pass in the background ("Rendering..." on the button); then a
+  draggable chip names the file on two lines ("FreqArt HELLO" over "14-03-27.wav"), plus "Save..."
+  (async FileChooser).
+  - **Names.** Every bounce is a new file in <temp>/FreqArt, "FreqArt <first text, or Drawing>
+    <HH-MM-SS>.wav" (the text cut to letters, digits, spaces and `-_()'&+!`, at most 20
+    characters; " 2", " 3" ... in the same second). The file is created when its render starts,
+    which reserves the name, so no two bounces (of this instance or another) ever share one. DAWs
+    (Logic, Live, FL Studio) know dropped audio by its path and name and keep what they read the
+    first time: a file rewritten under the same name (0.1.0 wrote FreqArt.wav every time) plays
+    the old audio after the second drag.
+  - **Always fresh.** From the first click until the window closes, the file follows the drawing.
+    A change to the drawing, length, tempo, level (or the sample rate) turns the chip into
+    "Updating..." at once: it cannot be dragged, Save... is off, a thin line shows the render's
+    progress. That includes the moment between an edit and the processor's timer rebuilding the
+    plan (`isPlanPending`), and a drag asks again when it starts, so the chip never hands out an
+    older drawing. A render that is no longer wanted is stopped; once nothing has changed for
+    400 ms the new file renders in the background and takes the chip, with its new name. Renders
+    start by themselves only while the export can be seen; nothing renders before the first click.
+    An empty drawing shows "Nothing drawn". A failed render brings the button back under the error
+    (it is not retried by itself until something changes).
+  - **Save...** saves the current file; chosen while an update is on its way, it saves the update
+    once it is in.
+  - **Clean-up.** A file is deleted when the next one takes over and when the window closes,
+    unless it was dragged out (a DAW may read it where it is); FreqArt*.wav files a day old are
+    deleted when an editor opens. Closing the window stops running renders (the render checks once
+    per block) instead of waiting for them.
 
 ### Header
 
@@ -324,9 +344,11 @@ preview once and looping; jumps); end-to-end: a canvas rendered to audio and ana
 correlate with the canvas; processor (state round trip, defaults, states from before Repeat and
 the Free-loop migration, a single pass and a held MIDI loop through the processor, a single pass
 through time-signature changes and at a typed tempo, preview following Repeat, process with MIDI,
-panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (and
-cancelling it);
-the editor, driven with synthetic events (bounce files, undo steps of wheel and arrow gestures,
+panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (cancelling it, its
+progress, bounce file names);
+the editor, driven with synthetic events (bounce files; the export following the drawing:
+after each change a new file that matches a render of the new plan, the chip's "Updating...",
+stopped renders, saving the current file; undo steps of wheel and arrow gestures,
 clicking and placing objects, the layer list: selecting, the keyboard, hiding, reordering,
 deleting, the paint row; clicking again, Alt-click and the right-click menu on the canvas; the
 live view's span, unreadable pictures; under a virtual display on Linux). Hidden layers: the
