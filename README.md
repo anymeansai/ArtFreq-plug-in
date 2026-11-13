@@ -16,6 +16,7 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
    - **+ Text** adds a text box in the mid band across the whole length (or, if something is already there, in a free band), ready for typing. Pick a font and Solid or Outline letters in the inspector on the right.
    - **+ Image** adds a picture (PNG, JPEG, GIF, HEIC, WebP, TIFF or BMP), placed like new text, or drop an image file straight onto the canvas: it lands in the band under the cursor. A file that cannot be read is reported at the bottom of the canvas. **Mode** decides what in the picture becomes sound; **Auto** usually gets it right (on a white background it draws the dark parts).
    - **Brush** and **Erase** paint on the canvas, with Size, Soft and Strength in the toolbar.
+   - **Layers.** With nothing selected, the panel on the right lists every text and picture, front first, and the paint layer last. Click a row to select it (handy when a picture covers some text), double-click it (or click its **›**) for its settings, drag rows to reorder, and click the eye to hide one: a hidden layer stays in the drawing, and in your saved session, but makes no sound. **‹ Layers** at the top of an object's settings goes back to the list.
 6. **Place it with the bands.** Select an object and choose a **Band** in the inspector: **Low** (40–250 Hz), **Mid** (300 Hz–3 kHz), **High** (3.5–16 kHz) or **Full** (the whole visible range). Or drag it to move it, and drag its handles to resize it. **Fill length** stretches it across the drawing.
 7. **Set the density.** **Density** is the number of sine lines across the height of the canvas. Few lines give a scan-line look; many lines merge into solid shapes.
 8. **Set the contrast.** **Contrast** is how many decibels separate the brightest parts of the drawing from the faintest. To reproduce greys faithfully, set it near the range your spectrogram shows from dark to full colour; lower it to bring out faint detail, raise it for deeper blacks.
@@ -49,12 +50,24 @@ The **?** button shows these steps inside the plug-in.
 | **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, a drag, a scroll over a bar, holding down an arrow key, or one session of typing in a text box is one step. |
 | **?** | The how-to, inside the window. |
 | **Gear** | Settings: match your analyser (Scale, Low, High, Slope), window size, and Reset drawing. |
-| **Select** | Click an object to select it (a click inside the selected object keeps it, even where another lies over it). Drag inside it to move it, drag a handle to resize it. Delete or Backspace removes it; the arrow keys nudge it (Shift: 10 times as far). Click empty canvas to deselect. |
+| **Select** | Click an object to select it (a click inside the selected object keeps it, even where another lies over it). Where objects overlap, Option-click (Alt-click), or click again on the same spot, to pick the one underneath. Right-click an object for **Bring to front**, **Send to back**, **Hide** and **Delete**. Drag inside it to move it, drag a handle to resize it. Delete or Backspace removes it; the arrow keys nudge it (Shift: 10 times as far). Click empty canvas to deselect. |
 | **Brush / Erase** | Paint or erase. **Size** 2–64 px (on screen), **Soft** 0–100 % (a hard edge to fully feathered), **Strength** 0–100 % (how loud the brush paints). |
 | **+ Text / + Image** | Add a text box or a picture. Pictures can also be dropped onto the canvas. |
 | **Clear** | Removes all objects and paint (one undo step). |
 
-**Inspector** (right-hand panel, for the selected object)
+**Layers** (right-hand panel, with nothing selected)
+
+| Control | What it does |
+| --- | --- |
+| **Rows** | One per text or picture, the front-most at the top; the paint layer is the last row. Click to select (the list stays), double-click or **›** for the settings, drag to reorder. The order decides which object a click on the canvas picks where they overlap; it never changes the sound. |
+| **Eye** | Hide or show. A hidden layer is silent and not drawn, but kept and saved; selected from the list it shows as a dashed outline you can still move. |
+| **Bin** (on hover) | Delete the object. |
+| **Clear** (paint row) | Clear the paint, keeping text and pictures. |
+| **Keys** | With the list focused: Up and Down move the selection, Return opens its settings, Delete removes it, Esc deselects. |
+
+Hiding, reordering and deleting are one undo step each; selecting is none. New text and pictures go in front, selected.
+
+**Inspector** (right-hand panel, for the selected object; **‹ Layers** goes back to the list)
 
 | Control | What it does |
 | --- | --- |
@@ -98,7 +111,7 @@ Automation: Level, Length, Trigger, Tempo and BPM can be automated (in the autom
 
 ## How it works
 
-- **The drawing.** A paint layer plus any number of text and picture objects. Objects are placed by time (a fraction of the length) and by frequency in hertz, so "in the highs" keeps meaning the highs if you change the analyser scale; the paint layer remembers the scale it was painted on, so brush strokes keep their frequencies too. Everything is flattened into a 1024 × 1024 picture of loudness values (the maximum of all layers): the canvas.
+- **The drawing.** A paint layer plus any number of text and picture objects, each of which can be hidden. Objects are placed by time (a fraction of the length) and by frequency in hertz, so "in the highs" keeps meaning the highs if you change the analyser scale; the paint layer remembers the scale it was painted on, so brush strokes keep their frequencies too. Everything is flattened into a 1024 × 1024 picture of loudness values (the maximum of all the layers that are shown): the canvas.
 - **Sine lines.** The canvas becomes a bank of sine waves, one per line, spaced evenly in canvas height (so evenly on your analyser's scale). A sine at a fixed frequency shows in a spectrogram as a horizontal line at that height, and its loudness over time draws the picture along it. Each line takes the brightest part of the canvas rows nearest to it (halfway to the lines either side), so thin strokes never fall between lines. Brightness becomes level through Contrast; the analyser's Slope is compensated (around 1 kHz); and the whole drawing is scaled so its loudest moment sits at −12 dBFS RMS before Level.
 - **Playback.** One oscillator per line, its level following the drawing as playback moves across it. Starts, stops, jumps, retriggers and the host's bypass fade in a few milliseconds, and a change to the drawing crossfades in 20 ms, so nothing clicks. Lines too close to the top of the sample rate's range are skipped, so nothing aliases. A safety clipper (transparent below −1 dBFS) follows Level.
 - **Timing.** The position in the drawing comes from the DAW's transport, from MIDI notes, or from a free-running loop, at the host's tempo or yours.
@@ -173,11 +186,11 @@ sudo apt-get install libasound2-dev libx11-dev libxext-dev libxrandr-dev \
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and how they end, free loop, preview, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export; and the editor, driven with synthetic mouse, wheel and key events (bounce files, undo steps, selecting and placing objects, the live view's span, pictures that cannot be read). The editor tests need a display: on Linux run it under `xvfb-run -a`.
+or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and how they end, free loop, preview, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas; the processor (state round trip, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export; and the editor, driven with synthetic mouse, wheel and key events (bounce files, undo steps, selecting and placing objects, the layer list and hidden layers, picking overlapping objects, the live view's span, pictures that cannot be read). The editor tests need a display: on Linux run it under `xvfb-run -a`.
 
 ### Snapshot tool
 
-`FreqArtSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the brush, the settings and help panels, other window sizes) to PNG files, without a host. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a FreqArtSnapshot out`).
+`FreqArtSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the layer list, the brush, the settings and help panels, other window sizes) to PNG files, without a host. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a FreqArtSnapshot out`).
 
 ### Continuous integration
 

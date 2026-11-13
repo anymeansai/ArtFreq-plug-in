@@ -36,6 +36,11 @@ public:
         had been clicked. */
     void selectObject (const juce::Uuid& id);
 
+    /** For the snapshot tool and tests: the selected object (a null Uuid if none), and whether
+        the inspector shows the layer list (rather than the selected object's settings). */
+    juce::Uuid getSelectedObject() const;
+    bool isLayerListShown() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

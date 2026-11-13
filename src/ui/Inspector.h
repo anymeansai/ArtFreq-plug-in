@@ -1,7 +1,7 @@
 #pragma once
 
-// The right-hand panel: properties of the selected object, or the drawing's actions when
-// nothing is selected. See docs/DESIGN.md, "Inspector".
+// The right-hand panel: the list of layers (always when nothing is selected) with the drawing's
+// actions, or the properties of the selected object. See docs/DESIGN.md, "Inspector".
 
 #include "EditorState.h"
 #include "PluginProcessor.h"

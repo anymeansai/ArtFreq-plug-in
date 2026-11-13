@@ -35,13 +35,34 @@ public:
     void setBrushSoftness (float v) { v = juce::jlimit (0.0f, 1.0f, v);  if (! juce::exactlyEqual (softness, v))  { softness = v;  sendChangeMessage(); } }
     void setBrushStrength (float v) { v = juce::jlimit (0.0f, 1.0f, v);  if (! juce::exactlyEqual (strength, v))  { strength = v;  sendChangeMessage(); } }
 
-    /** The selected object (null Uuid = nothing). */
+    /** The selected object (null Uuid = nothing). Selecting an object this way (on the canvas,
+        a new object, the editor's selectObject) shows its settings in the inspector, even if it
+        was already selected from the layer list; see selectInLayerList. */
     const juce::Uuid& getSelected() const noexcept { return selected; }
     void setSelected (const juce::Uuid& id)
     {
-        if (selected != id) { selected = id; sendChangeMessage(); }
+        if (selected != id || layerListOpen) { selected = id; layerListOpen = false; sendChangeMessage(); }
     }
     bool hasSelection() const noexcept { return ! selected.isNull(); }
+
+    /** Selects an object from the inspector's layer list, which stays open (so the selection
+        can be walked through the list, and seen on the canvas, before opening one). */
+    void selectInLayerList (const juce::Uuid& id)
+    {
+        const auto open = ! id.isNull();
+
+        if (selected != id || layerListOpen != open) { selected = id; layerListOpen = open; sendChangeMessage(); }
+    }
+
+    /** Whether the inspector shows the layer list: always with nothing selected; with a
+        selection, after picking it in the list or going back to the list from its settings. */
+    bool isLayerListShown() const noexcept { return layerListOpen || ! hasSelection(); }
+    void showLayerList (bool shouldShow)
+    {
+        shouldShow = shouldShow && hasSelection();   // with nothing selected the list shows anyway
+
+        if (layerListOpen != shouldShow) { layerListOpen = shouldShow; sendChangeMessage(); }
+    }
 
     /** Asks the inspector to put the keyboard focus in the text field (after "Add text"). */
     std::function<void()> focusTextField;
@@ -56,6 +77,7 @@ private:
     float softness = 0.5f;
     float strength = 1.0f;
     juce::Uuid selected = juce::Uuid::null();
+    bool layerListOpen = false;   // only meaningful with a selection
 };
 
 } // namespace freqart::ui

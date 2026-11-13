@@ -46,6 +46,10 @@ struct ArtObject
 
     float intensity = 1.0f;  // 0..1, multiplies the object's values
 
+    // A hidden object stays in the drawing (and is saved with it) but is silent: the compositor
+    // leaves it out, and the canvas neither draws nor picks it.
+    bool visible = true;
+
     // Text objects
     juce::String text;
     int fontIndex = 0;
@@ -56,6 +60,7 @@ struct ArtObject
     juce::Image image;
     ImageMode imageMode = ImageMode::automatic;
     float cleanup = 0.08f;  // 0..0.9, see processImage
+    juce::String fileName;  // the name of the file it came from (no folder), for the layer list
 };
 
 /** A brush dab or stroke on the paint layer. Coordinates are paint-layer pixels (x 0..1023,
@@ -83,8 +88,11 @@ public:
     /** What a fresh instance shows: the word "FreqArt" in the mid band, Inter Bold, solid. */
     static ArtDocument createDefault();
 
-    std::vector<ArtObject> objects;  // drawn in this order (the order does not change the result)
+    // Back to front: the last object is the front-most, which the canvas picks first where
+    // objects overlap. (Layers combine by their maximum, so the order never changes the sound.)
+    std::vector<ArtObject> objects;
     std::vector<uint8_t> paint;      // paintWidth * paintHeight, row-major, row 0 = paintScale.maxHz
+    bool paintVisible = true;        // a hidden paint layer is kept but silent, like a hidden object
 
     // The analyser scale the paint layer was painted on: its rows run evenly over this scale,
     // from maxHz (row 0) to minHz. The compositor and the canvas map them through it, so paint
@@ -108,17 +116,20 @@ public:
         not compound an erase. Pixel (x, y) is measured at its centre (x + 0.5, y + 0.5). */
     void paintStroke (const BrushStroke& stroke);
 
-    /** Empties the paint layer and puts paintScale back to the default scale. */
+    /** Empties the paint layer, puts paintScale back to the default scale and shows the layer
+        again (an empty layer has nothing to hide, and the next stroke should show). */
     void clearPaint();
 
     /** Serialisation. The ValueTree type is "FreqArtDocument" (version 1):
           properties: version, paint (base64 of zlib-compressed paint bytes; absent if empty),
                       paintScale, paintMinHz, paintMaxHz (with the paint; a document without
-                      them was painted on the default Log 20 Hz - 20 kHz scale)
-          children "Object": id, type, startTime, endTime, lowHz, highHz, intensity, text,
-                             fontIndex, textStyle, imageMode, cleanup, image (base64 PNG)
+                      them was painted on the default Log 20 Hz - 20 kHz scale), paintVisible
+          children "Object", back to front: id, type, startTime, endTime, lowHz, highHz,
+                             intensity, visible, text, fontIndex, textStyle, imageMode, cleanup,
+                             image (base64 PNG), fileName
         fromValueTree tolerates missing or out-of-range values (it clamps them and drops
-        objects it cannot use) and returns an empty document for an invalid tree. */
+        objects it cannot use) and returns an empty document for an invalid tree. Documents
+        saved before layers could be hidden have no visibility: everything in them is shown. */
     juce::ValueTree toValueTree() const;
     static ArtDocument fromValueTree (const juce::ValueTree& tree);
 

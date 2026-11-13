@@ -24,6 +24,7 @@ namespace ids
     const juce::Identifier paintScale ("paintScale");
     const juce::Identifier paintMinHz ("paintMinHz");
     const juce::Identifier paintMaxHz ("paintMaxHz");
+    const juce::Identifier paintVisible ("paintVisible");
     const juce::Identifier id ("id");
     const juce::Identifier type ("type");
     const juce::Identifier startTime ("startTime");
@@ -31,12 +32,14 @@ namespace ids
     const juce::Identifier lowHz ("lowHz");
     const juce::Identifier highHz ("highHz");
     const juce::Identifier intensity ("intensity");
+    const juce::Identifier visible ("visible");
     const juce::Identifier text ("text");
     const juce::Identifier fontIndex ("fontIndex");
     const juce::Identifier textStyle ("textStyle");
     const juce::Identifier imageMode ("imageMode");
     const juce::Identifier cleanup ("cleanup");
     const juce::Identifier image ("image");
+    const juce::Identifier fileName ("fileName");
 }
 
 constexpr int documentVersion = 1;
@@ -46,6 +49,7 @@ constexpr size_t paintSize = static_cast<size_t> (ArtDocument::paintWidth) * sta
 constexpr float minTime = -1.0f, maxTime = 2.0f, minTimeSpan = 0.001f;
 constexpr float minHzLimit = 1.0f, maxHzLimit = 100000.0f, minHzRatio = 1.001f;
 constexpr int maxObjects = 1000;
+constexpr int maxFileNameLength = 255;
 
 /** A finite number from a property, or the fallback if it is missing or not a number. */
 float readFloat (const juce::ValueTree& tree, const juce::Identifier& name, float fallback)
@@ -72,6 +76,26 @@ int readInt (const juce::ValueTree& tree, const juce::Identifier& name, int fall
 {
     const auto number = readFloat (tree, name, static_cast<float> (fallback));
     return static_cast<int> (std::lround (juce::jlimit (static_cast<float> (low), static_cast<float> (high), number)));
+}
+
+/** A yes/no property: a number (0 = no), or the words "true" / "false"; the fallback if it is
+    missing or anything else. */
+bool readBool (const juce::ValueTree& tree, const juce::Identifier& name, bool fallback)
+{
+    const auto& value = tree[name];
+
+    if (value.isString())
+    {
+        const auto word = value.toString().trim().toLowerCase();
+
+        if (word == "true" || word == "yes")
+            return true;
+
+        if (word == "false" || word == "no")
+            return false;
+    }
+
+    return ! juce::exactlyEqual (readFloat (tree, name, fallback ? 1.0f : 0.0f), 0.0f);
 }
 
 juce::String encodePaint (const std::vector<uint8_t>& paint)
@@ -442,6 +466,7 @@ void ArtDocument::clearPaint()
 {
     paint.assign (paintSize, 0);
     paintScale = {};
+    paintVisible = true;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -464,6 +489,8 @@ juce::ValueTree ArtDocument::toValueTree() const
         tree.setProperty (ids::paintMaxHz, s.maxHz, nullptr);
     }
 
+    tree.setProperty (ids::paintVisible, paintVisible, nullptr);
+
     for (const auto& object : objects)
     {
         juce::ValueTree child (ids::object);
@@ -474,6 +501,7 @@ juce::ValueTree ArtDocument::toValueTree() const
         child.setProperty (ids::lowHz, object.lowHz, nullptr);
         child.setProperty (ids::highHz, object.highHz, nullptr);
         child.setProperty (ids::intensity, object.intensity, nullptr);
+        child.setProperty (ids::visible, object.visible, nullptr);
 
         if (object.type == ArtObject::Type::text)
         {
@@ -488,6 +516,9 @@ juce::ValueTree ArtDocument::toValueTree() const
 
             if (object.image.isValid())
                 child.setProperty (ids::image, encodeImage (object.image), nullptr);
+
+            if (object.fileName.isNotEmpty())
+                child.setProperty (ids::fileName, object.fileName, nullptr);
         }
 
         tree.appendChild (child, nullptr);
@@ -517,6 +548,9 @@ ArtDocument ArtDocument::fromValueTree (const juce::ValueTree& tree)
         document.paintScale.maxHz = readFloat (tree, ids::paintMaxHz, static_cast<float> (fallback.maxHz));
         document.paintScale = document.paintScale.sanitised();
     }
+
+    // Documents from before layers could be hidden show everything.
+    document.paintVisible = readBool (tree, ids::paintVisible, true);
 
     std::set<juce::String> usedIds;
 
@@ -580,6 +614,7 @@ ArtDocument ArtDocument::fromValueTree (const juce::ValueTree& tree)
         object.lowHz = low;
         object.highHz = high;
         object.intensity = juce::jlimit (0.0f, 1.0f, readFloat (child, ids::intensity, 1.0f));
+        object.visible = readBool (child, ids::visible, true);
 
         if (object.type == ArtObject::Type::text)
         {
@@ -596,6 +631,7 @@ ArtDocument ArtDocument::fromValueTree (const juce::ValueTree& tree)
 
             object.imageMode = static_cast<ImageMode> (readInt (child, ids::imageMode, 0, 0, 3));
             object.cleanup = juce::jlimit (0.0f, 0.9f, readFloat (child, ids::cleanup, object.cleanup));
+            object.fileName = child[ids::fileName].toString().substring (0, maxFileNameLength);
         }
 
         document.objects.push_back (std::move (object));

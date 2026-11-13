@@ -7,6 +7,7 @@
 #include "Widgets.h"
 #include "core/Compositor.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 
@@ -144,20 +145,22 @@ struct CanvasView::Impl
         return state.hasSelection() ? processor.getDocument().find (state.getSelected()) : nullptr;
     }
 
-    /** The top-most object under a point (objects later in the list are drawn on top). */
+    /** The top-most visible object under a point (objects later in the list are in front).
+        Hidden objects cannot be clicked: they are picked in the layer list. */
     const ArtObject* objectAt (juce::Point<float> p) const
     {
         const auto& objects = processor.getDocument().objects;
 
         for (auto it = objects.rbegin(); it != objects.rend(); ++it)
-            if (screenRectOf (*it).expanded (objectHitSlop).contains (p))
+            if (it->visible && screenRectOf (*it).expanded (objectHitSlop).contains (p))
                 return &*it;
 
         return nullptr;
     }
 
     /** What a click at a point takes hold of: the selected object if the point is on it (so an
-        object partly under another can be moved and edited once selected), else objectAt. */
+        object partly under another can be moved and edited once selected, and a hidden one
+        picked in the layer list can be moved), else objectAt. */
     const ArtObject* objectToGrab (juce::Point<float> p) const
     {
         if (const auto* selected = selectedObject(); selected != nullptr && state.getTool() == Tool::select
@@ -165,6 +168,30 @@ struct CanvasView::Impl
             return selected;
 
         return objectAt (p);
+    }
+
+    /** The object under a point after the selected one, front to back, round to the front again
+        (the front-most if the selection is not there): what Alt-click, or clicking again on the
+        same spot, picks. Only visible objects, and the selection. */
+    const ArtObject* nextObjectBelow (juce::Point<float> p) const
+    {
+        const auto& objects = processor.getDocument().objects;
+        const auto selectedId = state.getSelected();
+        std::vector<const ArtObject*> stack;
+
+        for (auto it = objects.rbegin(); it != objects.rend(); ++it)
+            if ((it->visible || it->id == selectedId) && screenRectOf (*it).expanded (objectHitSlop).contains (p))
+                stack.push_back (&*it);
+
+        if (stack.empty())
+            return nullptr;
+
+        const auto current = std::find_if (stack.begin(), stack.end(), [&selectedId] (const ArtObject* o) { return o->id == selectedId; });
+
+        if (current == stack.end() || std::next (current) == stack.end())
+            return stack.front();
+
+        return *std::next (current);
     }
 
     /** The handle of the selected object under a point, or -1. */
@@ -355,6 +382,10 @@ struct CanvasView::Impl
                 document.paint.assign (size, 0);
 
             document.paintScale = paintScale;
+
+            // Painting on a hidden paint layer shows it again: a stroke that cannot be seen or
+            // heard would look like a broken brush.
+            document.paintVisible = true;
 
             for (int y = top; y <= bottom; ++y)
             {
@@ -580,7 +611,7 @@ struct CanvasView::Impl
 
         for (const auto& object : objects)
         {
-            if (object.id == selectedId)
+            if (object.id == selectedId || ! object.visible)
                 continue;
 
             const auto r = screenRectOf (object);
@@ -592,14 +623,52 @@ struct CanvasView::Impl
         if (const auto* object = selectedObject())
         {
             const auto r = screenRectOf (*object);
-            g.setColour (theme::accent);
-            g.drawRect (juce::Rectangle<float> (std::floor (r.getX()), std::floor (r.getY()),
-                                                std::floor (r.getRight()) - std::floor (r.getX()),
-                                                std::floor (r.getBottom()) - std::floor (r.getY())), 1.0f);
+
+            if (object->visible)
+            {
+                g.setColour (theme::accent);
+                g.drawRect (juce::Rectangle<float> (std::floor (r.getX()), std::floor (r.getY()),
+                                                    std::floor (r.getRight()) - std::floor (r.getX()),
+                                                    std::floor (r.getBottom()) - std::floor (r.getY())), 1.0f);
+            }
+            else
+            {
+                // A hidden object (picked in the layer list) is silent and not drawn: a faint
+                // dashed outline and a tag say where it is, so it can still be moved.
+                g.setColour (theme::accent.withAlpha (0.6f));
+                drawDashedRectangle (g, r, 3.0f);
+
+                if (dragMode != DragMode::move && dragMode != DragMode::resize)
+                    paintHiddenTag (g, r);
+            }
 
             if (dragMode == DragMode::move || dragMode == DragMode::resize)
                 paintPlacementTag (g, *object, r);
         }
+    }
+
+    /** "Hidden", just inside the top-left corner of a hidden selected object (clear of its
+        handle), kept on the canvas. */
+    void paintHiddenTag (juce::Graphics& g, juce::Rectangle<float> r)
+    {
+        const auto font = fonts::ui (11.0f, fonts::UiWeight::medium);
+        const auto text = juce::String ("Hidden");
+        const auto width = 6.0f + 12.0f + 4.0f + juce::GlyphArrangement::getStringWidth (font, text) + 8.0f;
+        const auto a = area();
+        auto tag = juce::Rectangle<float> (r.getX() + 10.0f, r.getY() + 8.0f, width, 18.0f);
+        tag.setPosition (clampTo (tag.getX(), a.getX() + 2.0f, a.getRight() - width - 2.0f),
+                         clampTo (tag.getY(), a.getY() + 2.0f, a.getBottom() - 20.0f));
+        tag = tag.withPosition (std::round (tag.getX()), std::round (tag.getY()));
+
+        g.setColour (theme::panel.withAlpha (0.92f));
+        g.fillRoundedRectangle (tag, 4.0f);
+        g.setColour (theme::accent.withAlpha (0.6f));
+        g.drawRoundedRectangle (tag.reduced (0.5f), 4.0f, 1.0f);
+
+        g.setColour (theme::textDim);
+        g.fillPath (icons::eyeOff(), juce::AffineTransform::scale (12.0f / 24.0f).translated (tag.getX() + 6.0f, tag.getY() + 3.0f));
+        g.setFont (font);
+        g.drawText (text, tag.withTrimmedLeft (22.0f), juce::Justification::centredLeft, false);
     }
 
     /** A small triangle in the margin above the drawing, so the playhead reads at a glance even
@@ -820,6 +889,13 @@ struct CanvasView::Impl
     juce::String strokeKey;
     juce::Point<float> lastStrokePoint;
 
+    // Clicking again on the same spot, without moving the mouse in between, picks the next
+    // object down (see nextObjectBelow): where the last plain click was, and what it selected.
+    bool hasLastClick = false;
+    juce::Point<float> lastClickPoint;
+    juce::Uuid lastClickSelection = juce::Uuid::null();
+    bool cycleOnRelease = false;
+
     // Arrow-key nudges: one undo step per gesture (see keyPressed).
     double lastNudgeTime = -1.0e9;
     int nudgeSession = 0;
@@ -834,7 +910,8 @@ CanvasView::CanvasView (FreqArtProcessor& processor, EditorState& state)
     setOpaque (true);
     setWantsKeyboardFocus (true);
     setTitle ("Canvas");
-    setDescription ("The drawing: time across, frequency up. Click an object to select it.");
+    setDescription ("The drawing: time across, frequency up. Click an object to select it; Alt-click, or click "
+                    "again, for the one underneath; right-click for its menu.");
 
     processor.addChangeListener (this);
     state.addChangeListener (this);
@@ -871,6 +948,10 @@ void CanvasView::resized()
 //==============================================================================
 void CanvasView::mouseMove (const juce::MouseEvent& e)
 {
+    // Moving away ends "clicking again on the same spot".
+    if (impl->hasLastClick && e.position.getDistanceFrom (impl->lastClickPoint) >= dragThreshold)
+        impl->hasLastClick = false;
+
     impl->updateHover (e.position, true);
 }
 
@@ -891,9 +972,25 @@ void CanvasView::mouseDown (const juce::MouseEvent& e)
     d.dragStartMouse = e.position;
     d.scale = d.processor.getScale();  // what the drag converts with, from start to end
     d.nudging = false;
+    d.cycleOnRelease = false;
 
+    // Right-click on an object: select it and offer Bring to front, Send to back, Hide, Delete.
     if (e.mods.isPopupMenu())
+    {
+        d.hasLastClick = false;
+
+        if (! d.brushActive())
+        {
+            if (const auto* object = d.objectToGrab (e.position))
+            {
+                const auto id = object->id;
+                d.state.setSelected (id);
+                actions::showObjectMenu (d.processor, d.state, id, *this, e.position.toInt());
+            }
+        }
+
         return;
+    }
 
     if (d.brushActive())
     {
@@ -914,16 +1011,27 @@ void CanvasView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    if (const auto* object = d.objectToGrab (e.position))
+    // Alt (Option) - click picks the next object down under the mouse, so one hidden behind
+    // another can be reached; so does a second click on the same spot (on its release, so a
+    // press and drag still moves the selection).
+    const auto altClick = e.mods.isAltDown();
+
+    if (const auto* object = altClick ? d.nextObjectBelow (e.position) : d.objectToGrab (e.position))
     {
+        const auto clickedAgain = ! altClick && d.hasLastClick && object->id == d.state.getSelected()
+                               && object->id == d.lastClickSelection
+                               && e.position.getDistanceFrom (d.lastClickPoint) < dragThreshold;
+
         d.state.setSelected (object->id);
         d.rememberDragStart (*object);
         d.dragMode = Impl::DragMode::pendingMove;
+        d.cycleOnRelease = clickedAgain;
 
         // Double-clicking text goes straight to typing.
         if (e.getNumberOfClicks() >= 2 && object->type == ArtObject::Type::text && d.state.focusTextField != nullptr)
         {
             d.dragMode = Impl::DragMode::none;
+            d.cycleOnRelease = false;
             d.state.focusTextField();
         }
 
@@ -986,7 +1094,17 @@ void CanvasView::mouseUp (const juce::MouseEvent& e)
     auto& d = *impl;
     const auto wasEditing = d.dragMode == Impl::DragMode::move || d.dragMode == Impl::DragMode::resize
                          || d.dragMode == Impl::DragMode::paint;
+    const auto clickedObject = d.dragMode == Impl::DragMode::pendingMove;   // pressed on one, never moved
     d.dragMode = Impl::DragMode::none;
+
+    if (clickedObject && d.cycleOnRelease)
+        if (const auto* next = d.nextObjectBelow (d.dragStartMouse))
+            d.state.setSelected (next->id);
+
+    d.cycleOnRelease = false;
+    d.hasLastClick = clickedObject;
+    d.lastClickPoint = d.dragStartMouse;
+    d.lastClickSelection = d.state.getSelected();
 
     if (wasEditing)
     {

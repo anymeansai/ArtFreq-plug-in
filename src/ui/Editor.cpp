@@ -389,6 +389,9 @@ namespace
             state.setSelected (id);
         }
 
+        juce::Uuid getSelectedObject() const   { return state.getSelected(); }
+        bool isLayerListShown() const          { return state.isLayerListShown(); }
+
         /** Called when the window's scale changes, so the settings show it. */
         void windowScaleChanged (float scale)
         {
@@ -636,6 +639,16 @@ void FreqArtEditor::showSettings (bool shouldShow)
 void FreqArtEditor::selectObject (const juce::Uuid& id)
 {
     impl->content.selectObject (id);
+}
+
+juce::Uuid FreqArtEditor::getSelectedObject() const
+{
+    return impl->content.getSelectedObject();
+}
+
+bool FreqArtEditor::isLayerListShown() const
+{
+    return impl->content.isLayerListShown();
 }
 
 } // namespace freqart

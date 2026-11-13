@@ -14,8 +14,12 @@ any analyser with a scrolling spectrogram) on the output and the drawing scrolls
    are placed by time (fraction of the length) and by frequency in Hz, so "put this in the
    highs" keeps meaning the highs. The paint layer is tagged with the scale it was painted on
    and mapped through it, so strokes keep their frequencies too when the scale or range changes.
+   Objects are kept back to front; the order decides which one a click on the canvas picks where
+   they overlap (never the sound: layers combine by their maximum). Any object, and the paint
+   layer, can be hidden: it stays in the drawing and is saved with it, but is silent (documents
+   from before this load with everything shown).
 3. **The compositor** (`core/Compositor.h`) flattens the document into a 1024 x 1024 canvas of
-   loudness values 0..1 (max of all layers).
+   loudness values 0..1 (max of all shown layers).
 4. **The plan** (`core/ArtPlan.h`) turns the canvas into a bank of sine "lines". Density =
    number of lines across the canvas height (few = scan lines, many = solid); lines closer than
    25 Hz are merged, and every canvas row plays on its nearest line. Each line's amplitude per
@@ -133,12 +137,22 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   bar in 3/4, six eighths in 6/8).
 - Playhead: a 2 px accent2 vertical line at the play position while sounding.
 - **Select tool**: click an object to select it (the selected object if the point is inside it,
-  else the top-most whose rectangle contains the point); selected object shows its rectangle
-  (1 px accent) and 8 handles; drag inside to move, drag a handle to resize, click empty canvas to
-  deselect. Delete/Backspace removes the selected object. Arrow keys nudge (Shift = 10x); a held
+  so it can be moved even where another lies over it; else the front-most shown object whose
+  rectangle contains the point); selected object shows its rectangle (1 px accent) and 8
+  handles; drag inside to move, drag a handle to resize, click empty canvas to deselect.
+  Alt/Option-click, or clicking again on the same spot without moving the mouse in between,
+  picks the next object down under the mouse (round to the front again; on release, so a press
+  and drag still moves the selection). Right-click on an object selects it and opens its menu:
+  Bring to front, Send to back (greyed where they would change nothing), Hide (Show for a hidden
+  one), Delete. Selecting on the canvas shows the object's settings in the inspector.
+  Delete/Backspace removes the selected object. Arrow keys nudge (Shift = 10x); a held
   arrow is one undo step, which ends when the keys are let go, on a click, on another object or
   after a 1 s pause. Objects' rectangles are drawn as faint dashed outlines when not selected, so
   they can be found even when quiet.
+- **Hidden objects** are not drawn (the canvas shows the plan, which leaves them out) and cannot
+  be clicked; one selected in the layer list shows as a faint dashed accent outline with a small
+  "Hidden" tag, and can be moved and resized like any other. Painting on a hidden paint layer
+  shows it again (a stroke nobody can see or hear would look like a broken brush).
 - New text and pictures ("Add text", "Add image...") go where no object is yet: the mid band
   across the length (4 % to 96 %), else the high or low band, else half the length in one of
   them; if all of that is taken, never exactly on top of another object (the start moves along).
@@ -163,8 +177,32 @@ while visible.
 
 ### Inspector (right panel)
 
-- Nothing selected: title "Drawing"; buttons "Add text", "Add image..."; a short help line;
-  brush settings mirrored when Brush/Erase is active.
+- **Layers** (always with nothing selected): title "Layers" with a summary ("5 objects, 1 hidden");
+  buttons "Add text", "Add image..."; the layer list; a one-line hint ("Double-click to edit,
+  drag to reorder"); then the Keys (shortcut caps) while they fit under the list, or the brush
+  settings mirrored when Brush/Erase is active. The list (`ui/LayerList.h`) is a dark well with
+  one 30 px row per object, front first: type icon (T or picture), name (the text's first line
+  with words, or the picture's file name; ellipsised), and on the right a delete button (only
+  while the mouse is over the row; danger colour on hover), an eye (open and quiet when shown,
+  struck through and brighter when hidden; the name goes faint) and a chevron to the object's
+  settings. Below a hairline, the Paint row: brush icon, "Paint" ("empty" when nothing is
+  painted), "Clear" (paint only) and its eye. The selected row is filled and outlined in accent
+  (brighter while the list has the keyboard focus, as is the well's outline); hovered rows are
+  raised. The list takes the height its rows need, the whole room once the keys no longer fit,
+  and scrolls (wheel, thin scrollbar) when the rows do not fit.
+  - Click a row: selects its object (Select tool, handles on the canvas); the list stays, so a
+    selection can be walked through it. Double-click, Return or the chevron: its settings.
+  - Drag a row (4 px threshold): the row follows the mouse, an accent line shows where it will
+    land, the list scrolls near its edges; the order is what a canvas click picks first.
+  - Keyboard while the list has the focus: Up/Down move the selection (stopping at the ends),
+    Return opens the settings, Delete removes the object and selects its neighbour, Esc
+    deselects.
+  - Right-click a row: the object's menu, as on the canvas.
+  - Hiding, showing, reordering, deleting and clearing the paint are one undo step each;
+    selecting (in the list or anywhere) is none.
+- An object's settings start with a breadcrumb, "< Layers / Text": "< Layers" (dim, raised on
+  hover) goes back to the list with the object still selected. New objects (Add text, Add
+  image, a dropped picture) go in front and are selected, with their settings shown.
 - Text selected: title "Text"; multi-line text field (live updates, one undo step per typing
   session); Font (combo of art fonts); Style (segmented Solid | Outline); **Band** (segmented
   Low | Mid | High | Full, highlights the matching band if the object sits exactly on it);
@@ -206,9 +244,10 @@ Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawin
 
 Short numbered steps: put FreqArt on an instrument track; open a spectrogram (MiniMeters) on the
 output; match scale/range in Settings; add text/image/paint; choose a band and density; press
-play in the DAW (or Preview); Trigger modes explained; bounce to WAV. Plus tips: highs show the
-sharpest detail; the lowest octaves are coarse in every analyser; raise Density for solid
-shapes, lower for a scan-line look.
+play in the DAW (or Preview); Trigger modes explained; bounce to WAV. Layers: the list (select,
+settings, reorder, hide) and overlapping objects (Alt-click or click again, the right-click
+menu). Plus tips: highs show the sharpest detail; the lowest octaves are coarse in every
+analyser; raise Density for solid shapes, lower for a scan-line look.
 
 ## Tests
 
@@ -221,7 +260,12 @@ their end, all-offs and stop, free loop, preview, jumps); end-to-end: a canvas r
 and analysed back must correlate with the canvas; processor (state round trip, process with
 MIDI, panic, bypass fades, time signature, level/clipper bound); WAV export (and cancelling it);
 the editor, driven with synthetic events (bounce files, undo steps of wheel and arrow gestures,
-clicking and placing objects, the live view's span, unreadable pictures; under a virtual display
-on Linux).
+clicking and placing objects, the layer list: selecting, the keyboard, hiding, reordering,
+deleting, the paint row; clicking again, Alt-click and the right-click menu on the canvas; the
+live view's span, unreadable pictures; under a virtual display on Linux). Hidden layers: the
+document round trip (order, visibility, file names, old documents shown) and the compositor
+leaving them out.
 
-`FreqArtSnapshot <dir>` renders the editor in its main states to PNG.
+`FreqArtSnapshot <dir>` renders the editor in its main states to PNG (among them "layers": five
+objects, one hidden, one selected from the list) and checks the same interactions on the full
+editor.
