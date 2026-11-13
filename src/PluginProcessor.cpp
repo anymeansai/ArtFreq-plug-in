@@ -27,7 +27,8 @@ bool sameSettings (const PlanSettings& a, const PlanSettings& b) noexcept
         && juce::exactlyEqual (a.contrastDb, b.contrastDb)
         && juce::exactlyEqual (a.slopeDbPerOctave, b.slopeDbPerOctave)
         && juce::exactlyEqual (a.minLineSpacingHz, b.minLineSpacingHz)
-        && juce::exactlyEqual (a.maxFrequencyHz, b.maxFrequencyHz);
+        && juce::exactlyEqual (a.maxFrequencyHz, b.maxFrequencyHz)
+        && a.lowMethod == b.lowMethod;
 }
 
 uint64_t versionOf (const ArtPlan* plan) noexcept
