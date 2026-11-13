@@ -214,7 +214,9 @@ shapes, lower for a scan-line look.
 
 `FreqArtTests` (no host): scale maths; document round trip; image modes (auto-invert on a white
 background, transparency, outline); text rendering coverage; compositor placement; plan
-(frequencies, spacing, normalisation, contrast, slope); exchange (versions, garbage); engine
+(frequencies, spacing, normalisation, contrast, slope); the rising comb (`PlanSettings::lowMethod` 3, a
+prototype the processor does not use yet: the lines it replaces, its loudness grid, a long-FFT
+analyser seeing the band filled, leakage, determinism, crossfades, speed); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
 speed); tracker (transport positions, tempo changes and ramps, bar lines, MIDI one-shots and
 their end, all-offs and stop, free loop, preview, jumps); end-to-end: a canvas rendered to audio
