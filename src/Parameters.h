@@ -1,12 +1,32 @@
 #pragma once
 
-// Parameter ids, ranges and defaults, shared by the processor, the editor and the tests.
+// Parameter ids, ranges and defaults, shared by the processor, the editor and the tests. FreqArt
+// (the instrument) and FreqArt FX (the effect) share every parameter; the effect adds Mode and
+// Depth.
 
 #include "core/ArtPlan.h"
 #include "core/FrequencyScale.h"
 #include "dsp/PlayheadTracker.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
+
+namespace freqart
+{
+
+/** What FreqArt FX does with the audio coming in (the Mode parameter, in its order). */
+enum class EffectMode
+{
+    carve = 0,      // the drawing's frequencies are muted: it shows as dark shapes in the song
+    carveDraw = 1,  // carved a little wider than the drawing, and the drawing played in the hole
+    stencil = 2,    // the opposite of Carve: only the drawing's frequencies pass
+    draw = 3        // the drawing played on top of the audio, which is left as it is
+};
+
+/** Whether a mode changes the audio coming in, and whether it plays the drawing's sines. */
+constexpr bool carvesAudio (EffectMode mode) noexcept { return mode != EffectMode::draw; }
+constexpr bool playsSines (EffectMode mode) noexcept { return mode == EffectMode::carveDraw || mode == EffectMode::draw; }
+
+} // namespace freqart
 
 namespace freqart::params
 {
@@ -32,9 +52,14 @@ namespace id
     inline constexpr const char* rangeLow    = "rangeLow";     // Hz, 10..1000, default 20
     inline constexpr const char* rangeHigh   = "rangeHigh";    // Hz, 2000..24000, default 20000
     inline constexpr const char* slope       = "slope";        // choice: 0, 3, 4.5, 6 dB/oct
+
+    // FreqArt FX only: what happens to the audio coming in
+    inline constexpr const char* mode        = "mode";         // choice: Carve, Carve + Draw, Stencil, Draw
+    inline constexpr const char* depth       = "depth";        // dB, -120..0, default -80: how far carved frequencies drop
 } // namespace id
 
-juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+/** Every parameter of the instrument; with forEffect also Mode and Depth (FreqArt FX). */
+juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect = false);
 
 // Choices, in parameter order.
 juce::StringArray lengthNames();       // "1 beat", "2 beats", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars", "32 bars"
@@ -43,8 +68,14 @@ juce::StringArray tempoSourceNames();  // "Host", "Manual"
 juce::StringArray scaleNames();        // "Log", "Linear", "Mel"
 juce::StringArray slopeNames();        // "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct"
 juce::StringArray lowEndNames();       // "Smooth", "Stripes"
+juce::StringArray modeNames();         // "Carve", "Carve + Draw", "Stencil", "Draw"
 
 constexpr int defaultLengthIndex = 4;  // "4 bars"
+
+/** Depth: deep enough by default that carved shapes look black on an analyser even over a
+    master's bass and kick (about -15 dB there, against a floor near -95 dB). */
+constexpr float minDepthDb = -120.0f;
+constexpr float defaultDepthDb = -80.0f;
 constexpr int firstStartBar = 1;
 constexpr int lastStartBar = 999;
 
@@ -66,5 +97,6 @@ float slopeForIndex (int slopeIndex) noexcept;      // dB per octave
 ScaleType scaleForIndex (int scaleIndex) noexcept;
 TriggerMode triggerForIndex (int triggerIndex) noexcept;
 LowEnd lowEndForIndex (int lowEndIndex) noexcept;
+EffectMode effectModeForIndex (int modeIndex) noexcept;
 
 } // namespace freqart::params

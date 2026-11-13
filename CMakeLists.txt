@@ -16,7 +16,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(FREQART_BUILD_TESTS "Build the test runner" ON)
-option(FREQART_BUILD_TOOLS "Build the headless UI snapshot tool and the lows lab" ON)
+option(FREQART_BUILD_TOOLS "Build the headless UI snapshot tool and the lows and carving labs" ON)
 option(FREQART_COPY_PLUGIN_AFTER_BUILD "Copy the built plug-in into the user's VST3 folder" OFF)
 option(FREQART_ENABLE_LTO "Enable link-time optimisation in Release builds" ON)
 
@@ -78,46 +78,77 @@ set(FREQART_JUCE_MODULES
     juce::juce_gui_extra)
 
 # ---------------------------------------------------------------------------
-# The plug-in: an instrument. It makes the sound whose spectrogram is the drawing.
+# The plug-ins: one code base, registered twice, because hosts decide from a VST3's category
+# where it may go (Ableton Live, FL Studio and Cubase offer instruments only on MIDI /
+# instrument tracks and effects only on audio tracks, buses and the master):
+#
+#   FreqArt     an instrument: it makes the sound whose spectrogram is the drawing.
+#   FreqArt FX  an audio effect: it carves the drawing into the audio coming in (or plays it
+#               on top). It also takes MIDI, for the hosts that send MIDI to effects.
+#
+# The same processor and editor (PluginProcessor.h: a Variant flag); each target only adds
+# its own createPluginFilter (src/plugin/).
 # ---------------------------------------------------------------------------
-juce_add_plugin(FreqArt
-    VERSION                     ${PROJECT_VERSION}
-    COMPANY_NAME                "AnyMeans"
-    COMPANY_COPYRIGHT           "AnyMeans"
-    BUNDLE_ID                   "com.anymeans.freqart"
-    PLUGIN_MANUFACTURER_CODE    Anym
-    PLUGIN_CODE                 FqAr
-    FORMATS                     VST3
-    PRODUCT_NAME                "FreqArt"
-    DESCRIPTION                 "Draw text, images and brush strokes into the spectrogram"
-    IS_SYNTH                    TRUE
-    NEEDS_MIDI_INPUT            TRUE
-    NEEDS_MIDI_OUTPUT           FALSE
-    IS_MIDI_EFFECT              FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS TRUE
-    VST3_CATEGORIES             Instrument Generator
-    COPY_PLUGIN_AFTER_BUILD     ${FREQART_COPY_PLUGIN_AFTER_BUILD})
+function(freqart_add_plugin target)
+    cmake_parse_arguments(ARG "" "PRODUCT_NAME;PLUGIN_CODE;BUNDLE_ID;DESCRIPTION;IS_SYNTH;ENTRY" "VST3_CATEGORIES" ${ARGN})
 
-target_sources(FreqArt PRIVATE
-    ${FREQART_PLUGIN_SOURCES}
-    ${FREQART_CORE_SOURCES}
-    ${FREQART_DSP_SOURCES}
-    ${FREQART_UI_SOURCES})
+    juce_add_plugin(${target}
+        VERSION                     ${PROJECT_VERSION}
+        COMPANY_NAME                "AnyMeans"
+        COMPANY_COPYRIGHT           "AnyMeans"
+        BUNDLE_ID                   "${ARG_BUNDLE_ID}"
+        PLUGIN_MANUFACTURER_CODE    Anym
+        PLUGIN_CODE                 ${ARG_PLUGIN_CODE}
+        FORMATS                     VST3
+        PRODUCT_NAME                "${ARG_PRODUCT_NAME}"
+        DESCRIPTION                 "${ARG_DESCRIPTION}"
+        IS_SYNTH                    ${ARG_IS_SYNTH}
+        NEEDS_MIDI_INPUT            TRUE
+        NEEDS_MIDI_OUTPUT           FALSE
+        IS_MIDI_EFFECT              FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS TRUE
+        VST3_CATEGORIES             ${ARG_VST3_CATEGORIES}
+        COPY_PLUGIN_AFTER_BUILD     ${FREQART_COPY_PLUGIN_AFTER_BUILD})
 
-target_include_directories(FreqArt PRIVATE src)
-target_compile_definitions(FreqArt PUBLIC ${FREQART_COMMON_DEFINITIONS} JUCE_MODAL_LOOPS_PERMITTED=0)
+    target_sources(${target} PRIVATE
+        ${ARG_ENTRY}
+        ${FREQART_PLUGIN_SOURCES}
+        ${FREQART_CORE_SOURCES}
+        ${FREQART_DSP_SOURCES}
+        ${FREQART_UI_SOURCES})
 
-target_link_libraries(FreqArt
-    PRIVATE
-        FreqArtAssets
-        ${FREQART_JUCE_MODULES}
-    PUBLIC
-        FreqArtBuildFlags)
+    target_include_directories(${target} PRIVATE src)
+    target_compile_definitions(${target} PUBLIC ${FREQART_COMMON_DEFINITIONS} JUCE_MODAL_LOOPS_PERMITTED=0)
+
+    target_link_libraries(${target}
+        PRIVATE
+            FreqArtAssets
+            ${FREQART_JUCE_MODULES}
+        PUBLIC
+            FreqArtBuildFlags)
+endfunction()
+
+freqart_add_plugin(FreqArt
+    PRODUCT_NAME    "FreqArt"
+    PLUGIN_CODE     FqAr
+    BUNDLE_ID       "com.anymeans.freqart"
+    DESCRIPTION     "Draw text, images and brush strokes into the spectrogram"
+    IS_SYNTH        TRUE
+    VST3_CATEGORIES Instrument Generator
+    ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/FreqArtEntry.cpp)
+
+freqart_add_plugin(FreqArtFX
+    PRODUCT_NAME    "FreqArt FX"
+    PLUGIN_CODE     FqFx
+    BUNDLE_ID       "com.anymeans.freqartfx"
+    DESCRIPTION     "Carve text, images and brush strokes into the spectrogram of a song"
+    IS_SYNTH        FALSE
+    VST3_CATEGORIES Fx Filter
+    ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/FreqArtFXEntry.cpp)
 
 # Definitions the plug-in wrapper normally provides, for the console apps that compile the
-# processor and editor without it.
+# processor and editor without it (they make either variant themselves).
 set(FREQART_STANDALONE_DEFINITIONS
-    FREQART_NO_PLUGIN_CLIENT=1
     JucePlugin_Name="FreqArt"
     JucePlugin_IsSynth=1
     JucePlugin_WantsMidiInput=1

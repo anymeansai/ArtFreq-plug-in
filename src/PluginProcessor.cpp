@@ -37,6 +37,24 @@ uint64_t versionOf (const ArtPlan* plan) noexcept
     return plan != nullptr ? plan->version : 0;
 }
 
+uint64_t versionOf (const MaskPlanSet* masks) noexcept
+{
+    return masks != nullptr ? masks->version : 0;
+}
+
+/** Where the drawing is at the end of a stretch the segments cover, and whether it is playing
+    there (the effect's playhead, which needs no sines to be rendered). */
+std::pair<double, bool> positionAfter (const PlaySegment* segments, int numSegments, int numSamples) noexcept
+{
+    if (numSegments <= 0)
+        return { 0.0, false };
+
+    const auto& last = segments[numSegments - 1];
+    const auto end = last.fraction + static_cast<double> (numSamples - last.start) * last.fractionPerSample;
+    const auto position = last.once ? juce::jlimit (0.0, 1.0, end) : end - std::floor (end);
+    return { std::isfinite (position) ? position : 0.0, last.playing };
+}
+
 double quarterNotesPerBar (juce::AudioPlayHead::TimeSignature signature) noexcept
 {
     return static_cast<double> (signature.numerator) * 4.0 / static_cast<double> (signature.denominator);
@@ -52,9 +70,21 @@ bool onMessageThread() noexcept
 
 } // namespace
 
-FreqArtProcessor::FreqArtProcessor()
-    : juce::AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      parameters (*this, nullptr, "FreqArtParameters", params::createLayout()),
+juce::AudioProcessor::BusesProperties FreqArtProcessor::busesFor (Variant variant)
+{
+    // The instrument makes its sound from nothing; the effect works on the audio it is given.
+    if (variant == Variant::effect)
+        return BusesProperties()
+            .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+            .withOutput ("Output", juce::AudioChannelSet::stereo(), true);
+
+    return BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true);
+}
+
+FreqArtProcessor::FreqArtProcessor (Variant variantToUse)
+    : juce::AudioProcessor (busesFor (variantToUse)),
+      variant (variantToUse),
+      parameters (*this, nullptr, "FreqArtParameters", params::createLayout (variantToUse == Variant::effect)),
       history (40)
 {
     levelParam       = parameters.getRawParameterValue (params::id::level);
@@ -78,6 +108,13 @@ FreqArtProcessor::FreqArtProcessor()
              && lowEndParam != nullptr && scaleParam != nullptr && rangeLowParam != nullptr
              && rangeHighParam != nullptr && slopeParam != nullptr);
 
+    if (isEffect())
+    {
+        modeParam = parameters.getRawParameterValue (params::id::mode);
+        depthParam = parameters.getRawParameterValue (params::id::depth);
+        jassert (modeParam != nullptr && depthParam != nullptr);
+    }
+
     for (const auto* id : planParameterIds)
         parameters.addParameterListener (id, this);
 
@@ -95,6 +132,19 @@ FreqArtProcessor::FreqArtProcessor()
     if (auto* plan = planExchange.acquire())
         engine.setPlan (plan);
     planExchange.reportInUse (versionOf (engine.getPlan()), versionOf (engine.getFadingPlan()));
+
+    // The effect likewise holds its masks, and reports its latency (at 48 kHz until the host
+    // prepares it) from the start, for hosts that ask before they prepare.
+    if (isEffect())
+    {
+        carver.prepare (currentSampleRate.load(), 512, 2);
+
+        if (auto* masks = maskExchange.acquire())
+            currentMasks = masks;
+
+        maskExchange.reportInUse (versionOf (currentMasks), 0);
+        setLatencySamples (carver.getLatencySamples());
+    }
 
     startTimerHz (timerHz);
 }
@@ -138,22 +188,53 @@ void FreqArtProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamp
 
     if (! juce::exactlyEqual (analyzer.getSampleRate(), rate))
         analyzer.prepare (rate);
+
+    if (isEffect())
+    {
+        // One frame of the carver late, in every mode (and in bypass): the host compensates
+        // for it, and switching modes never moves the audio. The sines are delayed as much, so
+        // they land in the holes carved for them.
+        carver.prepare (rate, monoCapacity, 2);
+        sineDelayLength = carver.getLatencySamples();
+        sineDelay.allocate (static_cast<size_t> (sineDelayLength), true);
+        sineDelayPosition = 0;
+        sineDelaySilence = sineDelayLength;
+        setLatencySamples (sineDelayLength);
+
+        drawGain.reset (rate, 0.02);
+        drawGain.setCurrentAndTargetValue (playsSines (getEffectMode()) ? 1.0f : 0.0f);
+        sinesRunning = false;
+
+        if (auto* masks = maskExchange.acquire())
+            currentMasks = masks;
+
+        maskExchange.reportInUse (versionOf (currentMasks), 0);
+    }
 }
 
 void FreqArtProcessor::releaseResources()
 {
     engine.reset();
     tracker.reset();
+
+    if (isEffect())
+        carver.reset();
 }
 
 bool FreqArtProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
+    const auto& out = layouts.getMainOutputChannelSet();
+    const auto monoOrStereo = out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
+
+    // The effect: as many channels out as in, mono or stereo.
+    if (isEffect())
+        return monoOrStereo && layouts.getMainInputChannelSet() == out;
+
     // An instrument: no audio in, mono or stereo out.
     if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::disabled())
         return false;
 
-    const auto& out = layouts.getMainOutputChannelSet();
-    return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
+    return monoOrStereo;
 }
 
 TrackerSettings FreqArtProcessor::currentTrackerSettings() const noexcept
@@ -192,25 +273,9 @@ void FreqArtProcessor::writeOutput (juce::AudioBuffer<float>& buffer, int start,
         analyzer.push (out, numSamples);
 }
 
-void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+HostTiming FreqArtProcessor::readHostTiming() noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
-
-    const auto numSamples = buffer.getNumSamples();
-    buffer.clear();
-
-    if (numSamples <= 0 || monoCapacity <= 0)
-    {
-        midi.clear();
-        return;
-    }
-
-    // Pick up the newest drawing (the engine crossfades to it) and tell the exchange which
-    // plans are still being read, so older ones can be freed on the message thread.
-    if (auto* plan = planExchange.acquire())
-        engine.setPlan (plan);
-
-    // Host timing and time signature.
+    // Host timing, and the time signature for the editor.
     HostTiming timing;
 
     if (auto* hostPlayHead = getPlayHead())
@@ -227,6 +292,35 @@ void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
             }
         }
     }
+
+    return timing;
+}
+
+void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    if (isEffect())
+    {
+        processEffect (buffer, midi, false);
+        return;
+    }
+
+    const auto numSamples = buffer.getNumSamples();
+    buffer.clear();
+
+    if (numSamples <= 0 || monoCapacity <= 0)
+    {
+        midi.clear();
+        return;
+    }
+
+    // Pick up the newest drawing (the engine crossfades to it) and tell the exchange which
+    // plans are still being read, so older ones can be freed on the message thread.
+    if (auto* plan = planExchange.acquire())
+        engine.setPlan (plan);
+
+    const auto timing = readHostTiming();
 
     // A new press of Preview since the last block starts it again from the top, even if the
     // one before was still on.
@@ -298,6 +392,12 @@ void FreqArtProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, j
 {
     juce::ScopedNoDenormals noDenormals;
 
+    if (isEffect())
+    {
+        processEffect (buffer, midi, true);
+        return;
+    }
+
     const auto numSamples = buffer.getNumSamples();
     buffer.clear();
     midi.clear();
@@ -332,6 +432,255 @@ void FreqArtProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, j
 
     playPosition.store (engine.getFraction());
     sounding.store (engine.isSounding());
+}
+
+// ---- FreqArt FX ----------------------------------------------------------------------------
+
+void FreqArtProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, bool bypassed) noexcept
+{
+    // The audio comes in, the carver carves it in place (one frame late, the latency the host
+    // was told), and in the modes that play the drawing its sines are added, as late as the
+    // audio they belong to. The tracker's segments drive both, so a carve follows Length,
+    // Trigger, Repeat, start bar and tempo exactly as the sines do. In bypass (and in Draw) the
+    // carver changes nothing: the audio comes out as late, bit for bit, so a host's bypass never
+    // moves it; what was being carved or played fades out first.
+    const auto numSamples = buffer.getNumSamples();
+    const auto numInputs = getTotalNumInputChannels();
+    const auto numChannels = juce::jmin (buffer.getNumChannels(), juce::jmax (1, numInputs), 2);
+
+    // Outputs without an input start silent (the host may leave anything in them).
+    for (int channel = numInputs; channel < buffer.getNumChannels(); ++channel)
+        buffer.clear (channel, 0, numSamples);
+
+    if (numSamples <= 0 || monoCapacity <= 0 || sineDelayLength <= 0)
+    {
+        midi.clear();
+        return;
+    }
+
+    if (auto* plan = planExchange.acquire())
+        engine.setPlan (plan);
+
+    if (auto* masks = maskExchange.acquire())
+        currentMasks = masks;
+
+    const auto mode = getEffectMode();
+    const auto carving = ! bypassed && carvesAudio (mode);
+
+    CarveSettings carve;
+    carve.mode = mode == EffectMode::stencil ? CarveMode::stencil : CarveMode::carve;
+    carve.depthDb = carving ? juce::jlimit (params::minDepthDb, 0.0f, depthParam->load()) : 0.0f;
+    carve.haloBins = mode == EffectMode::carveDraw ? carveDrawHaloBins : 1;
+    carve.holdLoudest = mode == EffectMode::carveDraw;
+
+    // Carve + Draw carves its hole a little larger than the drawing: the halo masks.
+    if (currentMasks != nullptr)
+        carver.setPlan (mode == EffectMode::carveDraw ? currentMasks->halo.get() : currentMasks->exact.get());
+    else
+        carver.setPlan (nullptr);
+
+    const auto timing = bypassed ? HostTiming() : readHostTiming();
+    const auto preview = previewToken.load();
+
+    if (! bypassed)
+    {
+        if (preview != previewTokenInUse)
+        {
+            tracker.setPreview (false);
+            previewTokenInUse = preview;
+        }
+
+        tracker.setPreview (preview != 0);
+    }
+
+    const auto settings = currentTrackerSettings();
+    const auto sampleRate = currentSampleRate.load();
+
+    outputGain.setTargetValue (juce::Decibels::decibelsToGain (levelParam->load(), -100.0f));
+    drawGain.setTargetValue (! bypassed && playsSines (mode) ? 1.0f : 0.0f);
+
+    float* channels[2] {};
+    auto playing = false;
+
+    for (int start = 0; start < numSamples;)
+    {
+        const auto length = juce::jmin (monoCapacity, numSamples - start);
+        int numSegments = 1;
+
+        if (bypassed)
+        {
+            // The gate closes: whatever sounded fades out where it was.
+            segments[0] = PlaySegment();
+            segments[0].length = length;
+            segments[0].fraction = engine.getFraction();
+        }
+        else if (start == 0 && length == numSamples)
+        {
+            numSegments = tracker.process (timing, midi, length, settings, segments);
+        }
+        else
+        {
+            chunkMidi.clear();
+            chunkMidi.addEvents (midi, start, length, -start);
+
+            auto chunkTiming = timing;
+            const auto elapsed = static_cast<double> (start) / sampleRate;
+
+            if (chunkTiming.timeInSeconds.has_value())
+                *chunkTiming.timeInSeconds += elapsed;
+
+            if (chunkTiming.ppqPosition.has_value() && chunkTiming.bpm.has_value())
+                *chunkTiming.ppqPosition += elapsed * *chunkTiming.bpm / 60.0;
+
+            numSegments = tracker.process (chunkTiming, chunkMidi, length, settings, segments);
+        }
+
+        for (int channel = 0; channel < numChannels; ++channel)
+            channels[channel] = buffer.getWritePointer (channel, start);
+
+        carver.process (channels, numChannels, length, segments, numSegments, carve);
+
+        // The sines, in the modes that play them (and while they fade out of them). Not
+        // rendered at all otherwise; they start afresh, with a fade-in, when they are next wanted.
+        const auto wanted = drawGain.getTargetValue() > 0.0f || drawGain.getCurrentValue() > 0.0f;
+
+        if (wanted)
+        {
+            if (! sinesRunning)
+            {
+                engine.reset();
+                sinesRunning = true;
+            }
+
+            auto* out = mono.get();
+            engine.render (out, length, segments, numSegments);
+
+            for (int i = 0; i < length; ++i)
+                out[i] = softClip (out[i] * outputGain.getNextValue() * drawGain.getNextValue());
+        }
+        else
+        {
+            // Faded out: let go of the engine's state (a crossfade it was in, a queued plan).
+            if (sinesRunning)
+                engine.reset();
+
+            sinesRunning = false;
+            outputGain.skip (length);
+            drawGain.skip (length);
+        }
+
+        addDelayedSines (buffer, start, length, numChannels, wanted);
+
+        const auto [position, open] = positionAfter (segments, numSegments, length);
+        playPosition.store (position);
+        playing = open;
+
+        if (analyzer.isActive())
+        {
+            // What comes out, as one channel.
+            auto* mix = mono.get();
+            const auto scale = 1.0f / static_cast<float> (numChannels);
+            juce::FloatVectorOperations::copy (mix, buffer.getReadPointer (0, start), length);
+
+            for (int channel = 1; channel < numChannels; ++channel)
+                juce::FloatVectorOperations::add (mix, buffer.getReadPointer (channel, start), length);
+
+            juce::FloatVectorOperations::multiply (mix, scale, length);
+            analyzer.push (mix, length);
+        }
+
+        start += length;
+    }
+
+    if (bypassed)
+    {
+        // Silent: coming back from bypass starts cleanly rather than mid-pass.
+        if (! sinesRunning || ! engine.isSounding())
+        {
+            engine.reset();
+            tracker.reset();
+            sinesRunning = false;
+        }
+    }
+    else if (preview != 0 && tracker.hasPreviewEnded())
+    {
+        auto expected = preview;
+        previewToken.compare_exchange_strong (expected, 0);
+    }
+
+    planExchange.reportInUse (versionOf (engine.getPlan()), versionOf (engine.getFadingPlan()));
+    maskExchange.reportInUse (versionOf (currentMasks), 0);
+
+    sounding.store (playing && ! bypassed);
+    effectiveTempo.store (tracker.getTempo());
+
+    // An effect that makes no MIDI: nothing goes out.
+    midi.clear();
+}
+
+void FreqArtProcessor::addDelayedSines (juce::AudioBuffer<float>& buffer, int start, int numSamples,
+                                        int numChannels, bool rendered) noexcept
+{
+    // Once the delay holds nothing but silence and nothing new comes in, there is nothing to
+    // add: the carved (or untouched) audio stays exactly as it is.
+    if (! rendered && sineDelaySilence >= sineDelayLength)
+        return;
+
+    auto* sines = mono.get();
+
+    if (! rendered)
+        std::fill (sines, sines + numSamples, 0.0f);
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        const auto in = sines[i];
+        sines[i] = sineDelay[sineDelayPosition];
+        sineDelay[sineDelayPosition] = in;
+
+        if (++sineDelayPosition == sineDelayLength)
+            sineDelayPosition = 0;
+
+        sineDelaySilence = juce::exactlyEqual (in, 0.0f) ? juce::jmin (sineDelaySilence + 1, sineDelayLength) : 0;
+    }
+
+    for (int channel = 0; channel < numChannels; ++channel)
+        buffer.addFrom (channel, start, sines, numSamples);
+}
+
+EffectMode FreqArtProcessor::getEffectMode() const noexcept
+{
+    return modeParam != nullptr ? params::effectModeForIndex (juce::roundToInt (modeParam->load())) : EffectMode::carve;
+}
+
+float FreqArtProcessor::getDepthDb() const noexcept
+{
+    return depthParam != nullptr ? depthParam->load() : 0.0f;
+}
+
+int FreqArtProcessor::wantedHaloColumns() const noexcept
+{
+    // About haloSeconds of the drawing, in columns at the length in use, at most a sixteenth of
+    // it (in a drawing a beat long, 60 ms would blur a lot of it).
+    const auto seconds = juce::jmax (0.05, getLengthSeconds());
+    const auto columns = static_cast<int> (std::ceil (haloSeconds * Canvas::width / seconds - 1.0e-9));
+    return juce::jlimit (1, maxHaloColumns, columns);
+}
+
+void FreqArtProcessor::buildMasks (const FrequencyScale& scale)
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    MaskSettings settings;
+    settings.scale = scale;
+
+    auto masks = std::make_shared<MaskPlanSet>();
+    masks->exact = buildMaskPlan (canvas, settings);
+    masks->haloRows = haloRows;
+    masks->haloColumns = wantedHaloColumns();
+    masks->halo = widenMaskPlan (*masks->exact, masks->haloRows, masks->haloColumns);
+
+    builtHaloColumns = masks->haloColumns;
+    maskExchange.publish (std::move (masks));
 }
 
 void FreqArtProcessor::setPreview (bool shouldPreview) noexcept
@@ -415,23 +764,37 @@ void FreqArtProcessor::rebuildPlanIfNeeded()
     const auto parametersChanged = parametersDirty.exchange (false);
     const auto havePlan = planExchange.latest() != nullptr;
 
-    if (! documentDirty && ! parametersChanged && havePlan)
+    // The effect's halo follows the length and the tempo (the host's too), so it is checked on
+    // every tick.
+    const auto haloChanged = isEffect() && wantedHaloColumns() != builtHaloColumns;
+
+    if (! documentDirty && ! parametersChanged && havePlan && ! haloChanged)
         return;
 
     const auto settings = getPlanSettings();
     const auto scaleChanged = settings.scale != lastBuiltSettings.scale;
+    const auto planNeeded = ! havePlan || documentDirty || ! sameSettings (settings, lastBuiltSettings);
 
-    if (havePlan && ! documentDirty && sameSettings (settings, lastBuiltSettings))
+    if (! planNeeded && ! haloChanged)
         return;
 
     // The canvas only depends on the document and the scale.
-    if (documentDirty || scaleChanged || ! havePlan)
+    const auto canvasChanged = documentDirty || scaleChanged || ! havePlan;
+
+    if (canvasChanged)
         compositor.render (document, settings.scale, canvas);
 
-    std::shared_ptr<ArtPlan> plan (buildPlan (canvas, settings).release());
-    planExchange.publish (plan);
+    if (planNeeded)
+    {
+        std::shared_ptr<ArtPlan> plan (buildPlan (canvas, settings).release());
+        planExchange.publish (plan);
+        lastBuiltSettings = settings;
+    }
 
-    lastBuiltSettings = settings;
+    // The masks come from the same canvas (Density, Contrast and Lows do not change them).
+    if (isEffect() && (canvasChanged || haloChanged))
+        buildMasks (settings.scale);
+
     documentDirty = false;
     sendChangeMessage();
 }
@@ -446,6 +809,7 @@ void FreqArtProcessor::timerCallback()
 {
     rebuildPlanIfNeeded();
     planExchange.collectGarbage();
+    maskExchange.collectGarbage();
 
     if (savedDocumentStale && juce::Time::getMillisecondCounter() - lastEditTime >= saveQuietMs)
         refreshSavedDocument();
@@ -557,6 +921,9 @@ void FreqArtProcessor::getStateInformation (juce::MemoryBlock& destData)
     juce::XmlElement root ("FreqArtState");
     root.setAttribute ("version", stateVersion);
     root.setAttribute ("pluginVersion", FREQART_VERSION_STRING);
+    // Which of the two saved it. The state is the same otherwise, so either loads the other's
+    // drawing and shared settings (the effect's Mode and Depth are left out by the instrument).
+    root.setAttribute ("plugin", getName());
     root.setAttribute ("editorWidth", editorWidth.load());
     root.setAttribute ("editorHeight", editorHeight.load());
 
@@ -675,8 +1042,20 @@ void FreqArtProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameter
         lowEnd.setProperty (valueProperty, params::stripesLowEndIndex, nullptr);
     }
 
-    // Any other parameter the state does not have (saved before it existed) loads at its
-    // default: replaceState would otherwise leave it at whatever this instance had.
+    // Parameters this variant does not have (the effect's Mode and Depth, in a state the effect
+    // saved, loaded into the instrument) are left out, so they are not saved back as if they
+    // were its own.
+    for (int i = loadedParameters.getNumChildren(); --i >= 0;)
+    {
+        const auto saved = loadedParameters.getChild (i);
+
+        if (saved.hasType (paramType) && parameters.getParameter (saved.getProperty (idProperty).toString()) == nullptr)
+            loadedParameters.removeChild (i, nullptr);
+    }
+
+    // Any other parameter the state does not have (saved before it existed, or by the other
+    // variant) loads at its default: replaceState would otherwise leave it at whatever this
+    // instance had.
     for (auto* parameter : juce::AudioProcessor::getParameters())
     {
         auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (parameter);
@@ -742,9 +1121,5 @@ juce::AudioProcessorEditor* FreqArtProcessor::createEditor()
 
 } // namespace freqart
 
-#if ! FREQART_NO_PLUGIN_CLIENT
-juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
-{
-    return new freqart::FreqArtProcessor();
-}
-#endif
+// createPluginFilter, which makes the one or the other, is in src/plugin/ (one file per plug-in
+// target).
