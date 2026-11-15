@@ -250,4 +250,21 @@ if(ARTFREQ_BUILD_TOOLS)
             ${ARTFREQ_JUCE_MODULES}
         PUBLIC
             ArtFreqBuildFlags)
+
+    # The emblem lab: renders the emblem (src/ui/Emblem.h) and the header lockup to PNG files.
+    juce_add_console_app(ArtFreqEmblemLab PRODUCT_NAME "ArtFreqEmblemLab")
+    target_sources(ArtFreqEmblemLab PRIVATE
+        tools/EmblemLab.cpp
+        src/ui/Emblem.cpp
+        src/core/Fonts.cpp)
+    target_include_directories(ArtFreqEmblemLab PRIVATE src)
+    target_compile_definitions(ArtFreqEmblemLab PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(ArtFreqEmblemLab
+        PRIVATE
+            ArtFreqAssets
+            juce::juce_gui_basics
+        PUBLIC
+            ArtFreqBuildFlags)
 endif()
