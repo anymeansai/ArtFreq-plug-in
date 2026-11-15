@@ -17,7 +17,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 /** RMS the loudest moment of every plan is normalised to: -12 dBFS before the output level. */
@@ -28,7 +28,7 @@ constexpr float planTargetRms = 0.25f;
 enum class LowEnd
 {
     stripes,  // separate lines: an analyser with a long FFT shows them as stripes with dark gaps
-              // (the only look in FreqArt 0.1 and 0.2, kept as an effect)
+              // (the only look in ArtFreq 0.1 and 0.2, kept as an effect)
     smooth    // the rising comb (see ArtPlan::combLines): shapes stay filled at every FFT size
 };
 
@@ -82,7 +82,7 @@ constexpr float lowestPlayedHz = 10.0f;
 // combEdgeTaper[0] of its level and the next one at combEdgeTaper[1]: a raised cosine over three
 // cells, inside the shape, along which the sines fade in and out over 75 ms. Runs shorter than
 // combEdgeTaperMinCells (25 Hz) keep their level, so thin strokes stay as bright; the ends of the
-// grid fade over combEdgeFadeHz beyond it instead. Measured with FreqArtLab against hard edges:
+// grid fade over combEdgeFadeHz beyond it instead. Measured with ArtFreqLab against hard edges:
 // 1.3 dB less leakage in the lows (1.2 dB for text), fidelity +0.01 (text +0.03), fill the same.
 constexpr float combEdgeTaper[] { 0.5f, 0.933f };
 constexpr int combEdgeTaperMinCells = 5;
@@ -192,4 +192,4 @@ struct ArtPlan
     the mean power of the grid lines it glides over. */
 std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& settings);
 
-} // namespace freqart
+} // namespace artfreq

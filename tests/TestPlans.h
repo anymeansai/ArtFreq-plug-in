@@ -49,7 +49,7 @@ inline uint64_t hashFrequencies (const std::vector<float>& frequencies)
 /** Fills in the derived parts of a plan whose lines and amplitudes are set: the active lists
     (a line is active for column c if it is non-zero at c or at (c + 1) % numColumns), the
     layout hash and the silent flag. */
-inline void finishPlan (freqart::ArtPlan& plan)
+inline void finishPlan (artfreq::ArtPlan& plan)
 {
     const auto lines = static_cast<size_t> (plan.numLines);
     const auto columns = static_cast<size_t> (plan.numColumns);
@@ -80,11 +80,11 @@ inline void finishPlan (freqart::ArtPlan& plan)
 
 /** A plan with the given lines (ascending Hz) whose amplitude at (column, line) comes from
     `amplitude`. */
-inline std::shared_ptr<freqart::ArtPlan> makePlan (const std::vector<float>& frequencies,
+inline std::shared_ptr<artfreq::ArtPlan> makePlan (const std::vector<float>& frequencies,
                                                    const std::function<float (int column, int line)>& amplitude,
-                                                   int numColumns = freqart::Canvas::width)
+                                                   int numColumns = artfreq::Canvas::width)
 {
-    auto plan = std::make_shared<freqart::ArtPlan>();
+    auto plan = std::make_shared<artfreq::ArtPlan>();
     plan->numLines = static_cast<int> (frequencies.size());
     plan->numColumns = numColumns;
     plan->frequencies = frequencies;
@@ -104,8 +104,8 @@ inline std::shared_ptr<freqart::ArtPlan> makePlan (const std::vector<float>& fre
 }
 
 /** Every line at the same amplitude in every column. */
-inline std::shared_ptr<freqart::ArtPlan> makeConstantPlan (const std::vector<float>& frequencies, float amplitude,
-                                                           int numColumns = freqart::Canvas::width)
+inline std::shared_ptr<artfreq::ArtPlan> makeConstantPlan (const std::vector<float>& frequencies, float amplitude,
+                                                           int numColumns = artfreq::Canvas::width)
 {
     return makePlan (frequencies, [amplitude] (int, int) { return amplitude; }, numColumns);
 }
@@ -124,9 +124,9 @@ inline std::vector<float> logLines (int count, double lowHz, double highHz)
     return frequencies;
 }
 
-inline freqart::PlaySegment segment (int start, int length, bool playing, double fraction, double perSample, bool jump = false)
+inline artfreq::PlaySegment segment (int start, int length, bool playing, double fraction, double perSample, bool jump = false)
 {
-    freqart::PlaySegment s;
+    artfreq::PlaySegment s;
     s.start = start;
     s.length = length;
     s.playing = playing;
@@ -138,7 +138,7 @@ inline freqart::PlaySegment segment (int start, int length, bool playing, double
 
 /** Plays the engine (gate on) from `fraction` for numSamples in blocks, the position moving by
     `perSample`; the first block is a jump if `jumpFirst`. Returns the output. */
-inline std::vector<float> play (freqart::ArtEngine& engine, int numSamples, double fraction, double perSample,
+inline std::vector<float> play (artfreq::ArtEngine& engine, int numSamples, double fraction, double perSample,
                                 int blockSize = 512, bool jumpFirst = false)
 {
     std::vector<float> out (static_cast<size_t> (numSamples));
@@ -154,7 +154,7 @@ inline std::vector<float> play (freqart::ArtEngine& engine, int numSamples, doub
 }
 
 /** Renders with the gate closed (fading out and then silence). */
-inline std::vector<float> stop (freqart::ArtEngine& engine, int numSamples, double fraction = 0.0)
+inline std::vector<float> stop (artfreq::ArtEngine& engine, int numSamples, double fraction = 0.0)
 {
     std::vector<float> out (static_cast<size_t> (numSamples));
     const auto s = segment (0, numSamples, false, fraction, 0.0);

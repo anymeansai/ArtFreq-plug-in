@@ -21,7 +21,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 class BaselineCarver final : public SpectralCarver
@@ -79,4 +79,4 @@ private:
     int binRowsCount = -1;
 };
 
-} // namespace freqart
+} // namespace artfreq

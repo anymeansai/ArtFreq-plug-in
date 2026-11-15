@@ -2,14 +2,14 @@
 
 // A very small test framework: no dependencies beyond the standard library.
 //
-//   FREQART_TEST (bypassIsTransparent)
+//   ARTFREQ_TEST (bypassIsTransparent)
 //   {
 //       CHECK (something);
 //       CHECK_NEAR (measuredDb, expectedDb, 0.25);
 //   }
 //
-// Run every test:            FreqArtTests
-// Run tests matching a name: FreqArtTests bypass
+// Run every test:            ArtFreqTests
+// Run tests matching a name: ArtFreqTests bypass
 
 #include <cmath>
 #include <cstdio>
@@ -147,19 +147,19 @@ inline int runAll (int argc, char* argv[])
 
 } // namespace test
 
-#define FREQART_TEST(name)                                              \
-    static void freqartTest_##name();                                   \
-    static const test::Registrar freqartRegistrar_##name (#name, freqartTest_##name); \
-    static void freqartTest_##name()
+#define ARTFREQ_TEST(name)                                              \
+    static void artfreqTest_##name();                                   \
+    static const test::Registrar artfreqRegistrar_##name (#name, artfreqTest_##name); \
+    static void artfreqTest_##name()
 
 #define CHECK(condition)                test::check ((condition), __FILE__, __LINE__, #condition)
 // The message may be built with <<:  CHECK_MSG (ok, "gain " << gain << " dB at " << frequency);
 #define CHECK_MSG(condition, message)                                     \
     do                                                                    \
     {                                                                     \
-        std::ostringstream freqartMessage;                                  \
-        freqartMessage << message;                                          \
-        test::check ((condition), __FILE__, __LINE__, freqartMessage.str()); \
+        std::ostringstream artfreqMessage;                                  \
+        artfreqMessage << message;                                          \
+        test::check ((condition), __FILE__, __LINE__, artfreqMessage.str()); \
     } while (false)
 #define CHECK_NEAR(actual, expected, tolerance) \
     test::checkNear ((actual), (expected), (tolerance), #actual, __FILE__, __LINE__)

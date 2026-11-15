@@ -7,7 +7,7 @@
 
 #include <vector>
 
-using freqart::LiveAnalyzer;
+using artfreq::LiveAnalyzer;
 
 namespace
 {
@@ -44,7 +44,7 @@ std::vector<float> analyse (LiveAnalyzer& analyzer, const std::vector<float>& si
 
 } // namespace
 
-FREQART_TEST (analyzerFullScaleSineReadsZeroDb)
+ARTFREQ_TEST (analyzerFullScaleSineReadsZeroDb)
 {
     LiveAnalyzer analyzer;
     analyzer.prepare (sampleRate);
@@ -78,7 +78,7 @@ FREQART_TEST (analyzerFullScaleSineReadsZeroDb)
     CHECK_LESS (column[300], -90.0f);
 }
 
-FREQART_TEST (analyzerSilenceReadsTheFloor)
+ARTFREQ_TEST (analyzerSilenceReadsTheFloor)
 {
     LiveAnalyzer analyzer;
     analyzer.prepare (sampleRate);
@@ -90,7 +90,7 @@ FREQART_TEST (analyzerSilenceReadsTheFloor)
     CHECK (*std::min_element (column.begin(), column.end()) >= -140.0f);
 }
 
-FREQART_TEST (analyzerDropsWhatDoesNotFit)
+ARTFREQ_TEST (analyzerDropsWhatDoesNotFit)
 {
     LiveAnalyzer analyzer;
     analyzer.prepare (sampleRate);

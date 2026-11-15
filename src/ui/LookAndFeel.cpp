@@ -4,12 +4,12 @@
 
 #include <cmath>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
-    const juce::Identifier popupParentProperty { "freqartPopupParent" };
-    const juce::Identifier dangerProperty { "freqartDanger" };
+    const juce::Identifier popupParentProperty { "artfreqPopupParent" };
+    const juce::Identifier dangerProperty { "artfreqDanger" };
 
     constexpr int menuItemHeight = 28;
     constexpr int menuBorder = 4;
@@ -18,7 +18,7 @@ namespace
     juce::Colour pressed (juce::Colour c) { return c.darker (0.3f); }
 } // namespace
 
-FreqArtLookAndFeel::FreqArtLookAndFeel()
+ArtFreqLookAndFeel::ArtFreqLookAndFeel()
 {
     const auto none = juce::Colours::transparentBlack;
 
@@ -88,14 +88,14 @@ FreqArtLookAndFeel::FreqArtLookAndFeel()
     setColour (juce::GroupComponent::textColourId, theme::textDim);
 }
 
-FreqArtLookAndFeel::~FreqArtLookAndFeel() = default;
+ArtFreqLookAndFeel::~ArtFreqLookAndFeel() = default;
 
-void FreqArtLookAndFeel::setPopupParent (juce::Component& component)
+void ArtFreqLookAndFeel::setPopupParent (juce::Component& component)
 {
     component.getProperties().set (popupParentProperty, true);
 }
 
-juce::Component* FreqArtLookAndFeel::findPopupParent (juce::Component& start)
+juce::Component* ArtFreqLookAndFeel::findPopupParent (juce::Component& start)
 {
     for (auto* c = &start; c != nullptr; c = c->getParentComponent())
         if (c->getProperties().contains (popupParentProperty))
@@ -104,24 +104,24 @@ juce::Component* FreqArtLookAndFeel::findPopupParent (juce::Component& start)
     return nullptr;
 }
 
-void FreqArtLookAndFeel::setDanger (juce::Component& component, bool isDanger)
+void ArtFreqLookAndFeel::setDanger (juce::Component& component, bool isDanger)
 {
     component.getProperties().set (dangerProperty, isDanger);
     component.repaint();
 }
 
-bool FreqArtLookAndFeel::isDanger (const juce::Component& component)
+bool ArtFreqLookAndFeel::isDanger (const juce::Component& component)
 {
     return static_cast<bool> (component.getProperties().getWithDefault (dangerProperty, false));
 }
 
-juce::Font FreqArtLookAndFeel::controlFont()
+juce::Font ArtFreqLookAndFeel::controlFont()
 {
     return fonts::ui (theme::controlSize);
 }
 
 //==============================================================================
-void FreqArtLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+void ArtFreqLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                            float sliderPos, float startAngle, float endAngle, juce::Slider& slider)
 {
     const auto enabled = slider.isEnabled();
@@ -165,7 +165,7 @@ void FreqArtLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
     g.strokePath (pointer, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
-void FreqArtLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
+void ArtFreqLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
                                            float sliderPos, float minSliderPos, float maxSliderPos,
                                            juce::Slider::SliderStyle style, juce::Slider& slider)
 {
@@ -248,12 +248,12 @@ void FreqArtLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int 
     g.fillEllipse (disc);
 }
 
-int FreqArtLookAndFeel::getSliderThumbRadius (juce::Slider& slider)
+int ArtFreqLookAndFeel::getSliderThumbRadius (juce::Slider& slider)
 {
     return slider.isBar() ? 0 : 6;
 }
 
-juce::Slider::SliderLayout FreqArtLookAndFeel::getSliderLayout (juce::Slider& slider)
+juce::Slider::SliderLayout ArtFreqLookAndFeel::getSliderLayout (juce::Slider& slider)
 {
     if (auto* knob = dynamic_cast<shell::Knob*> (&slider))
     {
@@ -266,7 +266,7 @@ juce::Slider::SliderLayout FreqArtLookAndFeel::getSliderLayout (juce::Slider& sl
     return juce::LookAndFeel_V4::getSliderLayout (slider);
 }
 
-juce::Label* FreqArtLookAndFeel::createSliderTextBox (juce::Slider& slider)
+juce::Label* ArtFreqLookAndFeel::createSliderTextBox (juce::Slider& slider)
 {
     if (dynamic_cast<shell::Knob*> (&slider) != nullptr)
         return new shell::ValueLabel();
@@ -285,7 +285,7 @@ juce::Label* FreqArtLookAndFeel::createSliderTextBox (juce::Slider& slider)
 }
 
 //==============================================================================
-void FreqArtLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, int height, juce::TextEditor& editor)
+void ArtFreqLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width, int height, juce::TextEditor& editor)
 {
     const auto fill = editor.findColour (juce::TextEditor::backgroundColourId);
 
@@ -304,7 +304,7 @@ void FreqArtLookAndFeel::fillTextEditorBackground (juce::Graphics& g, int width,
     g.fillRoundedRectangle (juce::Rectangle<int> (width, height).toFloat(), theme::controlCorner);
 }
 
-void FreqArtLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, int height, juce::TextEditor& editor)
+void ArtFreqLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, int height, juce::TextEditor& editor)
 {
     const auto bounds = juce::Rectangle<int> (width, height).toFloat().reduced (0.5f);
 
@@ -332,7 +332,7 @@ void FreqArtLookAndFeel::drawTextEditorOutline (juce::Graphics& g, int width, in
 }
 
 //==============================================================================
-void FreqArtLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button, const juce::Colour&,
+void ArtFreqLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button, const juce::Colour&,
                                                bool isHighlighted, bool isDown)
 {
     const auto bounds = button.getLocalBounds().toFloat().reduced (0.5f);
@@ -369,7 +369,7 @@ void FreqArtLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& 
     g.drawRoundedRectangle (bounds, theme::controlCorner, 1.0f);
 }
 
-void FreqArtLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button, bool isHighlighted, bool isDown)
+void ArtFreqLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button, bool isHighlighted, bool isDown)
 {
     const auto enabled = button.isEnabled();
     const auto dangerHot = isDanger (button) && enabled && (isHighlighted || isDown);
@@ -379,12 +379,12 @@ void FreqArtLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& bu
     g.drawText (button.getButtonText(), button.getLocalBounds().reduced (8, 0), juce::Justification::centred, true);
 }
 
-juce::Font FreqArtLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
+juce::Font ArtFreqLookAndFeel::getTextButtonFont (juce::TextButton&, int buttonHeight)
 {
     return fonts::ui (buttonHeight < 24 ? 12.0f : theme::controlSize, fonts::UiWeight::medium);
 }
 
-void FreqArtLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool isHighlighted, bool isDown)
+void ArtFreqLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool isHighlighted, bool isDown)
 {
     const auto boxSize = 16.0f;
     const auto top = (static_cast<float> (button.getHeight()) - boxSize) * 0.5f;
@@ -397,7 +397,7 @@ void FreqArtLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton
     g.drawText (button.getButtonText(), button.getLocalBounds().withTrimmedLeft (24), juce::Justification::centredLeft, true);
 }
 
-void FreqArtLookAndFeel::drawTickBox (juce::Graphics& g, juce::Component&, float x, float y, float w, float h,
+void ArtFreqLookAndFeel::drawTickBox (juce::Graphics& g, juce::Component&, float x, float y, float w, float h,
                                       bool ticked, bool isEnabled, bool isHighlighted, bool isDown)
 {
     const auto box = juce::Rectangle<float> (x, y, w, h).reduced (0.5f);
@@ -417,7 +417,7 @@ void FreqArtLookAndFeel::drawTickBox (juce::Graphics& g, juce::Component&, float
 }
 
 //==============================================================================
-void FreqArtLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool isButtonDown,
+void ArtFreqLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height, bool isButtonDown,
                                        int, int, int, int, juce::ComboBox& box)
 {
     const auto bounds = juce::Rectangle<int> (width, height).toFloat().reduced (0.5f);
@@ -435,12 +435,12 @@ void FreqArtLookAndFeel::drawComboBox (juce::Graphics& g, int width, int height,
                      ! enabled ? theme::textFaint : hot || open ? theme::text : theme::textDim);
 }
 
-juce::Font FreqArtLookAndFeel::getComboBoxFont (juce::ComboBox& box)
+juce::Font ArtFreqLookAndFeel::getComboBoxFont (juce::ComboBox& box)
 {
     return fonts::ui (box.getHeight() < 24 ? 12.0f : theme::controlSize);
 }
 
-void FreqArtLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
+void ArtFreqLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
 {
     label.setBounds (2, 1, box.getWidth() - 28, box.getHeight() - 2);
     label.setBorderSize ({ 0, 8, 0, 0 });
@@ -448,7 +448,7 @@ void FreqArtLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label&
     label.setColour (juce::Label::textColourId, box.isEnabled() ? theme::text : theme::textFaint);
 }
 
-void FreqArtLookAndFeel::drawComboBoxTextWhenNothingSelected (juce::Graphics& g, juce::ComboBox& box, juce::Label& label)
+void ArtFreqLookAndFeel::drawComboBoxTextWhenNothingSelected (juce::Graphics& g, juce::ComboBox& box, juce::Label& label)
 {
     g.setColour (theme::textFaint);
     g.setFont (getComboBoxFont (box));
@@ -456,7 +456,7 @@ void FreqArtLookAndFeel::drawComboBoxTextWhenNothingSelected (juce::Graphics& g,
                 juce::Justification::centredLeft, true);
 }
 
-juce::PopupMenu::Options FreqArtLookAndFeel::getOptionsForComboBoxPopupMenu (juce::ComboBox& box, juce::Label& label)
+juce::PopupMenu::Options ArtFreqLookAndFeel::getOptionsForComboBoxPopupMenu (juce::ComboBox& box, juce::Label& label)
 {
     // The menu opens beside the box (below, or above when there is no room), never over it with
     // the ticked item scrolled onto the box: the tick shows the current choice.
@@ -472,12 +472,12 @@ juce::PopupMenu::Options FreqArtLookAndFeel::getOptionsForComboBoxPopupMenu (juc
 }
 
 //==============================================================================
-juce::Font FreqArtLookAndFeel::getPopupMenuFont()
+juce::Font ArtFreqLookAndFeel::getPopupMenuFont()
 {
     return fonts::ui (theme::controlSize);
 }
 
-void FreqArtLookAndFeel::drawPopupMenuBackgroundWithOptions (juce::Graphics& g, int width, int height,
+void ArtFreqLookAndFeel::drawPopupMenuBackgroundWithOptions (juce::Graphics& g, int width, int height,
                                                              const juce::PopupMenu::Options&)
 {
     const auto bounds = juce::Rectangle<int> (width, height).toFloat();
@@ -488,7 +488,7 @@ void FreqArtLookAndFeel::drawPopupMenuBackgroundWithOptions (juce::Graphics& g, 
     g.drawRoundedRectangle (bounds.reduced (0.5f), menuCorner, 1.0f);
 }
 
-void FreqArtLookAndFeel::drawPopupMenuItemWithOptions (juce::Graphics& g, const juce::Rectangle<int>& area,
+void ArtFreqLookAndFeel::drawPopupMenuItemWithOptions (juce::Graphics& g, const juce::Rectangle<int>& area,
                                                        bool isHighlighted, const juce::PopupMenu::Item& item,
                                                        const juce::PopupMenu::Options&)
 {
@@ -525,14 +525,14 @@ void FreqArtLookAndFeel::drawPopupMenuItemWithOptions (juce::Graphics& g, const 
     }
 }
 
-void FreqArtLookAndFeel::drawPopupMenuSectionHeaderWithOptions (juce::Graphics& g, const juce::Rectangle<int>& area,
+void ArtFreqLookAndFeel::drawPopupMenuSectionHeaderWithOptions (juce::Graphics& g, const juce::Rectangle<int>& area,
                                                                 const juce::String& sectionName,
                                                                 const juce::PopupMenu::Options&)
 {
     shell::drawCaps (g, sectionName, area.withTrimmedLeft (10), juce::Justification::bottomLeft, theme::textFaint);
 }
 
-void FreqArtLookAndFeel::getIdealPopupMenuItemSizeWithOptions (const juce::String& text, bool isSeparator, int standardMenuItemHeight,
+void ArtFreqLookAndFeel::getIdealPopupMenuItemSizeWithOptions (const juce::String& text, bool isSeparator, int standardMenuItemHeight,
                                                                int& idealWidth, int& idealHeight,
                                                                const juce::PopupMenu::Options&)
 {
@@ -547,25 +547,25 @@ void FreqArtLookAndFeel::getIdealPopupMenuItemSizeWithOptions (const juce::Strin
     idealWidth = shell::textWidth (getPopupMenuFont(), text) + 28 + 24;
 }
 
-int FreqArtLookAndFeel::getPopupMenuBorderSizeWithOptions (const juce::PopupMenu::Options&)
+int ArtFreqLookAndFeel::getPopupMenuBorderSizeWithOptions (const juce::PopupMenu::Options&)
 {
     return menuBorder;
 }
 
-void FreqArtLookAndFeel::preparePopupMenuWindow (juce::Component& window)
+void ArtFreqLookAndFeel::preparePopupMenuWindow (juce::Component& window)
 {
     // Inside the editor the menu is a child component, so it can be translucent (rounded corners).
     if (window.getParentComponent() != nullptr)
         window.setOpaque (false);
 }
 
-void FreqArtLookAndFeel::drawResizableFrame (juce::Graphics&, int, int, const juce::BorderSize<int>&)
+void ArtFreqLookAndFeel::drawResizableFrame (juce::Graphics&, int, int, const juce::BorderSize<int>&)
 {
     // JUCE draws this frame over a menu shown inside a component; the menu has its own edge.
 }
 
 //==============================================================================
-void FreqArtLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height)
+void ArtFreqLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& text, int width, int height)
 {
     const auto bounds = juce::Rectangle<int> (width, height).toFloat();
 
@@ -579,7 +579,7 @@ void FreqArtLookAndFeel::drawTooltip (juce::Graphics& g, const juce::String& tex
     g.drawFittedText (text, juce::Rectangle<int> (width, height).reduced (10, 6), juce::Justification::centredLeft, 4, 1.0f);
 }
 
-juce::Rectangle<int> FreqArtLookAndFeel::getTooltipBounds (const juce::String& tipText, juce::Point<int> screenPos,
+juce::Rectangle<int> ArtFreqLookAndFeel::getTooltipBounds (const juce::String& tipText, juce::Point<int> screenPos,
                                                            juce::Rectangle<int> parentArea)
 {
     const auto font = fonts::ui (12.0f);
@@ -601,12 +601,12 @@ juce::Rectangle<int> FreqArtLookAndFeel::getTooltipBounds (const juce::String& t
 }
 
 //==============================================================================
-int FreqArtLookAndFeel::getDefaultScrollbarWidth()
+int ArtFreqLookAndFeel::getDefaultScrollbarWidth()
 {
     return 10;
 }
 
-void FreqArtLookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar& bar, int x, int y, int width, int height,
+void ArtFreqLookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar& bar, int x, int y, int width, int height,
                                         bool isScrollbarVertical, int thumbStartPosition, int thumbSize,
                                         bool isMouseOver, bool isMouseDown)
 {
@@ -625,7 +625,7 @@ void FreqArtLookAndFeel::drawScrollbar (juce::Graphics& g, juce::ScrollBar& bar,
 }
 
 //==============================================================================
-void FreqArtLookAndFeel::drawCornerResizer (juce::Graphics& g, int width, int height, bool isMouseOver, bool isMouseDragging)
+void ArtFreqLookAndFeel::drawCornerResizer (juce::Graphics& g, int width, int height, bool isMouseOver, bool isMouseDragging)
 {
     // Three short diagonal strokes in the corner.
     const auto w = static_cast<float> (width), h = static_cast<float> (height);
@@ -638,4 +638,4 @@ void FreqArtLookAndFeel::drawCornerResizer (juce::Graphics& g, int width, int he
     }
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

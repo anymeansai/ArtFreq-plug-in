@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # Must be set before project(): the oldest macOS the plug-in will load on.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
 
-project(FreqArt VERSION 0.3.0 LANGUAGES C CXX)
+project(ArtFreq VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -15,10 +15,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
-option(FREQART_BUILD_TESTS "Build the test runner" ON)
-option(FREQART_BUILD_TOOLS "Build the headless UI snapshot tool and the lows and carving labs" ON)
-option(FREQART_COPY_PLUGIN_AFTER_BUILD "Copy the built plug-in into the user's VST3 folder" OFF)
-option(FREQART_ENABLE_LTO "Enable link-time optimisation in Release builds" ON)
+option(ARTFREQ_BUILD_TESTS "Build the test runner" ON)
+option(ARTFREQ_BUILD_TOOLS "Build the headless UI snapshot tool and the lows and carving labs" ON)
+option(ARTFREQ_COPY_PLUGIN_AFTER_BUILD "Copy the built plug-in into the user's VST3 folder" OFF)
+option(ARTFREQ_ENABLE_LTO "Enable link-time optimisation in Release builds" ON)
 
 # ---------------------------------------------------------------------------
 # JUCE (pinned). Point FETCHCONTENT_SOURCE_DIR_JUCE at a local checkout to
@@ -38,38 +38,38 @@ FetchContent_MakeAvailable(JUCE)
 #       plan that turns it into sound. No audio-thread code, no UI widgets.
 # dsp:  everything the audio thread runs, plus the offline WAV export and the live analyser.
 # ui:   the editor.
-file(GLOB_RECURSE FREQART_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
-file(GLOB_RECURSE FREQART_DSP_SOURCES  CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/*.cpp")
-file(GLOB_RECURSE FREQART_UI_SOURCES   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.cpp")
-file(GLOB         FREQART_FONT_ASSETS  CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/*.ttf")
+file(GLOB_RECURSE ARTFREQ_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
+file(GLOB_RECURSE ARTFREQ_DSP_SOURCES  CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/*.cpp")
+file(GLOB_RECURSE ARTFREQ_UI_SOURCES   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.cpp")
+file(GLOB         ARTFREQ_FONT_ASSETS  CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/*.ttf")
 
-set(FREQART_PLUGIN_SOURCES
+set(ARTFREQ_PLUGIN_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PluginProcessor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Parameters.cpp)
 
-set(FREQART_COMMON_DEFINITIONS
+set(ARTFREQ_COMMON_DEFINITIONS
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_REPORT_APP_USAGE=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
-    FREQART_VERSION_STRING="${PROJECT_VERSION}")
+    ARTFREQ_VERSION_STRING="${PROJECT_VERSION}")
 
-juce_add_binary_data(FreqArtAssets
-    HEADER_NAME FreqArtAssets.h
-    NAMESPACE   FreqArtAssets
-    SOURCES     ${FREQART_FONT_ASSETS})
+juce_add_binary_data(ArtFreqAssets
+    HEADER_NAME ArtFreqAssets.h
+    NAMESPACE   ArtFreqAssets
+    SOURCES     ${ARTFREQ_FONT_ASSETS})
 
-add_library(FreqArtBuildFlags INTERFACE)
-target_link_libraries(FreqArtBuildFlags INTERFACE
+add_library(ArtFreqBuildFlags INTERFACE)
+target_link_libraries(ArtFreqBuildFlags INTERFACE
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
-if(FREQART_ENABLE_LTO)
-    target_link_libraries(FreqArtBuildFlags INTERFACE juce::juce_recommended_lto_flags)
+if(ARTFREQ_ENABLE_LTO)
+    target_link_libraries(ArtFreqBuildFlags INTERFACE juce::juce_recommended_lto_flags)
 endif()
 
-set(FREQART_JUCE_MODULES
+set(ARTFREQ_JUCE_MODULES
     juce::juce_audio_processors
     juce::juce_audio_formats
     juce::juce_audio_utils
@@ -82,14 +82,14 @@ set(FREQART_JUCE_MODULES
 # where it may go (Ableton Live, FL Studio and Cubase offer instruments only on MIDI /
 # instrument tracks and effects only on audio tracks, buses and the master):
 #
-#   FreqArt     an instrument: it makes the sound whose spectrogram is the drawing.
-#   FreqArt FX  an audio effect: it carves the drawing into the audio coming in (or plays it
+#   ArtFreq     an instrument: it makes the sound whose spectrogram is the drawing.
+#   ArtFreq FX  an audio effect: it carves the drawing into the audio coming in (or plays it
 #               on top). It also takes MIDI, for the hosts that send MIDI to effects.
 #
 # The same processor and editor (PluginProcessor.h: a Variant flag); each target only adds
 # its own createPluginFilter (src/plugin/).
 # ---------------------------------------------------------------------------
-function(freqart_add_plugin target)
+function(artfreq_add_plugin target)
     cmake_parse_arguments(ARG "" "PRODUCT_NAME;PLUGIN_CODE;BUNDLE_ID;DESCRIPTION;IS_SYNTH;ENTRY" "VST3_CATEGORIES" ${ARGN})
 
     juce_add_plugin(${target}
@@ -108,48 +108,48 @@ function(freqart_add_plugin target)
         IS_MIDI_EFFECT              FALSE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE
         VST3_CATEGORIES             ${ARG_VST3_CATEGORIES}
-        COPY_PLUGIN_AFTER_BUILD     ${FREQART_COPY_PLUGIN_AFTER_BUILD})
+        COPY_PLUGIN_AFTER_BUILD     ${ARTFREQ_COPY_PLUGIN_AFTER_BUILD})
 
     target_sources(${target} PRIVATE
         ${ARG_ENTRY}
-        ${FREQART_PLUGIN_SOURCES}
-        ${FREQART_CORE_SOURCES}
-        ${FREQART_DSP_SOURCES}
-        ${FREQART_UI_SOURCES})
+        ${ARTFREQ_PLUGIN_SOURCES}
+        ${ARTFREQ_CORE_SOURCES}
+        ${ARTFREQ_DSP_SOURCES}
+        ${ARTFREQ_UI_SOURCES})
 
     target_include_directories(${target} PRIVATE src)
-    target_compile_definitions(${target} PUBLIC ${FREQART_COMMON_DEFINITIONS} JUCE_MODAL_LOOPS_PERMITTED=0)
+    target_compile_definitions(${target} PUBLIC ${ARTFREQ_COMMON_DEFINITIONS} JUCE_MODAL_LOOPS_PERMITTED=0)
 
     target_link_libraries(${target}
         PRIVATE
-            FreqArtAssets
-            ${FREQART_JUCE_MODULES}
+            ArtFreqAssets
+            ${ARTFREQ_JUCE_MODULES}
         PUBLIC
-            FreqArtBuildFlags)
+            ArtFreqBuildFlags)
 endfunction()
 
-freqart_add_plugin(FreqArt
-    PRODUCT_NAME    "FreqArt"
+artfreq_add_plugin(ArtFreq
+    PRODUCT_NAME    "ArtFreq"
     PLUGIN_CODE     FqAr
-    BUNDLE_ID       "com.anymeans.freqart"
+    BUNDLE_ID       "com.anymeans.artfreq"
     DESCRIPTION     "Draw text, images and brush strokes into the spectrogram"
     IS_SYNTH        TRUE
     VST3_CATEGORIES Instrument Generator
-    ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/FreqArtEntry.cpp)
+    ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/ArtFreqEntry.cpp)
 
-freqart_add_plugin(FreqArtFX
-    PRODUCT_NAME    "FreqArt FX"
+artfreq_add_plugin(ArtFreqFX
+    PRODUCT_NAME    "ArtFreq FX"
     PLUGIN_CODE     FqFx
-    BUNDLE_ID       "com.anymeans.freqartfx"
+    BUNDLE_ID       "com.anymeans.artfreqfx"
     DESCRIPTION     "Carve text, images and brush strokes into the spectrogram of a song"
     IS_SYNTH        FALSE
     VST3_CATEGORIES Fx Filter
-    ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/FreqArtFXEntry.cpp)
+    ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/ArtFreqFXEntry.cpp)
 
 # Definitions the plug-in wrapper normally provides, for the console apps that compile the
 # processor and editor without it (they make either variant themselves).
-set(FREQART_STANDALONE_DEFINITIONS
-    JucePlugin_Name="FreqArt"
+set(ARTFREQ_STANDALONE_DEFINITIONS
+    JucePlugin_Name="ArtFreq"
     JucePlugin_IsSynth=1
     JucePlugin_WantsMidiInput=1
     JucePlugin_ProducesMidiOutput=0
@@ -160,94 +160,94 @@ set(FREQART_STANDALONE_DEFINITIONS
 # ---------------------------------------------------------------------------
 # Tests: the drawing, the plan, the engine, the processor (no host).
 # ---------------------------------------------------------------------------
-if(FREQART_BUILD_TESTS)
-    file(GLOB FREQART_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
+if(ARTFREQ_BUILD_TESTS)
+    file(GLOB ARTFREQ_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/*.cpp")
 
-    juce_add_console_app(FreqArtTests PRODUCT_NAME "FreqArtTests")
-    target_sources(FreqArtTests PRIVATE
-        ${FREQART_TEST_SOURCES}
-        ${FREQART_PLUGIN_SOURCES}
-        ${FREQART_CORE_SOURCES}
-        ${FREQART_DSP_SOURCES}
-        ${FREQART_UI_SOURCES})
-    target_include_directories(FreqArtTests PRIVATE src tests)
-    target_compile_definitions(FreqArtTests PRIVATE
-        ${FREQART_COMMON_DEFINITIONS}
-        ${FREQART_STANDALONE_DEFINITIONS}
+    juce_add_console_app(ArtFreqTests PRODUCT_NAME "ArtFreqTests")
+    target_sources(ArtFreqTests PRIVATE
+        ${ARTFREQ_TEST_SOURCES}
+        ${ARTFREQ_PLUGIN_SOURCES}
+        ${ARTFREQ_CORE_SOURCES}
+        ${ARTFREQ_DSP_SOURCES}
+        ${ARTFREQ_UI_SOURCES})
+    target_include_directories(ArtFreqTests PRIVATE src tests)
+    target_compile_definitions(ArtFreqTests PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        ${ARTFREQ_STANDALONE_DEFINITIONS}
         JUCE_MODAL_LOOPS_PERMITTED=1
-        FREQART_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
-    target_link_libraries(FreqArtTests
+        ARTFREQ_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+    target_link_libraries(ArtFreqTests
         PRIVATE
-            FreqArtAssets
-            ${FREQART_JUCE_MODULES}
+            ArtFreqAssets
+            ${ARTFREQ_JUCE_MODULES}
         PUBLIC
-            FreqArtBuildFlags)
+            ArtFreqBuildFlags)
 
     enable_testing()
-    add_test(NAME FreqArtTests COMMAND FreqArtTests)
+    add_test(NAME ArtFreqTests COMMAND ArtFreqTests)
 endif()
 
 # ---------------------------------------------------------------------------
 # UI snapshot tool: renders the editor to PNG files without a host.
 # ---------------------------------------------------------------------------
-if(FREQART_BUILD_TOOLS)
-    juce_add_console_app(FreqArtSnapshot PRODUCT_NAME "FreqArtSnapshot")
-    target_sources(FreqArtSnapshot PRIVATE
+if(ARTFREQ_BUILD_TOOLS)
+    juce_add_console_app(ArtFreqSnapshot PRODUCT_NAME "ArtFreqSnapshot")
+    target_sources(ArtFreqSnapshot PRIVATE
         tools/Snapshot.cpp
-        ${FREQART_PLUGIN_SOURCES}
-        ${FREQART_CORE_SOURCES}
-        ${FREQART_DSP_SOURCES}
-        ${FREQART_UI_SOURCES})
-    target_include_directories(FreqArtSnapshot PRIVATE src)
+        ${ARTFREQ_PLUGIN_SOURCES}
+        ${ARTFREQ_CORE_SOURCES}
+        ${ARTFREQ_DSP_SOURCES}
+        ${ARTFREQ_UI_SOURCES})
+    target_include_directories(ArtFreqSnapshot PRIVATE src)
     # The tool pumps the message loop by hand, which the plug-in itself never does.
-    target_compile_definitions(FreqArtSnapshot PRIVATE
-        ${FREQART_COMMON_DEFINITIONS}
-        ${FREQART_STANDALONE_DEFINITIONS}
+    target_compile_definitions(ArtFreqSnapshot PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        ${ARTFREQ_STANDALONE_DEFINITIONS}
         JUCE_MODAL_LOOPS_PERMITTED=1)
-    target_link_libraries(FreqArtSnapshot
+    target_link_libraries(ArtFreqSnapshot
         PRIVATE
-            FreqArtAssets
-            ${FREQART_JUCE_MODULES}
+            ArtFreqAssets
+            ${ARTFREQ_JUCE_MODULES}
         PUBLIC
-            FreqArtBuildFlags)
+            ArtFreqBuildFlags)
 
     # The lows lab: renders test drawings through the real plan and engine, analyses the sound
     # like a spectrogram would and measures how the 30 Hz - 2 kHz part of it looks (PNGs and
     # metrics), so different ways of drawing the lows can be compared by numbers.
-    juce_add_console_app(FreqArtLab PRODUCT_NAME "FreqArtLab")
-    target_sources(FreqArtLab PRIVATE
+    juce_add_console_app(ArtFreqLab PRODUCT_NAME "ArtFreqLab")
+    target_sources(ArtFreqLab PRIVATE
         tools/LowsLab.cpp
-        ${FREQART_PLUGIN_SOURCES}
-        ${FREQART_CORE_SOURCES}
-        ${FREQART_DSP_SOURCES}
-        ${FREQART_UI_SOURCES})
-    target_include_directories(FreqArtLab PRIVATE src)
-    target_compile_definitions(FreqArtLab PRIVATE
-        ${FREQART_COMMON_DEFINITIONS}
-        ${FREQART_STANDALONE_DEFINITIONS}
+        ${ARTFREQ_PLUGIN_SOURCES}
+        ${ARTFREQ_CORE_SOURCES}
+        ${ARTFREQ_DSP_SOURCES}
+        ${ARTFREQ_UI_SOURCES})
+    target_include_directories(ArtFreqLab PRIVATE src)
+    target_compile_definitions(ArtFreqLab PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        ${ARTFREQ_STANDALONE_DEFINITIONS}
         JUCE_MODAL_LOOPS_PERMITTED=1)
-    target_link_libraries(FreqArtLab
+    target_link_libraries(ArtFreqLab
         PRIVATE
-            FreqArtAssets
-            ${FREQART_JUCE_MODULES}
+            ArtFreqAssets
+            ${ARTFREQ_JUCE_MODULES}
         PUBLIC
-            FreqArtBuildFlags)
+            ArtFreqBuildFlags)
 
-    # The carving lab: plays songs through a spectral carving engine with FreqArt drawings and
+    # The carving lab: plays songs through a spectral carving engine with ArtFreq drawings and
     # measures what an analyser shows (tools/CarveLab.cpp). Needs no processor or editor.
-    juce_add_console_app(FreqArtCarveLab PRODUCT_NAME "FreqArtCarveLab")
-    target_sources(FreqArtCarveLab PRIVATE
+    juce_add_console_app(ArtFreqCarveLab PRODUCT_NAME "ArtFreqCarveLab")
+    target_sources(ArtFreqCarveLab PRIVATE
         tools/CarveLab.cpp
-        ${FREQART_CORE_SOURCES}
-        ${FREQART_DSP_SOURCES})
-    target_include_directories(FreqArtCarveLab PRIVATE src)
-    target_compile_definitions(FreqArtCarveLab PRIVATE
-        ${FREQART_COMMON_DEFINITIONS}
+        ${ARTFREQ_CORE_SOURCES}
+        ${ARTFREQ_DSP_SOURCES})
+    target_include_directories(ArtFreqCarveLab PRIVATE src)
+    target_compile_definitions(ArtFreqCarveLab PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
         JUCE_MODAL_LOOPS_PERMITTED=1)
-    target_link_libraries(FreqArtCarveLab
+    target_link_libraries(ArtFreqCarveLab
         PRIVATE
-            FreqArtAssets
-            ${FREQART_JUCE_MODULES}
+            ArtFreqAssets
+            ${ARTFREQ_JUCE_MODULES}
         PUBLIC
-            FreqArtBuildFlags)
+            ArtFreqBuildFlags)
 endif()

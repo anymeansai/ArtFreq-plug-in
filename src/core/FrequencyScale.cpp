@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -252,4 +252,4 @@ std::vector<double> gridFrequencies (const FrequencyScale& scale)
     return result;
 }
 
-} // namespace freqart
+} // namespace artfreq

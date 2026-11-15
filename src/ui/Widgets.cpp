@@ -3,7 +3,7 @@
 #include <cmath>
 #include <vector>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
@@ -498,4 +498,4 @@ void IconButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
                 juce::Justification::centredLeft, false);
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

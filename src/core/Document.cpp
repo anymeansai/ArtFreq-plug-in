@@ -9,7 +9,7 @@
 #include <mutex>
 #include <set>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -17,7 +17,8 @@ namespace
 
 namespace ids
 {
-    const juce::Identifier document ("FreqArtDocument");
+    const juce::Identifier document ("ArtFreqDocument");
+    const juce::Identifier legacyDocument ("FreqArtDocument");   // saved before 0.4
     const juce::Identifier object ("Object");
     const juce::Identifier version ("version");
     const juce::Identifier paint ("paint");
@@ -306,7 +307,7 @@ ArtDocument ArtDocument::createDefault()
 {
     ArtDocument document;
     const auto band = bandRange (Band::mid, FrequencyScale {});
-    auto object = makeTextObject ("FreqArt", static_cast<float> (band.low), static_cast<float> (band.high));
+    auto object = makeTextObject ("ArtFreq", static_cast<float> (band.low), static_cast<float> (band.high));
     object.startTime = 0.04f;
     object.endTime = 0.96f;
     document.objects.push_back (std::move (object));
@@ -531,7 +532,7 @@ ArtDocument ArtDocument::fromValueTree (const juce::ValueTree& tree)
 {
     ArtDocument document;
 
-    if (! tree.isValid() || ! tree.hasType (ids::document))
+    if (! tree.isValid() || ! (tree.hasType (ids::document) || tree.hasType (ids::legacyDocument)))
         return document;
 
     if (tree.hasProperty (ids::paint))
@@ -707,4 +708,4 @@ bool DocumentHistory::redo (ArtDocument& current)
     return true;
 }
 
-} // namespace freqart
+} // namespace artfreq

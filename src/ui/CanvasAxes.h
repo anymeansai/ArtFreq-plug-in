@@ -8,7 +8,7 @@
 
 #include <vector>
 
-namespace freqart::ui::axes
+namespace artfreq::ui::axes
 {
 
 /** Space around the drawing inside the canvas and the live view, besides the axes: room for the
@@ -71,4 +71,4 @@ juce::Font labelFont();
 /** The colour of axis labels. */
 juce::Colour labelColour();
 
-} // namespace freqart::ui::axes
+} // namespace artfreq::ui::axes

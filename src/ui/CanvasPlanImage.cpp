@@ -6,7 +6,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
@@ -357,4 +357,4 @@ void CanvasPlanImage::render (const ArtPlan* plan, const FrequencyScale& scale, 
     }
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

@@ -2,7 +2,7 @@
 
 #include "Parameters.h"
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 namespace
 {
@@ -31,14 +31,14 @@ namespace
     constexpr int previewSize = 44;
     constexpr int previewGap = 12;
 
-    juce::RangedAudioParameter& parameter (FreqArtProcessor& processor, const char* id)
+    juce::RangedAudioParameter& parameter (ArtFreqProcessor& processor, const char* id)
     {
         auto* p = processor.getParameters().getParameter (id);
         jassert (p != nullptr);
         return *p;
     }
 
-    int choiceIndex (FreqArtProcessor& processor, const char* id)
+    int choiceIndex (ArtFreqProcessor& processor, const char* id)
     {
         if (auto* value = processor.getParameters().getRawParameterValue (id))
             return juce::roundToInt (value->load());
@@ -104,7 +104,7 @@ void PreviewButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
 }
 
 //==============================================================================
-Footer::Footer (FreqArtProcessor& p, int inspectorLeftEdge)
+Footer::Footer (ArtFreqProcessor& p, int inspectorLeftEdge)
     : exporter (p),
       processor (p),
       inspectorLeft (inspectorLeftEdge)
@@ -242,7 +242,7 @@ juce::String Footer::tempoHint() const
 
 void Footer::refresh()
 {
-    // FreqArt FX: the sines' settings are greyed in the modes that play no sines.
+    // ArtFreq FX: the sines' settings are greyed in the modes that play no sines.
     if (processor.isEffect())
     {
         const auto sines = playsSines (processor.getEffectMode());
@@ -361,4 +361,4 @@ void Footer::resized()
     exporter.setBounds (x, captionTop, getWidth() - metrics::pad - x, hintTop + hintHeight - captionTop);
 }
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

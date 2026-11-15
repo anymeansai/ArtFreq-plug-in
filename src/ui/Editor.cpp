@@ -14,7 +14,7 @@
 
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 namespace theme = ui::theme;
 
@@ -29,7 +29,7 @@ namespace
 
         constexpr int mainTop = headerHeight + toolbarHeight;
         constexpr int inspectorWidth = ui::Inspector::preferredWidth;   // includes its 1 px divider
-        constexpr int inspectorLeft = FreqArtEditor::baseWidth - inspectorWidth;
+        constexpr int inspectorLeft = ArtFreqEditor::baseWidth - inspectorWidth;
 
         // The canvas keeps a little air from the toolbar, the inspector and the footer; its own
         // axes supply the margin on the left and at the bottom.
@@ -101,7 +101,7 @@ namespace
                           private juce::Timer
     {
     public:
-        explicit Content (FreqArtProcessor& p)
+        explicit Content (ArtFreqProcessor& p)
             : processor (p),
               header (p.isEffect()),
               toolbar (state),
@@ -134,7 +134,7 @@ namespace
             addChildComponent (settings);
             addChildComponent (help);
 
-            // FreqArt FX: Mode and Depth in the header.
+            // ArtFreq FX: Mode and Depth in the header.
             if (processor.isEffect())
             {
                 effectControls = std::make_unique<ui::shell::EffectControls> (processor);
@@ -474,7 +474,7 @@ namespace
             }
         }
 
-        FreqArtProcessor& processor;
+        ArtFreqProcessor& processor;
         ui::EditorState state;
 
         ui::shell::Header header;
@@ -487,7 +487,7 @@ namespace
         ui::shell::Scrim scrim;
         ui::shell::SettingsPanel settings;
         ui::shell::HelpPanel help;
-        std::unique_ptr<ui::shell::EffectControls> effectControls;   // FreqArt FX only
+        std::unique_ptr<ui::shell::EffectControls> effectControls;   // ArtFreq FX only
         std::unique_ptr<juce::TooltipWindow> tooltips;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Content)
@@ -495,16 +495,16 @@ namespace
 } // namespace
 
 //==============================================================================
-struct FreqArtEditor::Impl final : private juce::KeyListener
+struct ArtFreqEditor::Impl final : private juce::KeyListener
 {
-    Impl (FreqArtEditor& owner, FreqArtProcessor& p)
+    Impl (ArtFreqEditor& owner, ArtFreqProcessor& p)
         : editor (owner), processor (p), content (p)
     {
         // Setting the look-and-feel after the content has been added tells every child about
         // it, which is when the sliders create their value boxes.
         editor.addAndMakeVisible (content);
         editor.setLookAndFeel (lookAndFeel.get());
-        ui::FreqArtLookAndFeel::setPopupParent (content);
+        ui::ArtFreqLookAndFeel::setPopupParent (content);
 
         content.onWindowScaleChosen = [this] (float scale) { setWindowScale (scale); };
         content.getWindowScale = [this] { return currentScale; };
@@ -576,9 +576,9 @@ struct FreqArtEditor::Impl final : private juce::KeyListener
         return false;
     }
 
-    FreqArtEditor& editor;
-    FreqArtProcessor& processor;
-    std::shared_ptr<ui::FreqArtLookAndFeel> lookAndFeel = std::make_shared<ui::FreqArtLookAndFeel>();   // outlives the content
+    ArtFreqEditor& editor;
+    ArtFreqProcessor& processor;
+    std::shared_ptr<ui::ArtFreqLookAndFeel> lookAndFeel = std::make_shared<ui::ArtFreqLookAndFeel>();   // outlives the content
     Content content;
     float currentScale = 1.0f;
     bool rememberSize = false;   // off while the constructor sets the window up
@@ -587,7 +587,7 @@ struct FreqArtEditor::Impl final : private juce::KeyListener
 };
 
 //==============================================================================
-FreqArtEditor::FreqArtEditor (FreqArtProcessor& p)
+ArtFreqEditor::ArtFreqEditor (ArtFreqProcessor& p)
     : juce::AudioProcessorEditor (p)
 {
     JUCE_ASSERT_MESSAGE_THREAD
@@ -615,19 +615,19 @@ FreqArtEditor::FreqArtEditor (FreqArtProcessor& p)
     impl->rememberSize = true;
 }
 
-FreqArtEditor::~FreqArtEditor()
+ArtFreqEditor::~ArtFreqEditor()
 {
     impl.reset();
 }
 
-void FreqArtEditor::paint (juce::Graphics& g)
+void ArtFreqEditor::paint (juce::Graphics& g)
 {
     // The interface covers the window; this only shows if a host imposes another aspect ratio.
     if (impl == nullptr || ! impl->contentFillsWindow())
         g.fillAll (theme::bg);
 }
 
-void FreqArtEditor::resized()
+void ArtFreqEditor::resized()
 {
     if (impl == nullptr)
         return;
@@ -638,34 +638,34 @@ void FreqArtEditor::resized()
         impl->processor.setEditorSize (getWidth(), getHeight());
 }
 
-void FreqArtEditor::showLiveView (bool live)
+void ArtFreqEditor::showLiveView (bool live)
 {
     impl->content.setLiveView (live);
 }
 
-void FreqArtEditor::showHelp (bool shouldShow)
+void ArtFreqEditor::showHelp (bool shouldShow)
 {
     impl->content.setHelpOpen (shouldShow);
 }
 
-void FreqArtEditor::showSettings (bool shouldShow)
+void ArtFreqEditor::showSettings (bool shouldShow)
 {
     impl->content.setSettingsOpen (shouldShow);
 }
 
-void FreqArtEditor::selectObject (const juce::Uuid& id)
+void ArtFreqEditor::selectObject (const juce::Uuid& id)
 {
     impl->content.selectObject (id);
 }
 
-juce::Uuid FreqArtEditor::getSelectedObject() const
+juce::Uuid ArtFreqEditor::getSelectedObject() const
 {
     return impl->content.getSelectedObject();
 }
 
-bool FreqArtEditor::isLayerListShown() const
+bool ArtFreqEditor::isLayerListShown() const
 {
     return impl->content.isLayerListShown();
 }
 
-} // namespace freqart
+} // namespace artfreq

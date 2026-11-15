@@ -1,17 +1,17 @@
 #!/bin/bash
-# Builds the macOS installer package for FreqArt (by AnyMeans).
+# Builds the macOS installer package for ArtFreq (by AnyMeans).
 #
 #   installer/macos/build-pkg.sh <build-dir> <output-dir> [version]
 #
-# Produces <output-dir>/FreqArt-<version>-macOS.pkg: a standard Apple installer with a welcome
+# Produces <output-dir>/ArtFreq-<version>-macOS.pkg: a standard Apple installer with a welcome
 # page, the licence, and a conclusion page with the first steps. It installs both plug-ins into
-# /Library/Audio/Plug-Ins/VST3 (FreqArt.vst3, the instrument, and "FreqArt FX.vst3", the effect;
+# /Library/Audio/Plug-Ins/VST3 (ArtFreq.vst3, the instrument, and "ArtFreq FX.vst3", the effect;
 # each is a choice of its own, both on by default), then offers to move the downloaded installer
-# to the Trash. The version defaults to the one in CMakeLists.txt (project(FreqArt VERSION x.y.z)).
+# to the Trash. The version defaults to the one in CMakeLists.txt (project(ArtFreq VERSION x.y.z)).
 #
-# <build-dir> is a CMake build folder with a Release build of the FreqArt and FreqArtFX targets,
-# i.e. one that contains FreqArt_artefacts/Release/VST3/FreqArt.vst3 and
-# FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3. macOS only (pkgbuild, productbuild). The
+# <build-dir> is a CMake build folder with a Release build of the ArtFreq and ArtFreqFX targets,
+# i.e. one that contains ArtFreq_artefacts/Release/VST3/ArtFreq.vst3 and
+# ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3. macOS only (pkgbuild, productbuild). The
 # package is not signed with a Developer ID or notarised.
 set -euo pipefail
 
@@ -34,15 +34,15 @@ for tool in pkgbuild productbuild ditto codesign xattr lipo /usr/libexec/PlistBu
 done
 
 if [ -z "$VERSION" ]; then
-    VERSION=$(sed -nE 's/^project\(FreqArt VERSION ([0-9.]+).*/\1/p' "$REPO/CMakeLists.txt")
+    VERSION=$(sed -nE 's/^project\(ArtFreq VERSION ([0-9.]+).*/\1/p' "$REPO/CMakeLists.txt")
 fi
 # Digits and dots only: the version also goes into file names and through sed below.
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]] || die "could not determine a version (got '$VERSION')"
 
 # The two plug-ins: bundle name (it has a space in the effect's), CMake target, package id.
 PLUGINS=(
-    "FreqArt|FreqArt|com.anymeans.freqart.vst3"
-    "FreqArt FX|FreqArtFX|com.anymeans.freqartfx.vst3"
+    "ArtFreq|ArtFreq|com.anymeans.artfreq.vst3"
+    "ArtFreq FX|ArtFreqFX|com.anymeans.artfreqfx.vst3"
 )
 
 for entry in "${PLUGINS[@]}"; do
@@ -120,14 +120,14 @@ done
 cp "$HERE/scripts/postinstall" "$WORK/scripts/postinstall"
 chmod 755 "$WORK/scripts/postinstall"
 pkgbuild --nopayload --scripts "$WORK/scripts" \
-         --identifier "com.anymeans.freqart.finish" --version "$VERSION" "$WORK/pkgs/finish.pkg"
+         --identifier "com.anymeans.artfreq.finish" --version "$VERSION" "$WORK/pkgs/finish.pkg"
 
 # ---- the product archive ------------------------------------------------------------------
 cp "$HERE/resources/welcome.html" "$HERE/resources/conclusion.html" "$WORK/resources/"
 cp "$REPO/LICENSE" "$WORK/resources/license.txt"
 sed "s/@VERSION@/$VERSION/g" "$HERE/distribution.xml" > "$WORK/distribution.xml"
 
-PKG="$OUT_DIR/FreqArt-$VERSION-macOS.pkg"
+PKG="$OUT_DIR/ArtFreq-$VERSION-macOS.pkg"
 rm -f "$PKG"
 productbuild --distribution "$WORK/distribution.xml" --package-path "$WORK/pkgs" \
              --resources "$WORK/resources" --version "$VERSION" "$PKG"

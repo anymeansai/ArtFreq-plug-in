@@ -3,14 +3,14 @@
 // Turning a picture into something that reads well in a spectrogram.
 //
 // In a spectrogram, loud is bright and silence is dark. A photo or logo on a white background
-// drawn as-is would come out as a loud block with the subject cut out of it, so FreqArt maps
+// drawn as-is would come out as a loud block with the subject cut out of it, so ArtFreq maps
 // each picture to "how loud is this pixel" (0 = silent, 1 = loudest) with one of four modes.
 
 #include <juce_graphics/juce_graphics.h>
 
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 enum class ImageMode
@@ -65,4 +65,4 @@ struct ProcessedImage
 */
 ProcessedImage processImage (const juce::Image& image, ImageMode mode, float cleanup);
 
-} // namespace freqart
+} // namespace artfreq

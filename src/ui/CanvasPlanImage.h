@@ -14,7 +14,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
 class CanvasPlanImage
@@ -36,7 +36,7 @@ public:
     void invalidate() noexcept { image = {}; }
 
     /** The colour-map index (0..255) of every pixel of the picture last returned, row by row:
-        what FreqArt FX's canvas lays over its stand-in for the song. */
+        what ArtFreq FX's canvas lays over its stand-in for the song. */
     const std::vector<uint8_t>& getPixelLevels() const noexcept { return pixelLevels; }
 
     /** Counts the pictures rendered: it changes whenever the picture last returned does. */
@@ -90,4 +90,4 @@ private:
 /** Copies a row of opaque colours into an ARGB or RGB image (whatever its pixel layout). */
 void writePixelRow (juce::Image::BitmapData& data, int y, const juce::PixelARGB* source, int width) noexcept;
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

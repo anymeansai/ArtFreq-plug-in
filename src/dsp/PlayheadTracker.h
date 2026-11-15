@@ -11,7 +11,7 @@
 #include <bitset>
 #include <optional>
 
-namespace freqart
+namespace artfreq
 {
 
 enum class TriggerMode
@@ -197,4 +197,4 @@ private:
 /** Converts a JUCE position to HostTiming. */
 HostTiming makeHostTiming (const juce::Optional<juce::AudioPlayHead::PositionInfo>& position) noexcept;
 
-} // namespace freqart
+} // namespace artfreq

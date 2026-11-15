@@ -1,7 +1,7 @@
 // The carving lab: what a spectral carving engine (dsp/SpectralCarver.h) does to a song, as an
 // analyser shows it. It measures the engines so they can be compared on equal terms.
 //
-//   FreqArtCarveLab <output-dir> [--engine N] [--input song.wav] [--offset seconds]
+//   ArtFreqCarveLab <output-dir> [--engine N] [--input song.wav] [--offset seconds]
 //                   [--songs pink,mix,input] [--drawings hello,sun,ramp,portrait]
 //                   [--modes carve,stencil] [--ffts 4096,8192,16384] [--depth -60]
 //                   [--quick] [--no-png] [--wav]
@@ -66,7 +66,7 @@
 // also <song>.wav and <song>-<drawing>-<mode>.wav (the output moved back by the latency), 32-bit
 // float, to listen to.
 //
-// On Linux run it under a virtual display (it renders text):  xvfb-run -a FreqArtCarveLab out
+// On Linux run it under a virtual display (it renders text):  xvfb-run -a ArtFreqCarveLab out
 
 #include "core/Compositor.h"
 #include "core/Document.h"
@@ -98,7 +98,7 @@
 namespace
 {
 
-using namespace freqart;
+using namespace artfreq;
 
 constexpr double sampleRate = 48000.0;
 constexpr double tempo = 120.0;
@@ -1713,7 +1713,7 @@ int runLab (const Options& options)
     };
 
     juce::String text;
-    text << "FreqArt carve lab\n"
+    text << "ArtFreq carve lab\n"
          << "engine " << options.engine << ": " << engineProbe->getName() << "\n"
          << "latency " << latency << " samples (" << juce::String (latency / sampleRate * 1000.0, 1) << " ms at 48 kHz)\n"
          << "cost " << juce::String (cost, 2) << " ms of CPU per second of stereo audio (median over cases, blocks of 512; carve "
@@ -1865,7 +1865,7 @@ int main (int argc, char* argv[])
 
     if (! parseOptions (argc, argv, options))
     {
-        std::cerr << "Usage: FreqArtCarveLab <output-dir> [--engine N] [--input song.wav] [--offset seconds]\n"
+        std::cerr << "Usage: ArtFreqCarveLab <output-dir> [--engine N] [--input song.wav] [--offset seconds]\n"
                      "       [--songs pink,mix,input] [--drawings hello,sun,ramp,portrait] [--modes carve,stencil]\n"
                      "       [--ffts 4096,8192,16384] [--depth -60] [--quick] [--no-png] [--wav]" << std::endl;
         return 2;

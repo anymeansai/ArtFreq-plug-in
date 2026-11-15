@@ -1,7 +1,7 @@
 #pragma once
 
-// Parameter ids, ranges and defaults, shared by the processor, the editor and the tests. FreqArt
-// (the instrument) and FreqArt FX (the effect) share every parameter; the effect adds Mode and
+// Parameter ids, ranges and defaults, shared by the processor, the editor and the tests. ArtFreq
+// (the instrument) and ArtFreq FX (the effect) share every parameter; the effect adds Mode and
 // Depth.
 
 #include "core/ArtPlan.h"
@@ -10,10 +10,10 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-namespace freqart
+namespace artfreq
 {
 
-/** What FreqArt FX does with the audio coming in (the Mode parameter, in its order). */
+/** What ArtFreq FX does with the audio coming in (the Mode parameter, in its order). */
 enum class EffectMode
 {
     carve = 0,      // the drawing's frequencies are muted: it shows as dark shapes in the song
@@ -26,9 +26,9 @@ enum class EffectMode
 constexpr bool carvesAudio (EffectMode mode) noexcept { return mode != EffectMode::draw; }
 constexpr bool playsSines (EffectMode mode) noexcept { return mode == EffectMode::carveDraw || mode == EffectMode::draw; }
 
-} // namespace freqart
+} // namespace artfreq
 
-namespace freqart::params
+namespace artfreq::params
 {
 
 namespace id
@@ -53,12 +53,12 @@ namespace id
     inline constexpr const char* rangeHigh   = "rangeHigh";    // Hz, 2000..24000, default 20000
     inline constexpr const char* slope       = "slope";        // choice: 0, 3, 4.5, 6 dB/oct
 
-    // FreqArt FX only: what happens to the audio coming in
+    // ArtFreq FX only: what happens to the audio coming in
     inline constexpr const char* mode        = "mode";         // choice: Carve, Carve + Draw, Stencil, Draw
     inline constexpr const char* depth       = "depth";        // dB, -120..0, default -80: how far carved frequencies drop
 } // namespace id
 
-/** Every parameter of the instrument; with forEffect also Mode and Depth (FreqArt FX). */
+/** Every parameter of the instrument; with forEffect also Mode and Depth (ArtFreq FX). */
 juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect = false);
 
 // Choices, in parameter order.
@@ -79,12 +79,12 @@ constexpr float defaultDepthDb = -80.0f;
 constexpr int firstStartBar = 1;
 constexpr int lastStartBar = 999;
 
-/** Lows: Smooth for new instances; Stripes, FreqArt 0.1 and 0.2's only look, for states saved
+/** Lows: Smooth for new instances; Stripes, ArtFreq 0.1 and 0.2's only look, for states saved
     before the parameter existed, so projects made with them do not change. */
 constexpr int smoothLowEndIndex = 0;
 constexpr int stripesLowEndIndex = 1;
 
-/** The index of FreqArt 0.1's third trigger, "Free loop" (it played by itself, looping). States
+/** The index of ArtFreq 0.1's third trigger, "Free loop" (it played by itself, looping). States
     saved with it load as Transport with Repeat on. */
 constexpr int legacyFreeLoopIndex = 2;
 inline constexpr const char* legacyFreeLoopName = "Free loop";
@@ -99,4 +99,4 @@ TriggerMode triggerForIndex (int triggerIndex) noexcept;
 LowEnd lowEndForIndex (int lowEndIndex) noexcept;
 EffectMode effectModeForIndex (int modeIndex) noexcept;
 
-} // namespace freqart::params
+} // namespace artfreq::params

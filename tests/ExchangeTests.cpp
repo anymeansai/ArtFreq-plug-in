@@ -10,8 +10,8 @@
 #include <thread>
 #include <vector>
 
-using freqart::ArtPlan;
-using freqart::PlanExchange;
+using artfreq::ArtPlan;
+using artfreq::PlanExchange;
 
 namespace
 {
@@ -47,7 +47,7 @@ struct Census
 
 } // namespace
 
-FREQART_TEST (exchangeVersionsIncrease)
+ARTFREQ_TEST (exchangeVersionsIncrease)
 {
     Census census (16);
 
@@ -71,7 +71,7 @@ FREQART_TEST (exchangeVersionsIncrease)
     CHECK (census.alive.load() == 0);
 }
 
-FREQART_TEST (exchangeAcquireReturnsNewestOnce)
+ARTFREQ_TEST (exchangeAcquireReturnsNewestOnce)
 {
     Census census (16);
     PlanExchange exchange;
@@ -88,7 +88,7 @@ FREQART_TEST (exchangeAcquireReturnsNewestOnce)
     CHECK (exchange.acquire() == nullptr);
 }
 
-FREQART_TEST (exchangeGarbageRules)
+ARTFREQ_TEST (exchangeGarbageRules)
 {
     Census census (64);
 
@@ -170,7 +170,7 @@ FREQART_TEST (exchangeGarbageRules)
     CHECK (census.alive.load() == 0);
 }
 
-FREQART_TEST (exchangeStressTwoThreads)
+ARTFREQ_TEST (exchangeStressTwoThreads)
 {
     // A real message thread publishing (and collecting) as fast as it can while this thread
     // plays the audio thread: it picks plans up, crossfades over a few "blocks" like the

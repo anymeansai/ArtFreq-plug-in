@@ -9,7 +9,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 
 class Toolbar final : public juce::Component,
@@ -48,4 +48,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Toolbar)
 };
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

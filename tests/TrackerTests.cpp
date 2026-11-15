@@ -14,12 +14,12 @@
 #include <utility>
 #include <vector>
 
-using freqart::ArtEngine;
-using freqart::HostTiming;
-using freqart::PlaySegment;
-using freqart::PlayheadTracker;
-using freqart::TrackerSettings;
-using freqart::TriggerMode;
+using artfreq::ArtEngine;
+using artfreq::HostTiming;
+using artfreq::PlaySegment;
+using artfreq::PlayheadTracker;
+using artfreq::TrackerSettings;
+using artfreq::TriggerMode;
 
 namespace
 {
@@ -138,7 +138,7 @@ int jumpsThroughTempoMap (const std::function<double (int64_t sample)>& tempoAt,
 
 } // namespace
 
-FREQART_TEST (trackerTransportFollowsPpq)
+ARTFREQ_TEST (trackerTransportFollowsPpq)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -166,7 +166,7 @@ FREQART_TEST (trackerTransportFollowsPpq)
     CHECK_NEAR (segments[0].fraction, 15.0 / 16.0, 1.0e-12);
 }
 
-FREQART_TEST (trackerTransportWithTimeOnly)
+ARTFREQ_TEST (trackerTransportWithTimeOnly)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -207,7 +207,7 @@ FREQART_TEST (trackerTransportWithTimeOnly)
     CHECK_NEAR (segments[0].fraction, 3.0 / 16.0 + block * rateFor (90.0, 16.0), 1.0e-12);
 }
 
-FREQART_TEST (trackerManualTempo)
+ARTFREQ_TEST (trackerManualTempo)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -233,7 +233,7 @@ FREQART_TEST (trackerManualTempo)
     CHECK_NEAR (tracker.getTempo(), 20.0, 1.0e-12);
 }
 
-FREQART_TEST (trackerLoopWrapIsNotAJump)
+ARTFREQ_TEST (trackerLoopWrapIsNotAJump)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -252,7 +252,7 @@ FREQART_TEST (trackerLoopWrapIsNotAJump)
     CHECK (! segments[0].jump);
 }
 
-FREQART_TEST (trackerRelocationIsAJump)
+ARTFREQ_TEST (trackerRelocationIsAJump)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -295,7 +295,7 @@ FREQART_TEST (trackerRelocationIsAJump)
     CHECK (elsewhere.size() == 1 && ! elsewhere[0].playing);
 }
 
-FREQART_TEST (trackerTempoChangesAreNotJumps)
+ARTFREQ_TEST (trackerTempoChangesAreNotJumps)
 {
     // A tempo change inside a block (the host reports it with the next block), small and large.
     CHECK (jumpsThroughTempoMap ([] (int64_t s) { return s < 20 * 512 + 100 ? 120.0 : 100.0; }, 60, 512) == 0);
@@ -326,7 +326,7 @@ FREQART_TEST (trackerTempoChangesAreNotJumps)
     CHECK (jumpsThroughTempoMap ([] (int64_t) { return 120.0; }, 60, 512, 30, once) == 1);
 }
 
-FREQART_TEST (trackerManualTempoChangesWhilePlaying)
+ARTFREQ_TEST (trackerManualTempoChangesWhilePlaying)
 {
     // Transport with a typed-in tempo, a minute into the song: changing the BPM while playing
     // (automation, or dragging the field) bends the position instead of jumping it.
@@ -376,7 +376,7 @@ FREQART_TEST (trackerManualTempoChangesWhilePlaying)
     CHECK_NEAR (segments[0].fraction, std::fmod (30.0 * settings.manualBpm / 60.0, 16.0) / 16.0, 1.0e-9);
 }
 
-FREQART_TEST (trackerStartsOnTheHostsBarLines)
+ARTFREQ_TEST (trackerStartsOnTheHostsBarLines)
 {
     // A song of one 4/4 bar, then 3/4 bars from ppq 4 (or a 2/4 pickup bar, then 4/4), played
     // in 32-sample blocks at 120 BPM with the host reporting where each bar starts.
@@ -466,7 +466,7 @@ FREQART_TEST (trackerStartsOnTheHostsBarLines)
         CHECK (near (position, 0.0));
 }
 
-FREQART_TEST (trackerStoppedIsNotPlaying)
+ARTFREQ_TEST (trackerStoppedIsNotPlaying)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -498,7 +498,7 @@ FREQART_TEST (trackerStoppedIsNotPlaying)
     CHECK (segments[0].jump);
 }
 
-FREQART_TEST (trackerMidiOneShot)
+ARTFREQ_TEST (trackerMidiOneShot)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -556,7 +556,7 @@ FREQART_TEST (trackerMidiOneShot)
     CHECK (! segments.back().playing);
 }
 
-FREQART_TEST (trackerMidiOneShotEndsWithTheDrawing)
+ARTFREQ_TEST (trackerMidiOneShotEndsWithTheDrawing)
 {
     // A one-shot through the engine, 1 bar at 120 (96000 samples), with sound only at the very
     // start of the drawing: nothing of that start comes back at the end, neither while the last
@@ -566,7 +566,7 @@ FREQART_TEST (trackerMidiOneShotEndsWithTheDrawing)
     const auto atStart = test::makePlan ({ 5000.0f }, [] (int column, int) { return column < 20 ? 0.3f : 0.0f; });
     const auto everywhere = test::makeConstantPlan ({ 5000.0f }, 0.3f);
 
-    const auto playOnce = [&] (const freqart::ArtPlan& plan)
+    const auto playOnce = [&] (const artfreq::ArtPlan& plan)
     {
         PlayheadTracker tracker;
         tracker.prepare (sampleRate);
@@ -603,7 +603,7 @@ FREQART_TEST (trackerMidiOneShotEndsWithTheDrawing)
     CHECK_LESS (test::largestStep (full, 1000), test::sineStepBound ({ 5000.0f }, { 0.3f }, sampleRate) + fadeSlope + 1.0e-4);
 }
 
-FREQART_TEST (trackerMidiPassEndsOnAllOffAndStop)
+ARTFREQ_TEST (trackerMidiPassEndsOnAllOffAndStop)
 {
     const auto settings = settingsFor (TriggerMode::midiNote);   // 4 bars: 8 s at 120
     HostTiming stopped;
@@ -658,7 +658,7 @@ FREQART_TEST (trackerMidiPassEndsOnAllOffAndStop)
     CHECK (stillPlaying (tracker, stopped));
 }
 
-FREQART_TEST (trackerMidiRetrigger)
+ARTFREQ_TEST (trackerMidiRetrigger)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -699,7 +699,7 @@ FREQART_TEST (trackerMidiRetrigger)
     CHECK (! segments[0].playing);
 }
 
-FREQART_TEST (trackerPreview)
+ARTFREQ_TEST (trackerPreview)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -738,7 +738,7 @@ FREQART_TEST (trackerPreview)
     }
 }
 
-FREQART_TEST (trackerTransportPlaysOnceFromItsStartBar)
+ARTFREQ_TEST (trackerTransportPlaysOnceFromItsStartBar)
 {
     // Repeat off, from bar 3 (ppq 8 in 4/4) for 1 bar (4 quarter notes: 96000 samples at 120),
     // played from just before bar 2 to bar 6 in blocks that do not line up with the bars.
@@ -793,7 +793,7 @@ FREQART_TEST (trackerTransportPlaysOnceFromItsStartBar)
     CHECK (played == lastPlayed - firstPlayed);
 }
 
-FREQART_TEST (trackerTransportSinglePassFollowsTheTimeline)
+ARTFREQ_TEST (trackerTransportSinglePassFollowsTheTimeline)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -834,7 +834,7 @@ FREQART_TEST (trackerTransportSinglePassFollowsTheTimeline)
     CHECK (segments.size() == 1 && segments[0].playing && ! segments[0].jump && ! segments[0].once);
 }
 
-FREQART_TEST (trackerTransportSinglePassUnderAHostLoop)
+ARTFREQ_TEST (trackerTransportSinglePassUnderAHostLoop)
 {
     // The host loops over the pass (bars 1 to 4 exactly), then over bars 2 to 3 inside it, in
     // blocks of 500 samples (16 quarter notes = 768 of them).
@@ -893,7 +893,7 @@ FREQART_TEST (trackerTransportSinglePassUnderAHostLoop)
         CHECK (samples == 192000);
 }
 
-FREQART_TEST (trackerTransportSinglePassInTheHostsMeterAndTempo)
+ARTFREQ_TEST (trackerTransportSinglePassInTheHostsMeterAndTempo)
 {
     // 3/4 at 90 BPM: "1 bar" is 3 quarter notes and bar 4 starts at ppq 9.
     auto settings = settingsFor (TriggerMode::transport, 3.0, false, 4);
@@ -926,7 +926,7 @@ FREQART_TEST (trackerTransportSinglePassInTheHostsMeterAndTempo)
     CHECK (segments.size() == 2 && std::abs (segments[1].fractionPerSample - rateFor (60.0, 16.0)) < 1.0e-15);
 }
 
-FREQART_TEST (trackerSinglePassFadesAtItsEdges)
+ARTFREQ_TEST (trackerSinglePassFadesAtItsEdges)
 {
     // Through the engine: bar 2 for 1 bar (96000 samples) with sound everywhere in the drawing,
     // played from the middle of bar 1 to bar 4. Silence outside the pass, no step at its edges.
@@ -1075,7 +1075,7 @@ void checkOnePass (const PassTrace& trace, double start, double length, int expe
 
 } // namespace
 
-FREQART_TEST (trackerSinglePassKeepsItsPlaceThroughMeterChanges)
+ARTFREQ_TEST (trackerSinglePassKeepsItsPlaceThroughMeterChanges)
 {
     // Played from the song start. 4/4, then 3/4 from bar 9, where the pass starts (a new section):
     // it starts there, from the drawing's start, for Length in the start bar's signature ("1 bar"
@@ -1103,7 +1103,7 @@ FREQART_TEST (trackerSinglePassKeepsItsPlaceThroughMeterChanges)
         checkOnePass (playThroughMeters (tracker, newSection, 9, 4.0, 32.0, 50.0, 32.0, 12.0), 32.0, 12.0, 1);
 }
 
-FREQART_TEST (trackerSinglePassStartsOnTheDawsBars)
+ARTFREQ_TEST (trackerSinglePassStartsOnTheDawsBars)
 {
     // 4/4 with one 2/4 bar at bar 5 (quarter notes 16 to 18), so bar N starts at 4N - 6 after it.
     // Played from the song start, the bars are counted as they go by: the pass starts on the DAW's
@@ -1143,7 +1143,7 @@ FREQART_TEST (trackerSinglePassStartsOnTheDawsBars)
         checkOnePass (playThroughMeters (tracker, newSection, 9, 1.0, from, 40.0, 28.0, 3.0), 28.0, 3.0);
 }
 
-FREQART_TEST (trackerSinglePassAtATypedTempoStartsOnTheDawsBar)
+ARTFREQ_TEST (trackerSinglePassAtATypedTempoStartsOnTheDawsBar)
 {
     // The DAW at 90 BPM in 4/4, the drawing at a typed 120 BPM: "1 bar" from bar 9 starts on the
     // DAW's bar 9 (ppq 32, 21.33 s in: sample 1024000) and plays its 4 quarter notes at 120 BPM
@@ -1219,7 +1219,7 @@ FREQART_TEST (trackerSinglePassAtATypedTempoStartsOnTheDawsBar)
     CHECK_NEAR (static_cast<double> (firstPlayed), 22.4 * sampleRate, 1.0);
 }
 
-FREQART_TEST (trackerMidiRepeatLoopsWhileANoteIsHeld)
+ARTFREQ_TEST (trackerMidiRepeatLoopsWhileANoteIsHeld)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -1350,7 +1350,7 @@ FREQART_TEST (trackerMidiRepeatLoopsWhileANoteIsHeld)
     CHECK (segments.size() == 1 && segments[0].playing && ! segments[0].jump);
 }
 
-FREQART_TEST (trackerPreviewOnceEndsByItself)
+ARTFREQ_TEST (trackerPreviewOnceEndsByItself)
 {
     PlayheadTracker tracker;
     tracker.prepare (sampleRate);
@@ -1425,7 +1425,7 @@ FREQART_TEST (trackerPreviewOnceEndsByItself)
     CHECK (segments.size() == 2 && segments[0].length == 30 && ! segments[1].playing);
 }
 
-FREQART_TEST (trackerLengthWithoutTimeSignature)
+ARTFREQ_TEST (trackerLengthWithoutTimeSignature)
 {
     // The tracker only knows lengths in quarter notes: a bar of 3/4 is 3, of 6/8 is 3, of 7/8 3.5.
     for (const auto length : { 3.0, 3.5, 6.0, 0.5 })
@@ -1444,10 +1444,10 @@ FREQART_TEST (trackerLengthWithoutTimeSignature)
     }
 }
 
-FREQART_TEST (trackerMakeHostTiming)
+ARTFREQ_TEST (trackerMakeHostTiming)
 {
-    CHECK (! freqart::makeHostTiming ({}).isPlaying);
-    CHECK (! freqart::makeHostTiming ({}).bpm.has_value());
+    CHECK (! artfreq::makeHostTiming ({}).isPlaying);
+    CHECK (! artfreq::makeHostTiming ({}).bpm.has_value());
 
     juce::AudioPlayHead::PositionInfo info;
     info.setIsPlaying (true);
@@ -1455,7 +1455,7 @@ FREQART_TEST (trackerMakeHostTiming)
     info.setPpqPosition (3.5);
     info.setTimeInSeconds (1.640625);
 
-    const auto timing = freqart::makeHostTiming (info);
+    const auto timing = artfreq::makeHostTiming (info);
     CHECK (timing.isPlaying);
     CHECK (timing.bpm.has_value() && std::abs (*timing.bpm - 128.0) < 1.0e-12);
     CHECK (timing.ppqPosition.has_value() && std::abs (*timing.ppqPosition - 3.5) < 1.0e-12);
@@ -1463,7 +1463,7 @@ FREQART_TEST (trackerMakeHostTiming)
 
     juce::AudioPlayHead::PositionInfo partial;
     partial.setBpm (std::numeric_limits<double>::quiet_NaN());
-    const auto sparse = freqart::makeHostTiming (partial);
+    const auto sparse = artfreq::makeHostTiming (partial);
     CHECK (! sparse.isPlaying);
     CHECK (! sparse.bpm.has_value());
     CHECK (! sparse.ppqPosition.has_value());

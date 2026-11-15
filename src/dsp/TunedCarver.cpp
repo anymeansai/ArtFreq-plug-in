@@ -23,7 +23,7 @@
 // build) takes a spin lock of its own per call; only this engine's audio thread ever calls it,
 // so it is never contended.
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -670,4 +670,4 @@ void TunedCarver::runFrame (int numChannels) noexcept
     }
 }
 
-} // namespace freqart
+} // namespace artfreq

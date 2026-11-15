@@ -1,6 +1,6 @@
 #pragma once
 
-// The mask plan: the canvas translated into "how much to carve", for FreqArt's effect.
+// The mask plan: the canvas translated into "how much to carve", for ArtFreq's effect.
 //
 // The sine plan (ArtPlan) turns the drawing into sound; the mask plan turns the same drawing
 // into a mask over the incoming audio instead: per canvas column (time) a mask over frequency,
@@ -19,7 +19,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 struct MaskSettings
@@ -91,7 +91,7 @@ std::unique_ptr<MaskPlan> buildMaskPlan (const Canvas& canvas, const MaskSetting
     logarithm of the halo, so a wide one in time is cheap. */
 std::unique_ptr<MaskPlan> widenMaskPlan (const MaskPlan& plan, int haloRows, int haloColumns);
 
-/** What FreqArt FX carves with, built together from one canvas: the drawing as it is (Carve,
+/** What ArtFreq FX carves with, built together from one canvas: the drawing as it is (Carve,
     Stencil) and the drawing widened by a halo (Carve + Draw, where the sines are played in a hole
     a little larger than they are, so they show with a dark edge). Both are always there, so a
     change of mode, also by automation, takes effect at once rather than after a rebuild on the
@@ -107,4 +107,4 @@ struct MaskPlanSet
     int haloColumns = 0;
 };
 
-} // namespace freqart
+} // namespace artfreq

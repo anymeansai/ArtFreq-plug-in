@@ -4,7 +4,7 @@
 #include <cmath>
 #include <set>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -362,4 +362,4 @@ const ProcessedImage& Compositor::processed (const ArtObject& object)
     return cache.emplace (key, std::move (entry)).first->second.processed;
 }
 
-} // namespace freqart
+} // namespace artfreq

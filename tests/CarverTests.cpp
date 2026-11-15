@@ -17,7 +17,7 @@
 #include <memory>
 #include <vector>
 
-using namespace freqart;
+using namespace artfreq;
 
 namespace
 {
@@ -226,7 +226,7 @@ std::unique_ptr<SpectralCarver> preparedTuned (double sampleRate = rate, int max
 
 } // namespace
 
-FREQART_TEST (maskPlanFollowsTheCanvas)
+ARTFREQ_TEST (maskPlanFollowsTheCanvas)
 {
     const auto plan = bandPlan (900.0, 1100.0, 100, 200);
 
@@ -269,7 +269,7 @@ FREQART_TEST (maskPlanFollowsTheCanvas)
     CHECK (buildMaskPlan (Canvas(), settings)->empty);
 }
 
-FREQART_TEST (maskPlanHaloWidensShapes)
+ARTFREQ_TEST (maskPlanHaloWidensShapes)
 {
     MaskSettings settings;
     settings.haloRows = 3;
@@ -289,7 +289,7 @@ FREQART_TEST (maskPlanHaloWidensShapes)
     CHECK (plan->isColumnUsed (498) && ! plan->isColumnUsed (497));
 }
 
-FREQART_TEST (maskPlansTravelThroughTheExchange)
+ARTFREQ_TEST (maskPlansTravelThroughTheExchange)
 {
     MaskPlanExchange exchange;
     std::shared_ptr<MaskPlan> first (bandPlan (900.0, 1100.0).release());
@@ -315,7 +315,7 @@ FREQART_TEST (maskPlansTravelThroughTheExchange)
     CHECK_NEAR (exchange.numAlive(), 1, 0);
 }
 
-FREQART_TEST (carverIsTransparentWithNothingToCarve)
+ARTFREQ_TEST (carverIsTransparentWithNothingToCarve)
 {
     const auto input = noise (48000);
 
@@ -351,7 +351,7 @@ FREQART_TEST (carverIsTransparentWithNothingToCarve)
     CHECK_LESS (differenceFromDelayed (sinesIn, out, carver->getLatencySamples()), 1.0e-5);
 }
 
-FREQART_TEST (carverCarvesASineInsideTheBand)
+ARTFREQ_TEST (carverCarvesASineInsideTheBand)
 {
     const auto input = sines (96000, { { 1000.0, 0.5f }, { 4000.0, 0.5f } });
     const auto plan = bandPlan (800.0, 1250.0);
@@ -374,7 +374,7 @@ FREQART_TEST (carverCarvesASineInsideTheBand)
     }
 }
 
-FREQART_TEST (carverStencilKeepsOnlyTheDrawing)
+ARTFREQ_TEST (carverStencilKeepsOnlyTheDrawing)
 {
     const auto input = sines (96000, { { 1000.0, 0.5f }, { 4000.0, 0.5f } });
     const auto plan = bandPlan (800.0, 1250.0);
@@ -390,7 +390,7 @@ FREQART_TEST (carverStencilKeepsOnlyTheDrawing)
     CHECK_LESS (levelDb (out, 4000.0, from, to) - levelDb (input, 4000.0, from, to), -57.0);
 }
 
-FREQART_TEST (carverReportsItsLatency)
+ARTFREQ_TEST (carverReportsItsLatency)
 {
     const auto plan = bandPlan (18000.0, 20000.0);  // makes every frame go through the transforms
 
@@ -430,7 +430,7 @@ FREQART_TEST (carverReportsItsLatency)
     CHECK_NEAR (fast->getLatencySamples(), 4096, 0);
 }
 
-FREQART_TEST (carverIsBlockSizeIndependent)
+ARTFREQ_TEST (carverIsBlockSizeIndependent)
 {
     const auto input = noise (3 * 48000, 11);
     const auto plan = bandPlan (300.0, 3000.0, 200, 700);
@@ -466,7 +466,7 @@ FREQART_TEST (carverIsBlockSizeIndependent)
     }
 }
 
-FREQART_TEST (carverGateOpensWithThePass)
+ARTFREQ_TEST (carverGateOpensWithThePass)
 {
     // The gate opens at 1 s: before it (and the frames reaching into it) the audio is untouched;
     // a second into the pass a sine in the band is carved.
@@ -491,7 +491,7 @@ FREQART_TEST (carverGateOpensWithThePass)
 
 // ---- engine 1: the tuned STFT ------------------------------------------------------------------
 
-FREQART_TEST (tunedCarverIsTransparentWithNothingToCarve)
+ARTFREQ_TEST (tunedCarverIsTransparentWithNothingToCarve)
 {
     const auto input = noise (48000);
 
@@ -538,7 +538,7 @@ FREQART_TEST (tunedCarverIsTransparentWithNothingToCarve)
     CHECK_LESS (differenceFromDelayed (sinesIn, run (odd, sinesIn, { 512 }, CarveSettings()), odd.getLatencySamples()), 1.0e-5);
 }
 
-FREQART_TEST (tunedCarverCarvesASineInsideTheBand)
+ARTFREQ_TEST (tunedCarverCarvesASineInsideTheBand)
 {
     const auto input = sines (96000, { { 1000.0, 0.5f }, { 4000.0, 0.5f } });
     const auto plan = bandPlan (800.0, 1250.0);
@@ -561,7 +561,7 @@ FREQART_TEST (tunedCarverCarvesASineInsideTheBand)
     }
 }
 
-FREQART_TEST (tunedCarverCarvesTheLows)
+ARTFREQ_TEST (tunedCarverCarvesTheLows)
 {
     // What the longer frame is for: a sine at 70 Hz in a band of 60 - 85 Hz (half an octave,
     // about one of the baseline's bins) drops by nearly all of Depth (56 dB of 60; the baseline
@@ -587,7 +587,7 @@ FREQART_TEST (tunedCarverCarvesTheLows)
     CHECK_LESS (levelDb (thinOut, 66.0, from, to) - levelDb (thinInput, 66.0, from, to), -12.0);
 }
 
-FREQART_TEST (tunedCarverStencilKeepsOnlyTheDrawing)
+ARTFREQ_TEST (tunedCarverStencilKeepsOnlyTheDrawing)
 {
     const auto input = sines (96000, { { 1000.0, 0.5f }, { 4000.0, 0.5f } });
     const auto plan = bandPlan (800.0, 1250.0);
@@ -603,7 +603,7 @@ FREQART_TEST (tunedCarverStencilKeepsOnlyTheDrawing)
     CHECK_LESS (levelDb (out, 4000.0, from, to) - levelDb (input, 4000.0, from, to), -57.0);
 }
 
-FREQART_TEST (tunedCarverReportsItsLatency)
+ARTFREQ_TEST (tunedCarverReportsItsLatency)
 {
     const auto plan = bandPlan (18000.0, 20000.0);  // makes every frame go through the transforms
 
@@ -649,7 +649,7 @@ FREQART_TEST (tunedCarverReportsItsLatency)
     CHECK_NEAR (fast->getLatencySamples(), 8192, 0);
 }
 
-FREQART_TEST (tunedCarverIsBlockSizeIndependent)
+ARTFREQ_TEST (tunedCarverIsBlockSizeIndependent)
 {
     const auto input = noise (3 * 48000, 11);
     const auto plan = bandPlan (300.0, 3000.0, 200, 700);
@@ -685,7 +685,7 @@ FREQART_TEST (tunedCarverIsBlockSizeIndependent)
     }
 }
 
-FREQART_TEST (tunedCarverGateWorksAtTheOutput)
+ARTFREQ_TEST (tunedCarverGateWorksAtTheOutput)
 {
     // A pass from 1 s to 2 s over a sine in the drawn band. The gate is applied per sample at the
     // output: before the pass and once the gate has faded out after it the output is the delayed
@@ -737,7 +737,7 @@ FREQART_TEST (tunedCarverGateWorksAtTheOutput)
     }
 }
 
-FREQART_TEST (maskPlanWideHaloMatchesTheDirectOne)
+ARTFREQ_TEST (maskPlanWideHaloMatchesTheDirectOne)
 {
     // widenMaskPlan builds its window up from doubling shifts: it must give exactly what a
     // straightforward maximum over the window gives, for small and wide halos and at the edges.
@@ -783,7 +783,7 @@ FREQART_TEST (maskPlanWideHaloMatchesTheDirectOne)
     }
 }
 
-FREQART_TEST (tunedCarverReadsColumnEdgesAlike)
+ARTFREQ_TEST (tunedCarverReadsColumnEdgesAlike)
 {
     // Every other column drawn, over a pass of a whole number of samples per column (375): many
     // of the points where frames read the drawing fall exactly on the edge between two columns,
@@ -818,7 +818,7 @@ FREQART_TEST (tunedCarverReadsColumnEdgesAlike)
     }
 }
 
-FREQART_TEST (tunedCarverReadsThinVerticalStrokes)
+ARTFREQ_TEST (tunedCarverReadsThinVerticalStrokes)
 {
     // A one-beat drawing at 120 BPM (0.5 s, 23 samples a column) with a stroke 8 columns wide
     // (190 samples) over 1 - 4 kHz: a frame stands for a hop of 1024 samples, so read at one
@@ -868,7 +868,7 @@ FREQART_TEST (tunedCarverReadsThinVerticalStrokes)
     }
 }
 
-FREQART_TEST (tunedCarverHaloFollowsTheMode)
+ARTFREQ_TEST (tunedCarverHaloFollowsTheMode)
 {
     // Carve widens what it carves by settings.haloBins. A sine on the drawn band's top edge is
     // carved by about half of Depth with Carve's 1 bin and by all of it with Carve + Draw's 3;
@@ -920,7 +920,7 @@ FREQART_TEST (tunedCarverHaloFollowsTheMode)
     CHECK_LESS (byMost, byShare - 3.0);
 }
 
-FREQART_TEST (tunedCarverSpreadsTheDrawingOverTheHop)
+ARTFREQ_TEST (tunedCarverSpreadsTheDrawingOverTheHop)
 {
     // A frame's transforms need the last sample of its hop, and the first sample played out
     // after them needs them, so they run in the call that completes the hop. Reading the drawing
@@ -992,7 +992,7 @@ FREQART_TEST (tunedCarverSpreadsTheDrawingOverTheHop)
     CHECK_NEAR (work.framesTransformed, 8, 0);
 }
 
-FREQART_TEST (tunedCarverFinishesAFrameWithThePlanItBegan)
+ARTFREQ_TEST (tunedCarverFinishesAFrameWithThePlanItBegan)
 {
     // A frame reads the drawing while its hop comes in, from the plan set when it began: a plan
     // set in the middle of the hop is used from the next frame on, and until then the engine

@@ -30,13 +30,13 @@ struct FakePlayHead final : public juce::AudioPlayHead
     PositionInfo info;
 };
 
-inline void setParameter (freqart::FreqArtProcessor& processor, const char* id, float plainValue)
+inline void setParameter (artfreq::ArtFreqProcessor& processor, const char* id, float plainValue)
 {
     if (auto* parameter = processor.getParameters().getParameter (id))
         parameter->setValueNotifyingHost (parameter->convertTo0to1 (plainValue));
 }
 
-inline float getParameter (freqart::FreqArtProcessor& processor, const char* id)
+inline float getParameter (artfreq::ArtFreqProcessor& processor, const char* id)
 {
     if (auto* value = processor.getParameters().getRawParameterValue (id))
         return value->load();
@@ -47,7 +47,7 @@ inline float getParameter (freqart::FreqArtProcessor& processor, const char* id)
 /** Renders `numSamples` in blocks of `blockSize` and returns the left channel. `beforeBlock` is
     called with the block's first sample index and may fill the block's MIDI. */
 template <typename BeforeBlock>
-std::vector<float> render (freqart::FreqArtProcessor& processor, int numSamples, int blockSize, BeforeBlock&& beforeBlock)
+std::vector<float> render (artfreq::ArtFreqProcessor& processor, int numSamples, int blockSize, BeforeBlock&& beforeBlock)
 {
     std::vector<float> out;
     out.reserve (static_cast<size_t> (numSamples));
@@ -70,7 +70,7 @@ std::vector<float> render (freqart::FreqArtProcessor& processor, int numSamples,
     return out;
 }
 
-inline std::vector<float> render (freqart::FreqArtProcessor& processor, int numSamples, int blockSize = 512)
+inline std::vector<float> render (artfreq::ArtFreqProcessor& processor, int numSamples, int blockSize = 512)
 {
     return render (processor, numSamples, blockSize, [] (int, int, juce::MidiBuffer&) {});
 }

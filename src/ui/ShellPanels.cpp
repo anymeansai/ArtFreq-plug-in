@@ -3,7 +3,7 @@
 #include "Parameters.h"
 #include "ShellHeader.h"
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 namespace
 {
@@ -99,7 +99,7 @@ void Scrim::mouseDown (const juce::MouseEvent&)
 }
 
 //==============================================================================
-SettingsPanel::SettingsPanel (FreqArtProcessor& processor)
+SettingsPanel::SettingsPanel (ArtFreqProcessor& processor)
     : closeButton ("Close settings", icons::close())
 {
     setComponentID ("settings-panel");
@@ -354,7 +354,7 @@ namespace
     const std::vector<std::pair<juce::String, Paragraph>>& helpSteps()
     {
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
-            { "1", { "Put FreqArt on an instrument track.", "It makes the sound itself; MIDI notes can trigger it." } },
+            { "1", { "Put ArtFreq on an instrument track.", "It makes the sound itself; MIDI notes can trigger it." } },
             { "2", { "Open a spectrogram on its output.", "MiniMeters, or any analyser with a scrolling spectrogram." } },
             { "3", { "Match your analyser.", "In Settings (the gear), choose the same scale, range and slope as your "
                                              "analyser. MiniMeters: Log, 20 Hz to 20 kHz." } },
@@ -370,11 +370,11 @@ namespace
         return steps;
     }
 
-    // FreqArt FX: the same window on the audio passing through.
+    // ArtFreq FX: the same window on the audio passing through.
     const std::vector<std::pair<juce::String, Paragraph>>& effectSteps()
     {
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
-            { "1", { "Put FreqArt FX on an audio track, a bus or the master.", "It works on the audio passing "
+            { "1", { "Put ArtFreq FX on an audio track, a bus or the master.", "It works on the audio passing "
                                                                                "through." } },
             { "2", { "Open a spectrogram after it.", "MiniMeters on the master, or any scrolling spectrogram." } },
             { "3", { "Match your analyser.", "In Settings (the gear): the same scale, range and slope. MiniMeters: "
@@ -407,7 +407,7 @@ namespace
     const std::vector<Paragraph>& effectTiming()
     {
         static const std::vector<Paragraph> list {
-            { "As in FreqArt.", "Length, Trigger, Repeat and Tempo work as in the instrument; outside the pass the "
+            { "As in ArtFreq.", "Length, Trigger, Repeat and Tempo work as in the instrument; outside the pass the "
                                 "audio passes untouched." },
             { "MIDI note", "works where the DAW sends MIDI to effects (Reaper, Bitwig, Cubase, Studio One, FL Studio). Ableton "
                            "Live does not: use Transport there." },
@@ -582,7 +582,7 @@ int HelpPanel::getIdealHeight() const
 void HelpPanel::paint (juce::Graphics& g)
 {
     paintCard (g, getLocalBounds());
-    paintTitle (g, effect ? "How to use FreqArt FX" : "How to use FreqArt", getWidth());
+    paintTitle (g, effect ? "How to use ArtFreq FX" : "How to use ArtFreq", getWidth());
 
     const auto columnWidth = (getWidth() - 2 * helpPad - helpColumnGap) / 2;
 
@@ -659,4 +659,4 @@ void HelpPanel::resized()
         blocks.push_back (std::move (b));
 }
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

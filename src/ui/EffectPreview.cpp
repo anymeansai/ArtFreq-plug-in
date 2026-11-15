@@ -7,7 +7,7 @@
 #include <array>
 #include <cmath>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
@@ -210,4 +210,4 @@ juce::Image EffectPreviewImage::get (const std::vector<uint8_t>& planLevels, uin
     return image;
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

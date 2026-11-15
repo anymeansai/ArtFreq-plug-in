@@ -13,7 +13,7 @@
 #include <functional>
 #include <memory>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 
 namespace metrics
@@ -277,4 +277,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ShellButton)
 };
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

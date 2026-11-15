@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -407,4 +407,4 @@ ProcessedImage processImage (const juce::Image& image, ImageMode mode, float cle
     return result;
 }
 
-} // namespace freqart
+} // namespace artfreq

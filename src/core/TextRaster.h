@@ -4,7 +4,7 @@
 
 #include <juce_graphics/juce_graphics.h>
 
-namespace freqart
+namespace artfreq
 {
 
 enum class TextStyle
@@ -27,4 +27,4 @@ juce::Path makeTextPath (const juce::String& text, int fontIndex);
 void renderTextInto (juce::Image& target, juce::Rectangle<float> area,
                      const juce::String& text, int fontIndex, TextStyle style);
 
-} // namespace freqart
+} // namespace artfreq

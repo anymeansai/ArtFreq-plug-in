@@ -1,6 +1,6 @@
 #pragma once
 
-// Spectral carving: FreqArt's drawing applied to incoming audio instead of played as sines.
+// Spectral carving: ArtFreq's drawing applied to incoming audio instead of played as sines.
 //
 // Carve mutes the drawing's frequencies in the audio, so the drawing shows as dark shapes in
 // the song's spectrogram; Stencil does the opposite, letting only the drawing's frequencies
@@ -25,7 +25,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 enum class CarveMode
@@ -146,4 +146,4 @@ std::unique_ptr<SpectralCarver> createSpectralCarver (int engine);
 /** How many engines createSpectralCarver knows (numbers 0 to this - 1). */
 int getNumSpectralCarvers() noexcept;
 
-} // namespace freqart
+} // namespace artfreq

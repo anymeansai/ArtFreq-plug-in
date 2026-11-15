@@ -1,6 +1,6 @@
 #pragma once
 
-// The analysis behind the live spectrogram view: the audio thread pushes what FreqArt outputs,
+// The analysis behind the live spectrogram view: the audio thread pushes what ArtFreq outputs,
 // the message thread turns it into spectrum columns.
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -10,7 +10,7 @@
 #include <functional>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 class LiveAnalyzer
@@ -57,4 +57,4 @@ private:
     void computeColumn();
 };
 
-} // namespace freqart
+} // namespace artfreq

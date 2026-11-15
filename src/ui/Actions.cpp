@@ -12,12 +12,12 @@
 // On a Mac, JUCE decodes pictures with macOS itself (ImageIO, through CoreImage), which reads
 // more than PNG, JPEG and GIF; elsewhere JUCE's own decoders read only those three.
 #if JUCE_MAC && USE_COREGRAPHICS_RENDERING && JUCE_USE_COREIMAGE_LOADER
- #define FREQART_READS_PICTURES_WITH_MACOS 1
+ #define ARTFREQ_READS_PICTURES_WITH_MACOS 1
 #else
- #define FREQART_READS_PICTURES_WITH_MACOS 0
+ #define ARTFREQ_READS_PICTURES_WITH_MACOS 0
 #endif
 
-namespace freqart::ui::actions
+namespace artfreq::ui::actions
 {
 namespace
 {
@@ -29,7 +29,7 @@ namespace
     constexpr int maxPlacementSteps = 11;     // ... up to 48 % of the length
     constexpr float overlapTolerance = 1.0e-4f;   // rectangles that only touch do not overlap
 
-   #if FREQART_READS_PICTURES_WITH_MACOS
+   #if ARTFREQ_READS_PICTURES_WITH_MACOS
     constexpr const char* pictureExtensions = "png;jpg;jpeg;gif;heic;heif;webp;tif;tiff;bmp";
     constexpr const char* pictureNames = "PNG, JPEG, GIF, HEIC, WebP, TIFF or BMP";
    #else
@@ -37,7 +37,7 @@ namespace
     constexpr const char* pictureNames = "PNG, JPEG or GIF";
    #endif
 
-    const juce::Identifier chooserProperty { "freqartImageChooser" };
+    const juce::Identifier chooserProperty { "artfreqImageChooser" };
 
     /** Keeps an async FileChooser alive in its owner's properties, so it lives exactly as long
         as the component that opened it (and a second "Add image..." replaces the first). */
@@ -50,7 +50,7 @@ namespace
 
     /** Adds `object` to the document as one undo step, selects it and switches to the Select
         tool so it can be moved straight away. */
-    void addAndSelect (FreqArtProcessor& processor, EditorState& state, const ArtObject& object)
+    void addAndSelect (ArtFreqProcessor& processor, EditorState& state, const ArtObject& object)
     {
         // At the end of the list: in front of everything already there.
         processor.editDocument ([object] (ArtDocument& document) { document.objects.push_back (object); });
@@ -84,7 +84,7 @@ namespace
     }
 
     /** Gives `object` the place newObjectPlacement found. */
-    void placeNewObject (ArtObject& object, const FreqArtProcessor& processor)
+    void placeNewObject (ArtObject& object, const ArtFreqProcessor& processor)
     {
         const auto place = newObjectPlacement (processor.getDocument(), processor.getScale());
         object.startTime = place.startTime;
@@ -159,7 +159,7 @@ ArtObject newObjectPlacement (const ArtDocument& document, const FrequencyScale&
     return spot (Band::mid, defaultStart, defaultEnd);
 }
 
-void addText (FreqArtProcessor& processor, EditorState& state)
+void addText (ArtFreqProcessor& processor, EditorState& state)
 {
     auto object = ArtDocument::makeTextObject ("Text", 0.0f, 1.0f);
     placeNewObject (object, processor);
@@ -170,7 +170,7 @@ void addText (FreqArtProcessor& processor, EditorState& state)
         state.focusTextField();
 }
 
-void chooseImage (FreqArtProcessor& processor, EditorState& state, juce::Component& owner, bool replaceSelected)
+void chooseImage (ArtFreqProcessor& processor, EditorState& state, juce::Component& owner, bool replaceSelected)
 {
     juce::ReferenceCountedObjectPtr<ChooserHolder> holder (new ChooserHolder());
     const auto patterns = "*." + juce::String (pictureExtensions).replace (";", ";*.");
@@ -228,7 +228,7 @@ void chooseImage (FreqArtProcessor& processor, EditorState& state, juce::Compone
     });
 }
 
-bool addImageFile (FreqArtProcessor& processor, EditorState& state, const juce::File& file,
+bool addImageFile (ArtFreqProcessor& processor, EditorState& state, const juce::File& file,
                    juce::Point<float> normPosition)
 {
     const auto image = readPicture (file);
@@ -264,7 +264,7 @@ juce::Image readPicture (const juce::File& file)
 {
     auto image = loadImageFile (file);
 
-   #if FREQART_READS_PICTURES_WITH_MACOS
+   #if ARTFREQ_READS_PICTURES_WITH_MACOS
     // JUCE passes a file to macOS's decoder only once its first bytes say PNG, JPEG or GIF.
     // macOS reads the rest too (HEIC, WebP, TIFF, BMP, or a picture saved under the wrong
     // extension), and on a Mac every JUCE decoder is that same decoder, so hand it over directly.
@@ -286,7 +286,7 @@ void reportUnreadablePicture (EditorState& state, const juce::File& file)
         state.showNotice ("Could not read " + file.getFileName() + ". Try a PNG or JPEG.");
 }
 
-void deleteSelected (FreqArtProcessor& processor, EditorState& state)
+void deleteSelected (ArtFreqProcessor& processor, EditorState& state)
 {
     const auto id = state.getSelected();
 
@@ -313,7 +313,7 @@ juce::String layerName (const ArtObject& object)
     return "Empty text";
 }
 
-void setObjectVisible (FreqArtProcessor& processor, const juce::Uuid& id, bool visible)
+void setObjectVisible (ArtFreqProcessor& processor, const juce::Uuid& id, bool visible)
 {
     const auto* object = processor.getDocument().find (id);
 
@@ -327,13 +327,13 @@ void setObjectVisible (FreqArtProcessor& processor, const juce::Uuid& id, bool v
     });
 }
 
-void setPaintVisible (FreqArtProcessor& processor, bool visible)
+void setPaintVisible (ArtFreqProcessor& processor, bool visible)
 {
     if (processor.getDocument().paintVisible != visible)
         processor.editDocument ([visible] (ArtDocument& document) { document.paintVisible = visible; });
 }
 
-void moveObject (FreqArtProcessor& processor, const juce::Uuid& id, int newIndex)
+void moveObject (ArtFreqProcessor& processor, const juce::Uuid& id, int newIndex)
 {
     const auto& objects = processor.getDocument().objects;
     const auto it = std::find_if (objects.begin(), objects.end(), [&id] (const ArtObject& o) { return o.id == id; });
@@ -359,17 +359,17 @@ void moveObject (FreqArtProcessor& processor, const juce::Uuid& id, int newIndex
     });
 }
 
-void bringToFront (FreqArtProcessor& processor, const juce::Uuid& id)
+void bringToFront (ArtFreqProcessor& processor, const juce::Uuid& id)
 {
     moveObject (processor, id, static_cast<int> (processor.getDocument().objects.size()) - 1);
 }
 
-void sendToBack (FreqArtProcessor& processor, const juce::Uuid& id)
+void sendToBack (ArtFreqProcessor& processor, const juce::Uuid& id)
 {
     moveObject (processor, id, 0);
 }
 
-void deleteObject (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id)
+void deleteObject (ArtFreqProcessor& processor, EditorState& state, const juce::Uuid& id)
 {
     if (processor.getDocument().find (id) != nullptr)
         processor.editDocument ([id] (ArtDocument& document) { document.remove (id); });
@@ -378,13 +378,13 @@ void deleteObject (FreqArtProcessor& processor, EditorState& state, const juce::
         state.setSelected (juce::Uuid::null());
 }
 
-void clearPaint (FreqArtProcessor& processor)
+void clearPaint (ArtFreqProcessor& processor)
 {
     if (processor.getDocument().hasPaint())
         processor.editDocument ([] (ArtDocument& document) { document.clearPaint(); });
 }
 
-juce::PopupMenu objectMenu (const FreqArtProcessor& processor, const juce::Uuid& id)
+juce::PopupMenu objectMenu (const ArtFreqProcessor& processor, const juce::Uuid& id)
 {
     juce::PopupMenu menu;
     const auto& objects = processor.getDocument().objects;
@@ -409,7 +409,7 @@ juce::PopupMenu objectMenu (const FreqArtProcessor& processor, const juce::Uuid&
     return menu;
 }
 
-void performObjectMenuItem (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id, int itemId)
+void performObjectMenuItem (ArtFreqProcessor& processor, EditorState& state, const juce::Uuid& id, int itemId)
 {
     switch (itemId)
     {
@@ -422,7 +422,7 @@ void performObjectMenuItem (FreqArtProcessor& processor, EditorState& state, con
     }
 }
 
-void showObjectMenu (FreqArtProcessor& processor, EditorState& state, const juce::Uuid& id,
+void showObjectMenu (ArtFreqProcessor& processor, EditorState& state, const juce::Uuid& id,
                      juce::Component& target, juce::Point<int> position)
 {
     auto menu = objectMenu (processor, id);
@@ -437,7 +437,7 @@ void showObjectMenu (FreqArtProcessor& processor, EditorState& state, const juce
                        .withStandardItemHeight (28);
 
     // Inside the window: scaled like the rest, never a separate desktop window.
-    if (auto* parent = FreqArtLookAndFeel::findPopupParent (target))
+    if (auto* parent = ArtFreqLookAndFeel::findPopupParent (target))
         options = options.withParentComponent (parent);
 
     // The processor and editor state outlive the target; if it has gone, so has the editor.
@@ -450,7 +450,7 @@ void showObjectMenu (FreqArtProcessor& processor, EditorState& state, const juce
     });
 }
 
-void setSelectedBand (FreqArtProcessor& processor, EditorState& state, Band band)
+void setSelectedBand (ArtFreqProcessor& processor, EditorState& state, Band band)
 {
     const auto id = state.getSelected();
 
@@ -489,7 +489,7 @@ int bandOf (const ArtObject& object, const FrequencyScale& scale)
     return -1;
 }
 
-void clearDrawing (FreqArtProcessor& processor, EditorState& state)
+void clearDrawing (ArtFreqProcessor& processor, EditorState& state)
 {
     processor.editDocument ([] (ArtDocument& document)
     {
@@ -500,4 +500,4 @@ void clearDrawing (FreqArtProcessor& processor, EditorState& state)
     state.setSelected (juce::Uuid::null());
 }
 
-} // namespace freqart::ui::actions
+} // namespace artfreq::ui::actions

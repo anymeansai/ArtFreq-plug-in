@@ -2,15 +2,15 @@
 
 #include "ShellControls.h"
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 namespace
 {
     constexpr int logoSize = 20;
     constexpr int switchWidth = 168;
     constexpr int buttonGap = 4;
-    constexpr int effectGap = 24;   // FreqArt FX: around Canvas | Live and the effect's controls
-    constexpr const char* wordmark = "FreqArt";
+    constexpr int effectGap = 24;   // ArtFreq FX: around Canvas | Live and the effect's controls
+    constexpr const char* wordmark = "ArtFreq";
     constexpr const char* effectMark = "FX";
     constexpr const char* byline = "by AnyMeans";
 
@@ -61,7 +61,7 @@ Header::Header (bool forEffect)
 
     undoButton.setTooltip ("Undo  " + shortcutText ("Cmd+Z"));
     redoButton.setTooltip ("Redo  " + shortcutText ("Cmd+Shift+Z"));
-    helpButton.setTooltip (effect ? "How FreqArt FX works" : "How FreqArt works");
+    helpButton.setTooltip (effect ? "How ArtFreq FX works" : "How ArtFreq works");
     settingsButton.setTooltip ("Settings: match your analyser, window size");
 
     undoButton.setComponentID ("undo");
@@ -147,7 +147,7 @@ void Header::resized()
     viewSwitch.setBounds ((getWidth() - switchWidth) / 2, centreY - metrics::controlHeight / 2,
                           switchWidth, metrics::controlHeight);
 
-    // FreqArt FX: Canvas | Live beside the wordmark, the effect's controls after it (laid out
+    // ArtFreq FX: Canvas | Live beside the wordmark, the effect's controls after it (laid out
     // below, once the buttons they end before are placed).
     if (effectControls != nullptr)
         viewSwitch.setTopLeftPosition (bylineRight() + effectGap, viewSwitch.getY());
@@ -174,4 +174,4 @@ void Header::resized()
     }
 }
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

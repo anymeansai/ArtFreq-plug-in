@@ -8,7 +8,7 @@
 
 #include <functional>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
 enum class Tool
@@ -80,4 +80,4 @@ private:
     bool layerListOpen = false;   // only meaningful with a selection
 };
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

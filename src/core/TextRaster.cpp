@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -167,4 +167,4 @@ void renderTextInto (juce::Image& target, juce::Rectangle<float> area,
     maxCombine (target, scratch, clip.getPosition());
 }
 
-} // namespace freqart
+} // namespace artfreq

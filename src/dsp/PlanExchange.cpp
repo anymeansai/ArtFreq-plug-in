@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-namespace freqart
+namespace artfreq
 {
 
 // Why this is safe without locks:
@@ -99,4 +99,4 @@ template class VersionedExchange<ArtPlan>;
 template class VersionedExchange<MaskPlan>;
 template class VersionedExchange<MaskPlanSet>;
 
-} // namespace freqart
+} // namespace artfreq

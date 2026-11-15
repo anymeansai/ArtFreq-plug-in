@@ -61,7 +61,7 @@
 #include <utility>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 class TunedCarver final : public SpectralCarver
@@ -220,4 +220,4 @@ private:
     Work work;
 };
 
-} // namespace freqart
+} // namespace artfreq

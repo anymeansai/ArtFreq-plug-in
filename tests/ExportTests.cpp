@@ -10,7 +10,7 @@
 
 #include <algorithm>
 
-using freqart::ExportSettings;
+using artfreq::ExportSettings;
 
 namespace
 {
@@ -20,7 +20,7 @@ struct ScratchFolder
 {
     ScratchFolder()
         : folder (juce::File::getSpecialLocation (juce::File::tempDirectory)
-                      .getChildFile ("FreqArtExportTests-" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64())))
+                      .getChildFile ("ArtFreqExportTests-" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64())))
     {
         folder.createDirectory();
     }
@@ -60,10 +60,10 @@ std::vector<float> channel (const juce::AudioBuffer<float>& audio, int index)
 
 } // namespace
 
-FREQART_TEST (exportWritesOnePass)
+ARTFREQ_TEST (exportWritesOnePass)
 {
     ScratchFolder scratch;
-    const auto target = scratch.folder.getChildFile ("nested").getChildFile ("FreqArt.wav");
+    const auto target = scratch.folder.getChildFile ("nested").getChildFile ("ArtFreq.wav");
 
     // Loud in the first half of the drawing, quiet in the second.
     const auto plan = test::makePlan ({ 300.0f, 1200.0f, 5000.0f }, [] (int column, int) { return column < 512 ? 0.2f : 0.05f; });
@@ -74,7 +74,7 @@ FREQART_TEST (exportWritesOnePass)
     settings.gain = 0.5f;
 
     juce::String error;
-    CHECK (freqart::renderPlanToWav (*plan, settings, target, error));
+    CHECK (artfreq::renderPlanToWav (*plan, settings, target, error));
     CHECK (error.isEmpty());
     CHECK (target.existsAsFile());
 
@@ -106,7 +106,7 @@ FREQART_TEST (exportWritesOnePass)
     settings.bitDepth = 16;
     settings.sampleRate = 44100.0;
     settings.seconds = 0.5;
-    CHECK (freqart::renderPlanToWav (*plan, settings, target, error));
+    CHECK (artfreq::renderPlanToWav (*plan, settings, target, error));
     const auto again = load (target);
     CHECK (again.audio.getNumChannels() == 1);
     CHECK (again.audio.getNumSamples() == 22050);
@@ -115,7 +115,7 @@ FREQART_TEST (exportWritesOnePass)
     CHECK (scratch.folder.getChildFile ("nested").getNumberOfChildFiles (juce::File::findFiles) == 1);
 }
 
-FREQART_TEST (exportClipsLoudPlans)
+ARTFREQ_TEST (exportClipsLoudPlans)
 {
     ScratchFolder scratch;
     const auto target = scratch.folder.getChildFile ("Loud.wav");
@@ -127,7 +127,7 @@ FREQART_TEST (exportClipsLoudPlans)
     settings.bitDepth = 32;
 
     juce::String error;
-    CHECK (freqart::renderPlanToWav (*plan, settings, target, error));
+    CHECK (artfreq::renderPlanToWav (*plan, settings, target, error));
 
     const auto left = channel (load (target).audio, 0);
     CHECK (left.size() == 24000);
@@ -135,7 +135,7 @@ FREQART_TEST (exportClipsLoudPlans)
     CHECK_GREATER (test::peak (left), 0.95);
 }
 
-FREQART_TEST (exportReportsErrors)
+ARTFREQ_TEST (exportReportsErrors)
 {
     ScratchFolder scratch;
     const auto plan = test::makeConstantPlan ({ 1000.0f }, 0.1f);
@@ -144,24 +144,24 @@ FREQART_TEST (exportReportsErrors)
     // The "folder" it should go in is a file.
     const auto blocker = scratch.folder.getChildFile ("notAFolder");
     blocker.replaceWithText ("x");
-    CHECK (! freqart::renderPlanToWav (*plan, {}, blocker.getChildFile ("FreqArt.wav"), error));
+    CHECK (! artfreq::renderPlanToWav (*plan, {}, blocker.getChildFile ("ArtFreq.wav"), error));
     CHECK (error.isNotEmpty());
 
     ExportSettings bad;
     bad.seconds = 0.0;
     error.clear();
-    CHECK (! freqart::renderPlanToWav (*plan, bad, scratch.folder.getChildFile ("a.wav"), error));
+    CHECK (! artfreq::renderPlanToWav (*plan, bad, scratch.folder.getChildFile ("a.wav"), error));
     CHECK (error.isNotEmpty());
 
     bad = {};
     bad.bitDepth = 12;
     error.clear();
-    CHECK (! freqart::renderPlanToWav (*plan, bad, scratch.folder.getChildFile ("b.wav"), error));
+    CHECK (! artfreq::renderPlanToWav (*plan, bad, scratch.folder.getChildFile ("b.wav"), error));
     CHECK (error.isNotEmpty());
     CHECK (! scratch.folder.getChildFile ("b.wav").exists());
 }
 
-FREQART_TEST (exportCanBeCancelled)
+ARTFREQ_TEST (exportCanBeCancelled)
 {
     // Closing the editor stops a long bounce: the render asks once per block, stops, and leaves
     // the target as it was (no half file, no temporary file).
@@ -175,7 +175,7 @@ FREQART_TEST (exportCanBeCancelled)
 
     auto asked = 0;
     juce::String error;
-    CHECK (! freqart::renderPlanToWav (*plan, settings, target, error, [&asked] { return ++asked > 3; }));
+    CHECK (! artfreq::renderPlanToWav (*plan, settings, target, error, [&asked] { return ++asked > 3; }));
     CHECK (error == "Cancelled");
     CHECK (asked == 4);
     CHECK (target.loadFileAsString() == "an earlier file");
@@ -185,7 +185,7 @@ FREQART_TEST (exportCanBeCancelled)
     settings.seconds = 0.25;
     error.clear();
     std::vector<double> progress;
-    CHECK (freqart::renderPlanToWav (*plan, settings, target, error, [] { return false; },
+    CHECK (artfreq::renderPlanToWav (*plan, settings, target, error, [] { return false; },
                                      [&progress] (double fraction) { progress.push_back (fraction); }));
     CHECK (error.isEmpty() && load (target).audio.getNumSamples() == 12000);
     CHECK (progress.size() == 3);   // 12000 samples in blocks of 4096
@@ -193,9 +193,9 @@ FREQART_TEST (exportCanBeCancelled)
     CHECK (! progress.empty() && std::abs (progress.back() - 1.0) < 1.0e-12);
 }
 
-FREQART_TEST (exportFileNamesAreReadableAndSafe)
+ARTFREQ_TEST (exportFileNamesAreReadableAndSafe)
 {
-    using freqart::fileNamePart;
+    using artfreq::fileNamePart;
 
     // What file systems, shells and DAWs choke on separates words; runs of spaces collapse.
     CHECK (fileNamePart ("HELLO", 20) == "HELLO");
@@ -214,40 +214,40 @@ FREQART_TEST (exportFileNamesAreReadableAndSafe)
     CHECK (fileNamePart ("anything", 0).isEmpty());
 
     // The label: the first text that leaves something, else "Drawing".
-    freqart::ArtDocument document;
-    CHECK (freqart::bounceLabel (document) == "Drawing");
-    document.objects.push_back (freqart::ArtDocument::makeTextObject ("  ?? ", 3500.0f, 16000.0f));
-    CHECK (freqart::bounceLabel (document) == "Drawing");
-    document.objects.push_back (freqart::ArtDocument::makeTextObject ("Hello, World:\nline two", 300.0f, 3000.0f));
-    document.objects.push_back (freqart::ArtDocument::makeTextObject ("Second", 40.0f, 250.0f));
-    CHECK (freqart::bounceLabel (document) == "Hello World line two");
+    artfreq::ArtDocument document;
+    CHECK (artfreq::bounceLabel (document) == "Drawing");
+    document.objects.push_back (artfreq::ArtDocument::makeTextObject ("  ?? ", 3500.0f, 16000.0f));
+    CHECK (artfreq::bounceLabel (document) == "Drawing");
+    document.objects.push_back (artfreq::ArtDocument::makeTextObject ("Hello, World:\nline two", 300.0f, 3000.0f));
+    document.objects.push_back (artfreq::ArtDocument::makeTextObject ("Second", 40.0f, 250.0f));
+    CHECK (artfreq::bounceLabel (document) == "Hello World line two");
 
     // Reserved at once, so even in the same second every bounce has its own name.
     ScratchFolder scratch;
-    const auto folder = scratch.folder.getChildFile ("FreqArt");
+    const auto folder = scratch.folder.getChildFile ("ArtFreq");
     const auto when = juce::Time (2026, 10, 13, 14, 3, 27);   // 13 Nov 2026, 14:03:27 local
-    const auto first = freqart::reserveBounceFile (folder, "HELLO", when);
-    const auto second = freqart::reserveBounceFile (folder, "HELLO", when);
-    const auto third = freqart::reserveBounceFile (folder, "HELLO", when);
-    CHECK (first.getFileName() == "FreqArt HELLO 14-03-27.wav");
-    CHECK (second.getFileName() == "FreqArt HELLO 14-03-27 2.wav");
-    CHECK (third.getFileName() == "FreqArt HELLO 14-03-27 3.wav");
+    const auto first = artfreq::reserveBounceFile (folder, "HELLO", when);
+    const auto second = artfreq::reserveBounceFile (folder, "HELLO", when);
+    const auto third = artfreq::reserveBounceFile (folder, "HELLO", when);
+    CHECK (first.getFileName() == "ArtFreq HELLO 14-03-27.wav");
+    CHECK (second.getFileName() == "ArtFreq HELLO 14-03-27 2.wav");
+    CHECK (third.getFileName() == "ArtFreq HELLO 14-03-27 3.wav");
     CHECK (first.existsAsFile() && second.existsAsFile() && third.existsAsFile() && first.getSize() == 0);
-    CHECK (freqart::reserveBounceFile (folder, "Drawing", when).getFileName() == "FreqArt Drawing 14-03-27.wav");
-    CHECK (freqart::reserveBounceFile (folder, "FreqArt", when).getFileName() == "FreqArt 14-03-27.wav");
-    CHECK (freqart::reserveBounceFile (folder, "FreqArt Rocks", when).getFileName() == "FreqArt Rocks 14-03-27.wav");
+    CHECK (artfreq::reserveBounceFile (folder, "Drawing", when).getFileName() == "ArtFreq Drawing 14-03-27.wav");
+    CHECK (artfreq::reserveBounceFile (folder, "ArtFreq", when).getFileName() == "ArtFreq 14-03-27.wav");
+    CHECK (artfreq::reserveBounceFile (folder, "ArtFreq Rocks", when).getFileName() == "ArtFreq Rocks 14-03-27.wav");
 
     // A name made from any text is a plain file name in that folder.
-    const auto awkward = freqart::reserveBounceFile (folder, fileNamePart ("..\\..//<x>|:*?\"", 20), when);
+    const auto awkward = artfreq::reserveBounceFile (folder, fileNamePart ("..\\..//<x>|:*?\"", 20), when);
     CHECK (awkward.getParentDirectory() == folder && awkward.getFileName() == juce::File::createLegalFileName (awkward.getFileName()));
 
     // A folder that cannot be made: no file.
     const auto blocker = scratch.folder.getChildFile ("notAFolder");
     blocker.replaceWithText ("x");
-    CHECK (freqart::reserveBounceFile (blocker, "HELLO", when) == juce::File());
+    CHECK (artfreq::reserveBounceFile (blocker, "HELLO", when) == juce::File());
 }
 
-FREQART_TEST (exportSoftClipShape)
+ARTFREQ_TEST (exportSoftClipShape)
 {
     // Transparent up to 0.89.
     auto transparent = true;
@@ -255,22 +255,22 @@ FREQART_TEST (exportSoftClipShape)
     for (int i = -890; i <= 890; ++i)
     {
         const auto x = static_cast<float> (i) / 1000.0f;
-        transparent = transparent && std::abs (freqart::softClip (x) - x) <= 0.0f;
+        transparent = transparent && std::abs (artfreq::softClip (x) - x) <= 0.0f;
     }
 
     CHECK (transparent);
 
     // Above it: below 1 in magnitude always, rising, odd, and without a corner.
     auto bounded = true, rising = true, odd = true;
-    auto previous = freqart::softClip (0.89f);
+    auto previous = artfreq::softClip (0.89f);
 
     for (int i = 1; i < 200000; ++i)
     {
         const auto x = 0.89f + static_cast<float> (i) * 0.0001f;
-        const auto y = freqart::softClip (x);
+        const auto y = artfreq::softClip (x);
         bounded = bounded && std::abs (y) < 1.0f;
         rising = rising && y >= previous;
-        odd = odd && std::abs (freqart::softClip (-x) + y) <= 0.0f;
+        odd = odd && std::abs (artfreq::softClip (-x) + y) <= 0.0f;
         previous = y;
     }
 
@@ -280,17 +280,17 @@ FREQART_TEST (exportSoftClipShape)
 
     for (const auto huge : { 1.0e3f, 1.0e9f, 3.0e38f, std::numeric_limits<float>::infinity() })
     {
-        CHECK (std::abs (freqart::softClip (huge)) < 1.0f);
-        CHECK (std::abs (freqart::softClip (-huge)) < 1.0f);
+        CHECK (std::abs (artfreq::softClip (huge)) < 1.0f);
+        CHECK (std::abs (artfreq::softClip (-huge)) < 1.0f);
     }
 
-    CHECK (std::abs (freqart::softClip (std::numeric_limits<float>::quiet_NaN())) <= 0.0f);
+    CHECK (std::abs (artfreq::softClip (std::numeric_limits<float>::quiet_NaN())) <= 0.0f);
 
     // Slope 1 on both sides of the knee (C1), falling towards 0 far above it.
     const auto h = 1.0e-3;
-    const auto below = (freqart::softClip (0.89f) - freqart::softClip (static_cast<float> (0.89 - h))) / h;
-    const auto above = (freqart::softClip (static_cast<float> (0.89 + h)) - freqart::softClip (0.89f)) / h;
+    const auto below = (artfreq::softClip (0.89f) - artfreq::softClip (static_cast<float> (0.89 - h))) / h;
+    const auto above = (artfreq::softClip (static_cast<float> (0.89 + h)) - artfreq::softClip (0.89f)) / h;
     CHECK_NEAR (below, 1.0, 0.01);
     CHECK_NEAR (above, 1.0, 0.02);
-    CHECK_LESS ((freqart::softClip (1.5f) - freqart::softClip (1.49f)) / 0.01, 0.01);
+    CHECK_LESS ((artfreq::softClip (1.5f) - artfreq::softClip (1.49f)) / 0.01, 0.01);
 }

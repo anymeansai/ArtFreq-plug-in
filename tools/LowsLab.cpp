@@ -1,11 +1,11 @@
-// The lows lab: how FreqArt's lows and low mids (about 30 Hz - 2 kHz) look in a real
+// The lows lab: how ArtFreq's lows and low mids (about 30 Hz - 2 kHz) look in a real
 // spectrogram, measured, so that competing ways of drawing them can be compared by numbers.
 //
-//   FreqArtLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]
+//   ArtFreqLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]
 //              [--ffts 4096,8192,16384,32768] [--contrast 40] [--image <picture>]
 //              [--baseline <metrics.json>] [--wav]
 //
-// FreqArt keeps its lines at least 25 Hz apart (PlanSettings::minLineSpacingHz), as closer
+// ArtFreq keeps its lines at least 25 Hz apart (PlanSettings::minLineSpacingHz), as closer
 // lines beat and pulse visibly. On a log scale that leaves only a handful of lines per octave
 // below roughly 1.5 kHz, so a picture there shows as separate horizontal stripes with dark gaps.
 // This tool is the bench on which ways of doing better are measured. It
@@ -40,8 +40,8 @@
 //                                              nearest bin, each labelled with fill and fidelity
 //        <case>-d<density>.wav                 with --wav: the bounce, as Export writes it
 //
-// The Lows under test come from --lows stripes|smooth, else from the FREQART_LOWS environment
-// variable, else Stripes (the lines FreqArt 0.1 played, the baseline the others are measured
+// The Lows under test come from --lows stripes|smooth, else from the ARTFREQ_LOWS environment
+// variable, else Stripes (the lines ArtFreq 0.1 played, the baseline the others are measured
 // against). --method 0 and --method 3, as the prototypes were numbered, mean Stripes and Smooth.
 // The lab passes it into PlanSettings::lowEnd and changes nothing else. --baseline adds the
 // change against an earlier run's metrics.json to metrics.txt. Everything but the timings is
@@ -75,7 +75,7 @@
 namespace
 {
 
-using namespace freqart;
+using namespace artfreq;
 
 constexpr double twoPi = juce::MathConstants<double>::twoPi;
 constexpr double notMeasured = std::numeric_limits<double>::quiet_NaN();
@@ -96,7 +96,7 @@ constexpr double displayLowHz = 20.0;
 constexpr double displayHighHz = 20000.0;
 constexpr int pngWidth = 800;
 constexpr int sheetPanelWidth = 400;
-constexpr float visibleRangeDb = 60.0f;  // as FreqArt's canvas and live view: the loudest is white,
+constexpr float visibleRangeDb = 60.0f;  // as ArtFreq's canvas and live view: the loudest is white,
                                          // 60 dB below it the colour of silence
 constexpr float floorDb = -160.0f;
 
@@ -122,7 +122,7 @@ constexpr size_t idx (Int i) noexcept
 }
 
 // ================================================================================================
-// The display's geometry. The canvas is drawn on the same scale (FreqArt's default), so a display
+// The display's geometry. The canvas is drawn on the same scale (ArtFreq's default), so a display
 // row and a band of canvas rows cover the same frequencies.
 // ================================================================================================
 
@@ -201,10 +201,10 @@ struct Options
 
 void printUsage()
 {
-    std::cout << "FreqArtLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]\n"
+    std::cout << "ArtFreqLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]\n"
                  "           [--ffts 4096,8192,16384,32768] [--contrast 40] [--image <picture>]\n"
                  "           [--baseline <metrics.json>] [--wav]\n\n"
-                 "  --lows       the Lows under test (PlanSettings::lowEnd); default: the FREQART_LOWS\n"
+                 "  --lows       the Lows under test (PlanSettings::lowEnd); default: the ARTFREQ_LOWS\n"
                  "               environment variable, else stripes (--method 0 / 3 also work)\n"
                  "  --baseline   an earlier run's metrics.json: metrics.txt shows the change\n"
                  "  --wav        also write each drawing's bounce\n";
@@ -240,11 +240,11 @@ bool parseLows (const juce::String& text, LowEnd& lows)
 
 bool parseOptions (int argc, char* argv[], Options& options, juce::String& error)
 {
-    const auto fromEnvironment = juce::SystemStats::getEnvironmentVariable ("FREQART_LOWS", {}).trim();
+    const auto fromEnvironment = juce::SystemStats::getEnvironmentVariable ("ARTFREQ_LOWS", {}).trim();
 
     if (fromEnvironment.isNotEmpty() && ! parseLows (fromEnvironment, options.lows))
     {
-        error = "FREQART_LOWS must be smooth or stripes";
+        error = "ARTFREQ_LOWS must be smooth or stripes";
         return false;
     }
 
@@ -610,7 +610,7 @@ bool makeDrawing (const juce::String& name, const Options& options, TestDrawing&
 int padSamples()  { return static_cast<int> (std::lround (padSeconds * sampleRate)); }
 int passSamples() { return static_cast<int> (std::lround (passSeconds * sampleRate)); }
 
-/** The settings FreqArtProcessor::getPlanSettings makes at the default analyser settings, with
+/** The settings ArtFreqProcessor::getPlanSettings makes at the default analyser settings, with
     the density, contrast and Lows under test. */
 PlanSettings planSettingsFor (int density, float contrastDb, LowEnd lows)
 {
@@ -1284,7 +1284,7 @@ juce::Colour colourAt (float t)
 }
 
 /** Display rows [firstRow, firstRow + numRows), `width` pixels across the pass: each pixel column
-    shows the frame playing at its moment. Colours as on FreqArt's canvas and live view. */
+    shows the frame playing at its moment. Colours as on ArtFreq's canvas and live view. */
 juce::Image displayImage (const Display& display, int firstRow, int numRows, int width)
 {
     juce::Image image (juce::Image::RGB, width, numRows, false);
@@ -1493,7 +1493,7 @@ juce::var toJson (const Options& options, const std::vector<TestDrawing>& drawin
                   const std::vector<CostResult>& costs, const std::vector<Result>& results)
 {
     auto* root = new juce::DynamicObject();
-    root->setProperty ("tool", "FreqArtLab");
+    root->setProperty ("tool", "ArtFreqLab");
     root->setProperty ("lows", lowsName (options.lows));
     root->setProperty ("sampleRate", sampleRate);
     root->setProperty ("passSeconds", passSeconds);
@@ -1699,7 +1699,7 @@ juce::String makeReport (const Options& options, const std::vector<TestDrawing>&
                          const std::vector<CostResult>& costs, const std::vector<Result>& results)
 {
     juce::String text;
-    text << "FreqArt lows lab, lows " << lowsName (options.lows) << "\n"
+    text << "ArtFreq lows lab, lows " << lowsName (options.lows) << "\n"
          << "48 kHz, one 8 s pass (4 bars at 120 BPM, looped), contrast " << juce::String (options.contrastDb, 0)
          << " dB; display 600 rows, log 20 Hz - 20 kHz; measured over 30 Hz - 2 kHz:\n"
          << "low = 30 - 250 Hz, mid = 250 Hz - 2 kHz. Drawings:\n";
@@ -1882,7 +1882,7 @@ int main (int argc, char* argv[])
         return 1;
     }
 
-    std::cout << "FreqArtLab: lows " << lowsName (options.lows) << " -> " << options.outputDir.getFullPathName() << std::endl;
+    std::cout << "ArtFreqLab: lows " << lowsName (options.lows) << " -> " << options.outputDir.getFullPathName() << std::endl;
 
     std::vector<TestDrawing> drawings;
     std::vector<CostResult> costs;

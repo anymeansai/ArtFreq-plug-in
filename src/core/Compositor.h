@@ -9,7 +9,7 @@
 #include <map>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 struct Canvas
@@ -95,4 +95,4 @@ private:
     std::map<CacheKey, CacheEntry> cache;
 };
 
-} // namespace freqart
+} // namespace artfreq

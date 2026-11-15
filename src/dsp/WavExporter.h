@@ -10,7 +10,7 @@
 
 #include <functional>
 
-namespace freqart
+namespace artfreq
 {
 
 struct ExportSettings
@@ -44,8 +44,8 @@ float softClip (float x) noexcept;
 // keep using what they read the first time), so every bounce gets a name of its own, one a
 // person can also read in the DAW's clip and file lists:
 //
-//     FreqArt HELLO 14-03-27.wav      the first text of the drawing, the time of the bounce
-//     FreqArt Drawing 14-03-27 2.wav  no text; a second bounce within the same second
+//     ArtFreq HELLO 14-03-27.wav      the first text of the drawing, the time of the bounce
+//     ArtFreq Drawing 14-03-27 2.wav  no text; a second bounce within the same second
 
 /** `text` reduced to what every file system and DAW accepts in a file name: ASCII letters and
     digits, Latin letters with accents, spaces and - _ ( ) ' & + ! (anything else becomes a
@@ -57,11 +57,11 @@ juce::String fileNamePart (const juce::String& text, int maxLength);
     after fileNamePart (up to 20 characters), else "Drawing". */
 juce::String bounceLabel (const ArtDocument& document);
 
-/** Creates a new, empty file in `folder` (made if missing) named "FreqArt <label> <HH-MM-SS>.wav"
+/** Creates a new, empty file in `folder` (made if missing) named "ArtFreq <label> <HH-MM-SS>.wav"
     from the local time `when` ("<label> <HH-MM-SS>.wav" if the label already starts with
-    "FreqArt"), with " 2", " 3" ... before ".wav" while the name is taken. Creating it reserves
+    "ArtFreq"), with " 2", " 3" ... before ".wav" while the name is taken. Creating it reserves
     the name, so two bounces never get the same file, even from two instances in the same
     second. Returns File() if the folder cannot be written. */
 juce::File reserveBounceFile (const juce::File& folder, const juce::String& label, juce::Time when);
 
-} // namespace freqart
+} // namespace artfreq

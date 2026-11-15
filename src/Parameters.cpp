@@ -2,7 +2,7 @@
 
 #include <cmath>
 
-namespace freqart::params
+namespace artfreq::params
 {
 
 namespace
@@ -226,7 +226,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect
         juce::ParameterID { id::slope, 1 }, "Analyser slope", slopeNames(), 0,
         ChoiceAttributes().withAutomatable (false)));
 
-    // ---- FreqArt FX: what happens to the audio coming in. Both act on the audio thread at once
+    // ---- ArtFreq FX: what happens to the audio coming in. Both act on the audio thread at once
     // (the masks for every mode are built together, and Depth is read per frame), so unlike the
     // plan's settings they can be automated: a Carve that deepens into the drop, or Stencil for a
     // bar. Version hint 4: they came with the effect. ----------------------------------------
@@ -249,4 +249,4 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect
     return layout;
 }
 
-} // namespace freqart::params
+} // namespace artfreq::params

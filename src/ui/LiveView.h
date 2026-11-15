@@ -1,6 +1,6 @@
 #pragma once
 
-// A scrolling spectrogram of FreqArt's own output, drawn like the canvas (same scale, range,
+// A scrolling spectrogram of ArtFreq's own output, drawn like the canvas (same scale, range,
 // slope and colours). See docs/DESIGN.md, "Live view".
 
 #include "PluginProcessor.h"
@@ -9,14 +9,14 @@
 
 #include <vector>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
 class LiveView final : public juce::Component,
                        private juce::Timer
 {
 public:
-    explicit LiveView (FreqArtProcessor& processor);
+    explicit LiveView (ArtFreqProcessor& processor);
     ~LiveView() override;
 
     void paint (juce::Graphics&) override;
@@ -36,7 +36,7 @@ public:
     void fillFromPlanForSnapshot (double seconds);
 
     /** For the snapshot tool: fills the history with columns analysed from `audio` (one
-        channel at `sampleRate`, ending now): FreqArt FX's output, which needs a song. */
+        channel at `sampleRate`, ending now): ArtFreq FX's output, which needs a song. */
     void fillFromAudioForSnapshot (const std::vector<float>& audio, double sampleRate);
 
 private:
@@ -46,4 +46,4 @@ private:
     std::unique_ptr<Impl> impl;
 };
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

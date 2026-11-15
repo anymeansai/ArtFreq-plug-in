@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -217,4 +217,4 @@ std::unique_ptr<MaskPlan> widenMaskPlan (const MaskPlan& plan, int haloRows, int
     return widened;
 }
 
-} // namespace freqart
+} // namespace artfreq

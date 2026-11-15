@@ -5,7 +5,7 @@
 // chooser). From then on the file follows the drawing: each change renders a new file of its
 // own a moment later. See docs/DESIGN.md, "Footer".
 //
-// In FreqArt FX, Carve and Stencil change the song, which only the DAW has: the column then says
+// In ArtFreq FX, Carve and Stencil change the song, which only the DAW has: the column then says
 // "Bounce the track in your DAW" instead. In the Draw modes it bounces the drawing's sines.
 
 #include "PluginProcessor.h"
@@ -18,20 +18,20 @@
 #include <optional>
 #include <vector>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 
 class ExportPanel final : public juce::Component
 {
 public:
-    explicit ExportPanel (FreqArtProcessor& processor);
+    explicit ExportPanel (ArtFreqProcessor& processor);
     ~ExportPanel() override;
 
     /** How long the drawing, length, tempo and level must stay as they are before the file is
         rendered again: long enough that a drag or a run of typing renders once, at the end. */
     static constexpr int updateDelayMilliseconds = 400;
 
-    /** Where bounces go: <temp>/FreqArt. Every bounce is a file of its own there, named after
+    /** Where bounces go: <temp>/ArtFreq. Every bounce is a file of its own there, named after
         the drawing and the time (see reserveBounceFile), so no later bounce, from this instance
         or another, ever replaces a file that was handed out. */
     static juce::File getBounceFolder();
@@ -82,7 +82,7 @@ public:
     /** The last error, empty if the last bounce worked. */
     juce::String getLastError() const;
 
-    /** FreqArt FX in Carve or Stencil: the column asks for a bounce in the DAW instead (nothing
+    /** ArtFreq FX in Carve or Stencil: the column asks for a bounce in the DAW instead (nothing
         can be bounced here without the song). */
     bool isAskingForDawBounce() const noexcept { return look == Look::daw; }
 
@@ -112,7 +112,7 @@ private:
         ready,      // the chip with the current file
         updating,   // the chip waiting for the next file
         empty,      // the chip with nothing to export
-        daw         // FreqArt FX carving: "Bounce the track in your DAW"
+        daw         // ArtFreq FX carving: "Bounce the track in your DAW"
     };
 
     Take takeFor (const ArtPlan& plan) const;
@@ -127,7 +127,7 @@ private:
     void chooseSaveTarget();
     void discardBounceFile();
 
-    FreqArtProcessor& processor;
+    ArtFreqProcessor& processor;
     IconButton bounceButton;
     std::unique_ptr<Chip> chip;
     ShellButton saveButton { "Save..." };
@@ -160,4 +160,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ExportPanel)
 };
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

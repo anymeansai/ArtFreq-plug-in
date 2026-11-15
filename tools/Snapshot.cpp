@@ -1,59 +1,59 @@
 // Renders the editor to PNG files, without a host, and checks the shell along the way.
 //
-//   FreqArtSnapshot <output-dir> [pixel-scale]
+//   ArtFreqSnapshot <output-dir> [pixel-scale]
 //
 // Writes
 //
-//   freqart-default.png          a fresh instance (the default drawing)
-//   freqart-rich.png             text "HELLO" in the high band, a picture in the low / mid band,
+//   artfreq-default.png          a fresh instance (the default drawing)
+//   artfreq-rich.png             text "HELLO" in the high band, a picture in the low / mid band,
 //                                brush strokes, density 384
-//   freqart-playing.png          the same while previewing (playhead, Preview on)
-//   freqart-text-selected.png    the text object selected
-//   freqart-image-selected.png   the picture selected
-//   freqart-brush.png            the Brush tool active (chosen with the B key)
-//   freqart-live.png             the live view, filled from the plan
-//   freqart-settings.png         the settings panel open
-//   freqart-settings-reset.png   the same, asking to confirm "Reset drawing"
-//   freqart-help.png             the help panel open
-//   freqart-export.png           after "Bounce WAV": the chip (the file's name) and "Save..."
-//   freqart-export-updating.png  just after a change: the chip says "Updating..." until the new file
-//   freqart-menu.png             the Length menu open
-//   freqart-tooltip.png          a tooltip (Density's)
-//   freqart-edit.png             typing a value into the Level knob
-//   freqart-dragging.png         the picture being dragged (its frequency range shown)
-//   freqart-painting.png         a brush stroke just painted, the brush cursor over it
-//   freqart-empty.png            after Clear: the empty canvas and its hint
-//   freqart-layers.png           the layer list: five objects, one hidden, one selected from the
+//   artfreq-playing.png          the same while previewing (playhead, Preview on)
+//   artfreq-text-selected.png    the text object selected
+//   artfreq-image-selected.png   the picture selected
+//   artfreq-brush.png            the Brush tool active (chosen with the B key)
+//   artfreq-live.png             the live view, filled from the plan
+//   artfreq-settings.png         the settings panel open
+//   artfreq-settings-reset.png   the same, asking to confirm "Reset drawing"
+//   artfreq-help.png             the help panel open
+//   artfreq-export.png           after "Bounce WAV": the chip (the file's name) and "Save..."
+//   artfreq-export-updating.png  just after a change: the chip says "Updating..." until the new file
+//   artfreq-menu.png             the Length menu open
+//   artfreq-tooltip.png          a tooltip (Density's)
+//   artfreq-edit.png             typing a value into the Level knob
+//   artfreq-dragging.png         the picture being dragged (its frequency range shown)
+//   artfreq-painting.png         a brush stroke just painted, the brush cursor over it
+//   artfreq-empty.png            after Clear: the empty canvas and its hint
+//   artfreq-layers.png           the layer list: five objects, one hidden, one selected from the
 //                                list, the mouse over another row
-//   freqart-layers-hidden.png    the hidden object selected from the list (its outline on the canvas)
-//   freqart-layers-drag.png      a row being dragged to another place in the list
-//   freqart-layers-menu.png      an object's right-click menu on the canvas
-//   freqart-lows-brush.png       Lows (Smooth) at the foot of the panel, under the brush settings
-//   freqart-lows-stripes.png     the rich drawing with Lows on Stripes (the layers PNGs are Smooth)
-//   freqart-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
-//   freqart-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
-//   freqart-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
-//   freqart-start-bar.png        a single pass from bar 9: the start bar field, bars 9 to 12 on
+//   artfreq-layers-hidden.png    the hidden object selected from the list (its outline on the canvas)
+//   artfreq-layers-drag.png      a row being dragged to another place in the list
+//   artfreq-layers-menu.png      an object's right-click menu on the canvas
+//   artfreq-lows-brush.png       Lows (Smooth) at the foot of the panel, under the brush settings
+//   artfreq-lows-stripes.png     the rich drawing with Lows on Stripes (the layers PNGs are Smooth)
+//   artfreq-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
+//   artfreq-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
+//   artfreq-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
+//   artfreq-start-bar.png        a single pass from bar 9: the start bar field, bars 9 to 12 on
 //                                the canvas
-//   freqart-start-bar-edit.png   typing a start bar
-//   freqart-75.png               window at 75 %, one image pixel per logical pixel
-//   freqart-100.png              window at 100 %, one image pixel per logical pixel
-//   freqart-150.png              window at 150 %, one image pixel per logical pixel
-//   freqart-200.png              window at 200 %, one image pixel per logical pixel
+//   artfreq-start-bar-edit.png   typing a start bar
+//   artfreq-75.png               window at 75 %, one image pixel per logical pixel
+//   artfreq-100.png              window at 100 %, one image pixel per logical pixel
+//   artfreq-150.png              window at 150 %, one image pixel per logical pixel
+//   artfreq-200.png              window at 200 %, one image pixel per logical pixel
 //
-// and for FreqArt FX (the effect variant: the same editor with Mode and Depth in the header)
+// and for ArtFreq FX (the effect variant: the same editor with Mode and Depth in the header)
 //
-//   freqart-fx-default.png       a fresh FreqArt FX (Carve: the default drawing dark in the song)
-//   freqart-fx-carve.png         the rich drawing in Carve: dark shapes on the stand-in song, the
+//   artfreq-fx-default.png       a fresh ArtFreq FX (Carve: the default drawing dark in the song)
+//   artfreq-fx-carve.png         the rich drawing in Carve: dark shapes on the stand-in song, the
 //                                export saying "Bounce the track in your DAW"
-//   freqart-fx-carve-draw.png    Carve + Draw: the sines bright in a hole a little wider than them
-//   freqart-fx-stencil.png       Stencil: the drawing filled with the song, the rest dark
-//   freqart-fx-draw.png          Draw: the sines on top of the song, Depth greyed, Bounce WAV back
-//   freqart-fx-shallow.png       Carve at a Depth of -24 dB, typed into the field
-//   freqart-fx-live.png          the live view: a stand-in song carved by the real processor
-//   freqart-fx-help.png          FreqArt FX's help panel
-//   freqart-fx-tooltip.png       the Mode control's tooltip
-//   freqart-fx-75.png, -100.png, -200.png   window sizes, one image pixel per logical pixel
+//   artfreq-fx-carve-draw.png    Carve + Draw: the sines bright in a hole a little wider than them
+//   artfreq-fx-stencil.png       Stencil: the drawing filled with the song, the rest dark
+//   artfreq-fx-draw.png          Draw: the sines on top of the song, Depth greyed, Bounce WAV back
+//   artfreq-fx-shallow.png       Carve at a Depth of -24 dB, typed into the field
+//   artfreq-fx-live.png          the live view: a stand-in song carved by the real processor
+//   artfreq-fx-help.png          ArtFreq FX's help panel
+//   artfreq-fx-tooltip.png       the Mode control's tooltip
+//   artfreq-fx-75.png, -100.png, -200.png   window sizes, one image pixel per logical pixel
 //
 // All but the last two are rendered at <pixel-scale> image pixels per logical pixel (default 2, as
 // on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
@@ -66,11 +66,11 @@
 // the (virtual) desktop to check the live view's own timer: the analyser on while shown,
 // scrolling, off when hidden.
 //
-// For FreqArt FX it checks the header's layout at every size, Mode and Depth driven with the
+// For ArtFreq FX it checks the header's layout at every size, Mode and Depth driven with the
 // mouse and the keyboard (and what they grey and show), the export's hint, Preview and a carve
 // through the processor.
 //
-// On Linux run it under a virtual display:  xvfb-run -a FreqArtSnapshot out
+// On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -125,7 +125,7 @@ void pump (int milliseconds)
     juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
 }
 
-void setParameter (freqart::FreqArtProcessor& processor, const char* id, float plainValue)
+void setParameter (artfreq::ArtFreqProcessor& processor, const char* id, float plainValue)
 {
     if (auto* parameter = processor.getParameters().getParameter (id))
         parameter->setValueNotifyingHost (parameter->convertTo0to1 (plainValue));
@@ -151,10 +151,10 @@ Type* find (juce::Component& root, const juce::String& id)
     return c;
 }
 
-void setWindowScale (freqart::FreqArtEditor& editor, float scale)
+void setWindowScale (artfreq::ArtFreqEditor& editor, float scale)
 {
-    editor.setSize (juce::roundToInt (static_cast<float> (freqart::FreqArtEditor::baseWidth) * scale),
-                    juce::roundToInt (static_cast<float> (freqart::FreqArtEditor::baseHeight) * scale));
+    editor.setSize (juce::roundToInt (static_cast<float> (artfreq::ArtFreqEditor::baseWidth) * scale),
+                    juce::roundToInt (static_cast<float> (artfreq::ArtFreqEditor::baseHeight) * scale));
 }
 
 /** A stand-in for an imported picture: a shaded disc and a frame on a white background, the
@@ -179,9 +179,9 @@ juce::Image makeTestPicture()
 }
 
 /** The "rich" drawing: text in the highs, a picture in the low / mid band, brush strokes. */
-void makeRichDrawing (freqart::FreqArtProcessor& processor, juce::Uuid& textId, juce::Uuid& imageId)
+void makeRichDrawing (artfreq::ArtFreqProcessor& processor, juce::Uuid& textId, juce::Uuid& imageId)
 {
-    using namespace freqart;
+    using namespace artfreq;
 
     const auto scale = processor.getScale();
     ArtDocument document;
@@ -226,11 +226,11 @@ void makeRichDrawing (freqart::FreqArtProcessor& processor, juce::Uuid& textId, 
     document.paintStroke (dab);
 
     processor.setDocument (document);
-    setParameter (processor, freqart::params::id::density, 384.0f);
+    setParameter (processor, artfreq::params::id::density, 384.0f);
 }
 
 /** Runs the processor for a while with Preview on, as a host would, so there is a playhead. */
-void playFor (freqart::FreqArtProcessor& processor, double seconds)
+void playFor (artfreq::ArtFreqProcessor& processor, double seconds)
 {
     constexpr int blockSize = 512;
     juce::AudioBuffer<float> buffer (2, blockSize);
@@ -280,38 +280,38 @@ void dragOn (juce::Component& c, juce::Point<float> from, juce::Point<float> to,
 }
 
 /** Where an object is on the canvas, in the canvas's coordinates. */
-juce::Rectangle<float> onCanvas (freqart::ui::CanvasView& canvas, const freqart::ArtObject& object,
-                                 const freqart::FrequencyScale& scale)
+juce::Rectangle<float> onCanvas (artfreq::ui::CanvasView& canvas, const artfreq::ArtObject& object,
+                                 const artfreq::FrequencyScale& scale)
 {
     const auto a = canvas.getDrawingArea();
-    const auto n = freqart::objectRectNorm (object, scale);
+    const auto n = artfreq::objectRectNorm (object, scale);
     return { a.getX() + n.getX() * a.getWidth(), a.getY() + n.getY() * a.getHeight(),
              n.getWidth() * a.getWidth(), n.getHeight() * a.getHeight() };
 }
 
 /** The paint layer's value under a point of the canvas. */
-int paintAt (const freqart::ArtDocument& document, freqart::ui::CanvasView& canvas, juce::Point<float> p)
+int paintAt (const artfreq::ArtDocument& document, artfreq::ui::CanvasView& canvas, juce::Point<float> p)
 {
     const auto a = canvas.getDrawingArea();
-    const auto x = juce::jlimit (0, freqart::ArtDocument::paintWidth - 1,
-                                 static_cast<int> ((p.x - a.getX()) / a.getWidth() * freqart::ArtDocument::paintWidth));
-    const auto y = juce::jlimit (0, freqart::ArtDocument::paintHeight - 1,
-                                 static_cast<int> ((p.y - a.getY()) / a.getHeight() * freqart::ArtDocument::paintHeight));
+    const auto x = juce::jlimit (0, artfreq::ArtDocument::paintWidth - 1,
+                                 static_cast<int> ((p.x - a.getX()) / a.getWidth() * artfreq::ArtDocument::paintWidth));
+    const auto y = juce::jlimit (0, artfreq::ArtDocument::paintHeight - 1,
+                                 static_cast<int> ((p.y - a.getY()) / a.getHeight() * artfreq::ArtDocument::paintHeight));
 
     if (document.paint.empty())
         return 0;
 
-    return document.paint[static_cast<size_t> (y * freqart::ArtDocument::paintWidth + x)];
+    return document.paint[static_cast<size_t> (y * artfreq::ArtDocument::paintWidth + x)];
 }
 
-bool samePlacement (const freqart::ArtObject& a, const freqart::ArtObject& b)
+bool samePlacement (const artfreq::ArtObject& a, const artfreq::ArtObject& b)
 {
     return juce::exactlyEqual (a.startTime, b.startTime) && juce::exactlyEqual (a.endTime, b.endTime)
         && juce::exactlyEqual (a.lowHz, b.lowHz) && juce::exactlyEqual (a.highHz, b.highHz);
 }
 
 /** True if two documents hold the same drawing (objects in order, their settings, the paint). */
-bool sameDrawing (const freqart::ArtDocument& a, const freqart::ArtDocument& b)
+bool sameDrawing (const artfreq::ArtDocument& a, const artfreq::ArtDocument& b)
 {
     if (a.objects.size() != b.objects.size() || a.hasPaint() != b.hasPaint() || (a.hasPaint() && a.paint != b.paint))
         return false;
@@ -331,11 +331,11 @@ bool sameDrawing (const freqart::ArtDocument& a, const freqart::ArtDocument& b)
 
 /** Uses the editor as a person would, with synthetic mouse and key events, and checks what each
     gesture does to the drawing. Everything is undone again, so the drawing ends as it began. */
-void checkInteractions (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor, juce::Component& content,
+void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor, juce::Component& content,
                         const juce::Uuid& textId, const juce::Uuid& imageId,
                         const std::function<void (const juce::String&, bool)>& save)
 {
-    using namespace freqart;
+    using namespace artfreq;
 
     auto* canvas = find<ui::CanvasView> (editor, "canvas");
     auto* toolbar = find<ui::shell::Toolbar> (editor, "toolbar");
@@ -654,10 +654,10 @@ void checkInteractions (freqart::FreqArtEditor& editor, freqart::FreqArtProcesso
 /** The footer's timing controls, as a person would use them: Trigger, Repeat, the start bar
     field (drag, type, Enter, Esc) and what the hint line under them says; Preview following
     Repeat; the canvas numbering the song's bars. Puts the settings back as they were. */
-void checkFooter (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor,
+void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor,
                   const std::function<void (const juce::String&, bool)>& save)
 {
-    using namespace freqart;
+    using namespace artfreq;
 
     auto* footer = find<ui::shell::Footer> (editor, "footer");
     auto* trigger = find<ui::SegmentedControl> (editor, "trigger");
@@ -821,11 +821,11 @@ void checkFooter (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& pro
     list (no undo step), the keyboard, hiding, reordering (which decides what a click on the
     canvas picks), deleting, clicking again and Alt-clicking on the canvas, the right-click menu,
     adding at the front. Everything is undone again, so the drawing ends as it began. */
-void checkLayers (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor,
+void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor,
                   const juce::Uuid& textId, const juce::Uuid& imageId,
                   const std::function<void (const juce::String&, bool)>& save)
 {
-    using namespace freqart;
+    using namespace artfreq;
 
     auto* canvas = find<ui::CanvasView> (editor, "canvas");
     auto* list = find<ui::LayerList> (editor, "layer-list");
@@ -1062,10 +1062,10 @@ int countDifferentPixels (const juce::Image& a, const juce::Image& b)
 /** Lows (Smooth | Stripes) at the foot of the layer list: where it sits (with the keys and with
     the brush settings), what it does to the plan and the canvas, and that it makes way for an
     object's settings. */
-void checkLows (freqart::FreqArtEditor& editor, freqart::FreqArtProcessor& processor, juce::Component& content,
+void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor, juce::Component& content,
                 const juce::Uuid& imageId, const std::function<void (const juce::String&, bool)>& save)
 {
-    using namespace freqart;
+    using namespace artfreq;
 
     auto* lows = find<ui::SegmentedControl> (editor, "lows");
     auto* canvas = find<ui::CanvasView> (editor, "canvas");
@@ -1166,7 +1166,7 @@ bool checkWav (const juce::File& file, double expectedSeconds)
 } // namespace
 
 //==============================================================================
-// FreqArt FX
+// ArtFreq FX
 
 /** A host transport for the effect's offline runs. */
 struct SnapshotPlayHead final : public juce::AudioPlayHead
@@ -1215,7 +1215,7 @@ std::vector<std::vector<float>> makeSong (double seconds)
 
 /** Plays `song` through an effect processor from the song's start, the DAW playing at 120 BPM;
     returns its output as one channel. */
-std::vector<float> carveSong (freqart::FreqArtProcessor& effect, const std::vector<std::vector<float>>& song)
+std::vector<float> carveSong (artfreq::ArtFreqProcessor& effect, const std::vector<std::vector<float>>& song)
 {
     SnapshotPlayHead head;
     effect.setPlayHead (&head);
@@ -1253,24 +1253,24 @@ std::vector<float> carveSong (freqart::FreqArtProcessor& effect, const std::vect
     return out;
 }
 
-/** FreqArt FX's editor: the header's Mode and Depth, what they show and grey, the canvas in each
+/** ArtFreq FX's editor: the header's Mode and Depth, what they show and grey, the canvas in each
     mode, the export's hint, the live view of a carved song, the help, the window sizes. */
 void checkEffect (const juce::File& outputDir, float pixelScale)
 {
-    using namespace freqart;
+    using namespace artfreq;
 
-    FreqArtProcessor processor (FreqArtProcessor::Variant::effect);
+    ArtFreqProcessor processor (ArtFreqProcessor::Variant::effect);
     processor.setPlayConfigDetails (2, 2, 48000.0, 512);
     processor.prepareToPlay (48000.0, 512);
 
-    check (processor.getName() == "FreqArt FX" && processor.isEffect(), "FreqArt FX is the effect");
-    check (processor.getLatencySamples() == 4096, "FreqArt FX reports its latency");
+    check (processor.getName() == "ArtFreq FX" && processor.isEffect(), "ArtFreq FX is the effect");
+    check (processor.getLatencySamples() == 4096, "ArtFreq FX reports its latency");
 
-    const std::unique_ptr<FreqArtEditor> editor (dynamic_cast<FreqArtEditor*> (processor.createEditor()));
+    const std::unique_ptr<ArtFreqEditor> editor (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
 
     if (editor == nullptr)
     {
-        check (false, "FreqArt FX makes a FreqArtEditor");
+        check (false, "ArtFreq FX makes an ArtFreqEditor");
         return;
     }
 
@@ -1282,7 +1282,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
             pump (60);
 
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
-        const auto file = outputDir.getChildFile ("freqart-fx-" + name + ".png");
+        const auto file = outputDir.getChildFile ("artfreq-fx-" + name + ".png");
 
         if (writePng (image, file))
             std::cout << file.getFullPathName() << std::endl;
@@ -1310,7 +1310,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     check (view->getRight() < controls->getX() && controls->getRight() < undo->getX()
                && mode->getRight() <= controls->getWidth() && depth->getRight() <= controls->getWidth(),
            "the header's controls do not overlap");
-    check (mode->getSelectedIndex() == 0 && processor.getEffectMode() == EffectMode::carve, "a new FreqArt FX carves");
+    check (mode->getSelectedIndex() == 0 && processor.getEffectMode() == EffectMode::carve, "a new ArtFreq FX carves");
     check (depth->isEnabled(), "Depth can be changed in Carve");
 
     for (auto* id : { "density", "contrast", "level" })
@@ -1432,12 +1432,12 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         pump (60);
     }
 
-    // The live view: a stand-in song through a second FreqArt FX with this one's state.
+    // The live view: a stand-in song through a second ArtFreq FX with this one's state.
     editor->showLiveView (true);
 
     if (auto* live = find<ui::LiveView> (*editor, "live-view"))
     {
-        FreqArtProcessor second (FreqArtProcessor::Variant::effect);
+        ArtFreqProcessor second (ArtFreqProcessor::Variant::effect);
         juce::MemoryBlock state;
         processor.getStateInformation (state);
         second.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
@@ -1500,22 +1500,22 @@ int main (int argc, char* argv[])
         return 1;
     }
 
-    using namespace freqart;
+    using namespace artfreq;
 
-    FreqArtProcessor processor;
+    ArtFreqProcessor processor;
     processor.setRateAndBufferSizeDetails (48000.0, 512);
     processor.prepareToPlay (48000.0, 512);
 
     {
-        const std::unique_ptr<FreqArtEditor> editor (dynamic_cast<FreqArtEditor*> (processor.createEditor()));
+        const std::unique_ptr<ArtFreqEditor> editor (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
 
         if (editor == nullptr)
         {
-            std::cerr << "The processor made no FreqArtEditor" << std::endl;
+            std::cerr << "The processor made no ArtFreqEditor" << std::endl;
             return 1;
         }
 
-        check (editor->getWidth() == FreqArtEditor::baseWidth && editor->getHeight() == FreqArtEditor::baseHeight,
+        check (editor->getWidth() == ArtFreqEditor::baseWidth && editor->getHeight() == ArtFreqEditor::baseHeight,
                "a new editor opens at 1120 x 720");
 
         const auto save = [&] (const juce::String& name, float scale, bool settle = true)
@@ -1526,7 +1526,7 @@ int main (int argc, char* argv[])
                 pump (60);
 
             const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
-            const auto file = outputDir.getChildFile ("freqart-" + name + ".png");
+            const auto file = outputDir.getChildFile ("artfreq-" + name + ".png");
 
             if (writePng (image, file))
                 std::cout << file.getFullPathName() << std::endl;
@@ -1709,7 +1709,7 @@ int main (int argc, char* argv[])
 
             const auto first = exporter->getBounceFile();
             check (checkWav (first, processor.getLengthSeconds()), "the bounce is one pass, stereo");
-            check (first.getFileName().startsWith ("FreqArt HELLO "), "the file is named after the drawing's text: " + first.getFileName());
+            check (first.getFileName().startsWith ("ArtFreq HELLO "), "the file is named after the drawing's text: " + first.getFileName());
             check (chipSays (first.getFileName()) && saveButton != nullptr && saveButton->isEnabled(), "ready: the chip shows the file's name");
             save ("export", pixelScale);
 
@@ -1807,7 +1807,7 @@ int main (int argc, char* argv[])
     pump (50);
     processor.releaseResources();
 
-    // ---- FreqArt FX: the same editor on the effect ----------------------------------------------
+    // ---- ArtFreq FX: the same editor on the effect ----------------------------------------------
     checkEffect (outputDir, pixelScale);
     pump (50);
 

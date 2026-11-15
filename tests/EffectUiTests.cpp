@@ -1,4 +1,4 @@
-// FreqArt FX's editor: the same window as the instrument's, with Mode and Depth in the header,
+// ArtFreq FX's editor: the same window as the instrument's, with Mode and Depth in the header,
 // the sines' knobs greyed while nothing plays them, the export asking for a bounce in the DAW
 // while carving, a help panel of its own that fits the window, and a canvas that shows what the
 // analyser will show in each mode.
@@ -24,23 +24,23 @@
 #include <cmath>
 #include <memory>
 
-using namespace freqart;
+using namespace artfreq;
 using testutil::setParameter;
 
 namespace
 {
 
-std::unique_ptr<FreqArtProcessor> makeProcessor (FreqArtProcessor::Variant variant)
+std::unique_ptr<ArtFreqProcessor> makeProcessor (ArtFreqProcessor::Variant variant)
 {
-    auto processor = std::make_unique<FreqArtProcessor> (variant);
+    auto processor = std::make_unique<ArtFreqProcessor> (variant);
     processor->setRateAndBufferSizeDetails (48000.0, 512);
     processor->prepareToPlay (48000.0, 512);
     return processor;
 }
 
-std::unique_ptr<FreqArtEditor> makeEditor (FreqArtProcessor& processor)
+std::unique_ptr<ArtFreqEditor> makeEditor (ArtFreqProcessor& processor)
 {
-    return std::unique_ptr<FreqArtEditor> (dynamic_cast<FreqArtEditor*> (processor.createEditor()));
+    return std::unique_ptr<ArtFreqEditor> (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
 }
 
 void pump (int milliseconds)
@@ -79,9 +79,9 @@ int levelOf (const juce::Image& image, int x, int y)
 
 } // namespace
 
-FREQART_TEST (uiEffectHeaderHoldsModeAndDepth)
+ARTFREQ_TEST (uiEffectHeaderHoldsModeAndDepth)
 {
-    auto effect = makeProcessor (FreqArtProcessor::Variant::effect);
+    auto effect = makeProcessor (ArtFreqProcessor::Variant::effect);
     auto editor = makeEditor (*effect);
     pump (60);
 
@@ -110,16 +110,16 @@ FREQART_TEST (uiEffectHeaderHoldsModeAndDepth)
     CHECK (mode->getSelectedIndex() == 3);
 
     // The instrument's header has none of it.
-    auto instrument = makeProcessor (FreqArtProcessor::Variant::instrument);
+    auto instrument = makeProcessor (ArtFreqProcessor::Variant::instrument);
     auto instrumentEditor = makeEditor (*instrument);
     CHECK (findComponent (*instrumentEditor, "effect-controls") == nullptr);
     CHECK (findComponent (*instrumentEditor, "mode") == nullptr);
 }
 
-FREQART_TEST (uiEffectGreysWhatTheModeDoesNotUse)
+ARTFREQ_TEST (uiEffectGreysWhatTheModeDoesNotUse)
 {
     // The sines' Density, Contrast and Level are greyed in Carve and Stencil; Depth in Draw.
-    auto effect = makeProcessor (FreqArtProcessor::Variant::effect);
+    auto effect = makeProcessor (ArtFreqProcessor::Variant::effect);
     auto editor = makeEditor (*effect);
     pump (80);
 
@@ -144,7 +144,7 @@ FREQART_TEST (uiEffectGreysWhatTheModeDoesNotUse)
     CHECK (density->isEnabled() && depth->isEnabled());
 
     // In the instrument they are always on.
-    auto instrument = makeProcessor (FreqArtProcessor::Variant::instrument);
+    auto instrument = makeProcessor (ArtFreqProcessor::Variant::instrument);
     auto instrumentEditor = makeEditor (*instrument);
     pump (120);
 
@@ -152,9 +152,9 @@ FREQART_TEST (uiEffectGreysWhatTheModeDoesNotUse)
         CHECK (knob->isEnabled());
 }
 
-FREQART_TEST (uiEffectExportAsksForTheDawWhileCarving)
+ARTFREQ_TEST (uiEffectExportAsksForTheDawWhileCarving)
 {
-    auto effect = makeProcessor (FreqArtProcessor::Variant::effect);
+    auto effect = makeProcessor (ArtFreqProcessor::Variant::effect);
     auto editor = makeEditor (*effect);
     pump (80);
 
@@ -176,7 +176,7 @@ FREQART_TEST (uiEffectExportAsksForTheDawWhileCarving)
     }
 
     // The instrument always bounces.
-    auto instrument = makeProcessor (FreqArtProcessor::Variant::instrument);
+    auto instrument = makeProcessor (ArtFreqProcessor::Variant::instrument);
     auto instrumentEditor = makeEditor (*instrument);
 
     if (auto* other = dynamic_cast<ui::shell::ExportPanel*> (findComponent (*instrumentEditor, "export")))
@@ -186,22 +186,22 @@ FREQART_TEST (uiEffectExportAsksForTheDawWhileCarving)
     }
 }
 
-FREQART_TEST (uiEffectHelpFitsTheWindow)
+ARTFREQ_TEST (uiEffectHelpFitsTheWindow)
 {
     // Both help panels fit in the window with room around them (the editor centres them).
     ui::shell::HelpPanel instrumentHelp (false), effectHelp (true);
-    CHECK_LESS (instrumentHelp.getIdealHeight(), FreqArtEditor::baseHeight - 24);
-    CHECK_LESS (effectHelp.getIdealHeight(), FreqArtEditor::baseHeight - 24);
+    CHECK_LESS (instrumentHelp.getIdealHeight(), ArtFreqEditor::baseHeight - 24);
+    CHECK_LESS (effectHelp.getIdealHeight(), ArtFreqEditor::baseHeight - 24);
 }
 
-FREQART_TEST (uiEffectCanvasFollowsLevel)
+ARTFREQ_TEST (uiEffectCanvasFollowsLevel)
 {
     // In the modes that play the sines the canvas shows them at their level against the
     // stand-in song: turning Level from 0 to -60 dB changes it (the drawing fades into the song,
     // or leaves Carve + Draw's hole dark). In Carve and Stencil Level plays no part.
     for (const auto& [mode, follows] : { std::pair<float, bool> { 3.0f, true }, { 1.0f, true }, { 0.0f, false }, { 2.0f, false } })
     {
-        auto effect = makeProcessor (FreqArtProcessor::Variant::effect);
+        auto effect = makeProcessor (ArtFreqProcessor::Variant::effect);
         setParameter (*effect, params::id::mode, mode);
         effect->rebuildPlanIfNeeded();
         auto editor = makeEditor (*effect);
@@ -237,7 +237,7 @@ FREQART_TEST (uiEffectCanvasFollowsLevel)
     }
 }
 
-FREQART_TEST (uiEffectCanvasShowsEachMode)
+ARTFREQ_TEST (uiEffectCanvasShowsEachMode)
 {
     // A band drawn in the middle of the canvas (columns 300 to 700), its sines' picture at full
     // brightness there.

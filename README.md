@@ -1,80 +1,82 @@
-# FreqArt
+# ArtFreq
 
 **by AnyMeans**
 
 A plug-in (VST3, macOS) that turns text, pictures and brush strokes into sound whose **spectrogram shows them**. Put it on an instrument track, open a spectrogram such as MiniMeters on its output, press play, and your drawing scrolls past.
 
+**Renamed in 0.4:** ArtFreq and ArtFreq FX were called FreqArt and FreqArt FX before. Old projects keep working (they open with the renamed plug-ins); after updating, rescan plug-ins in your DAW.
+
 It comes as two plug-ins from the same code, with the same window, installed together:
 
-- **FreqArt**, an instrument for MIDI and instrument tracks: it plays the drawing.
-- **FreqArt FX**, an audio effect for audio tracks, buses and the master: it carves the drawing into the song passing through, so it shows as dark shapes even in a full mix, or keeps only the drawing, or plays it into a hole carved for it, or on top. See [FreqArt FX](#freqart-fx-the-drawing-in-a-song).
+- **ArtFreq**, an instrument for MIDI and instrument tracks: it plays the drawing.
+- **ArtFreq FX**, an audio effect for audio tracks, buses and the master: it carves the drawing into the song passing through, so it shows as dark shapes even in a full mix, or keeps only the drawing, or plays it into a hole carved for it, or on top. See [ArtFreq FX](#artfreq-fx-the-drawing-in-a-song).
 
-Why two? A DAW decides from a VST3's category where it may go: Ableton Live, FL Studio and Cubase offer an instrument only on MIDI / instrument tracks and an effect only on audio tracks, buses and the master. No single plug-in can be both, so FreqArt is registered once as each. Everything else is shared: the drawing tools, the settings, even the format of the saved state. Your DAW keeps presets and projects per plug-in, though, so a drawing does not move from one to the other by itself (see [Moving between the two](#moving-between-the-two)).
+Why two? A DAW decides from a VST3's category where it may go: Ableton Live, FL Studio and Cubase offer an instrument only on MIDI / instrument tracks and an effect only on audio tracks, buses and the master. No single plug-in can be both, so ArtFreq is registered once as each. Everything else is shared: the drawing tools, the settings, even the format of the saved state. Your DAW keeps presets and projects per plug-in, though, so a drawing does not move from one to the other by itself (see [Moving between the two](#moving-between-the-two)).
 
 The canvas is a picture of your spectrogram: left to right is time across the drawing's length (1 beat to 32 bars, in time with the song), bottom to top is frequency on the same scale as your analyser (logarithmic, 20 Hz to 20 kHz, by default). What you see on the canvas is what the analyser will show.
 
 ## How to use it with MiniMeters
 
-1. **Put FreqArt on an instrument track.** It is an instrument: it makes the sound itself and needs no audio input. Create an instrument (MIDI) track and load FreqArt on it. A fresh instance already has something to show: the word "FreqArt" in the mid band.
+1. **Put ArtFreq on an instrument track.** It is an instrument: it makes the sound itself and needs no audio input. Create an instrument (MIDI) track and load ArtFreq on it. A fresh instance already has something to show: the word "ArtFreq" in the mid band.
 2. **Open the spectrogram.** In MiniMeters, choose the **Spectrogram** with a **logarithmic** frequency scale from **20 Hz to 20 kHz**, listening to your DAW's output. Any analyser with a scrolling spectrogram works.
-3. **Match the settings.** Open FreqArt's **Settings** (the gear) and set **Scale**, **Low**, **High** and **Slope** to what your analyser uses. The defaults (Log, 20 Hz, 20 kHz) match the MiniMeters setup above; if your analyser tilts its display (MiniMeters has a Slope setting), give FreqArt the same Slope.
-4. **Press play in your DAW.** With the default trigger (Transport, Repeat off), FreqArt plays the drawing once, from bar 1, as the DAW plays through it. The drawing scrolls through the spectrogram; FreqArt's own **Live** view (the Canvas | Live switch at the top of the window) shows the same thing.
+3. **Match the settings.** Open ArtFreq's **Settings** (the gear) and set **Scale**, **Low**, **High** and **Slope** to what your analyser uses. The defaults (Log, 20 Hz, 20 kHz) match the MiniMeters setup above; if your analyser tilts its display (MiniMeters has a Slope setting), give ArtFreq the same Slope.
+4. **Press play in your DAW.** With the default trigger (Transport, Repeat off), ArtFreq plays the drawing once, from bar 1, as the DAW plays through it. The drawing scrolls through the spectrogram; ArtFreq's own **Live** view (the Canvas | Live switch at the top of the window) shows the same thing.
 5. **Make it yours.**
    - **+ Text** adds a text box in the mid band across the whole length (or, if something is already there, in a free band), ready for typing. Pick a font and Solid or Outline letters in the inspector on the right.
    - **+ Image** adds a picture (PNG, JPEG, GIF, HEIC, WebP, TIFF or BMP), placed like new text, or drop an image file straight onto the canvas: it lands in the band under the cursor. A file that cannot be read is reported at the bottom of the canvas. **Mode** decides what in the picture becomes sound; **Auto** usually gets it right (on a white background it draws the dark parts).
    - **Brush** and **Erase** paint on the canvas, with Size, Soft and Strength in the toolbar.
    - **Layers.** With nothing selected, the panel on the right lists every text and picture, front first, and the paint layer last. Click a row to select it (handy when a picture covers some text), double-click it (or click its **›**) for its settings, drag rows to reorder, and click the eye to hide one: a hidden layer stays in the drawing, and in your saved session, but makes no sound. **‹ Layers** at the top of an object's settings goes back to the list.
 6. **Place it with the bands.** Select an object and choose a **Band** in the inspector: **Low** (40–250 Hz), **Mid** (300 Hz–3 kHz), **High** (3.5–16 kHz) or **Full** (the whole visible range). Or drag it to move it, and drag its handles to resize it. **Fill length** stretches it across the drawing.
-7. **Set the density and the lows.** **Density** is the number of sine lines across the height of the canvas. Few lines give a scan-line look; many lines merge into solid shapes. **Lows**, at the foot of the Layers list, chooses how the low end plays (below about 2 kHz): **Smooth** (the default) keeps shapes there filled at every FFT size of your analyser; **Stripes** plays separate lines 25 Hz apart, which an analyser with a long FFT (8192 points and up) shows as stripes with dark gaps, an effect of its own (and the only look in FreqArt 0.1 and 0.2).
+7. **Set the density and the lows.** **Density** is the number of sine lines across the height of the canvas. Few lines give a scan-line look; many lines merge into solid shapes. **Lows**, at the foot of the Layers list, chooses how the low end plays (below about 2 kHz): **Smooth** (the default) keeps shapes there filled at every FFT size of your analyser; **Stripes** plays separate lines 25 Hz apart, which an analyser with a long FFT (8192 points and up) shows as stripes with dark gaps, an effect of its own (and the only look in ArtFreq 0.1 and 0.2).
 8. **Set the contrast.** **Contrast** is how many decibels separate the brightest parts of the drawing from the faintest. To reproduce greys faithfully, set it near the range your spectrogram shows from dark to full colour; lower it to bring out faint detail, raise it for deeper blacks.
-9. **Set the level.** **Level** is FreqArt's output volume. FreqArt sets the loudest moment of the drawing to −12 dBFS RMS before Level, so at the default −6 dB it peaks at about −18 dBFS RMS.
+9. **Set the level.** **Level** is ArtFreq's output volume. ArtFreq sets the loudest moment of the drawing to −12 dBFS RMS before Level, so at the default −6 dB it peaks at about −18 dBFS RMS.
 10. **Choose the length, tempo and trigger.**
     - **Length** is how long one pass of the drawing takes: 1 beat, 2 beats, 1 bar, 2 bars, 4 bars (default), 8, 16 or 32 bars, at the song's tempo and time signature.
     - **Tempo**: **Host** follows the DAW's tempo; **Manual** uses the **BPM** you type (also used when a host gives no tempo).
     - **Trigger** and **Repeat** decide when the drawing plays. Nothing plays by itself: it plays while the DAW plays or while notes play it (or with Preview).
-      - **Transport** follows the DAW's timeline. With **Repeat** off (the default) it plays **once**, from the start of the bar in **from bar** (under Trigger; 1 to 999) for one Length: start the DAW in the middle of it and it plays from there, before and after it is silent (with short fades so nothing clicks), and looping the DAW over it plays it each time round. The bar is the DAW's bar, also with a **Manual** tempo (which then only sets how fast the drawing plays from there), and the pass lasts Length in that bar's time signature. Plug-ins are not told bar numbers, so FreqArt counts the bars as the DAW plays: a time-signature change before the bar (a 2/4 bar, a new section) is counted when the DAW plays through it, and a change at the bar or later moves nothing. Started after such a change without having played through it, FreqArt counts as if the whole song were in the current time signature and starts on the nearest bar line; play through the change once and it finds the bar. With **Repeat** on it loops every Length from bar 1 (a 4-bar drawing starts again on bars 5, 9, 13 and so on), starting on the DAW's bar lines also after a time-signature change.
+      - **Transport** follows the DAW's timeline. With **Repeat** off (the default) it plays **once**, from the start of the bar in **from bar** (under Trigger; 1 to 999) for one Length: start the DAW in the middle of it and it plays from there, before and after it is silent (with short fades so nothing clicks), and looping the DAW over it plays it each time round. The bar is the DAW's bar, also with a **Manual** tempo (which then only sets how fast the drawing plays from there), and the pass lasts Length in that bar's time signature. Plug-ins are not told bar numbers, so ArtFreq counts the bars as the DAW plays: a time-signature change before the bar (a 2/4 bar, a new section) is counted when the DAW plays through it, and a change at the bar or later moves nothing. Started after such a change without having played through it, ArtFreq counts as if the whole song were in the current time signature and starts on the nearest bar line; play through the change once and it finds the bar. With **Repeat** on it loops every Length from bar 1 (a 4-bar drawing starts again on bars 5, 9, 13 and so on), starting on the DAW's bar lines also after a time-signature change.
       - **MIDI** plays the drawing from the start on every note-on (any key; a new note restarts it), sample-accurately. With **Repeat** off it plays once and note-offs are ignored; with **Repeat** on it loops while any key is held and fades out when you let go of the last. Stopping the DAW, All Notes Off or All Sound Off ends it.
       - The line under Trigger says what will happen: "Plays once from bar 1", "Repeats every 4 bars from bar 1", "Each note plays it once" or "Loops while a note is held".
 11. **Preview.** The round play button plays the drawing from its start, whatever the trigger, even while the DAW is stopped: once (the button then turns itself off), or on a loop with **Repeat** on until you press it again.
-12. **Bounce WAV.** **Bounce WAV** renders one pass of the drawing to a WAV file in the background, with your Level. A chip appears with the file's name, such as **FreqArt HELLO 14-03-27.wav** (the drawing's first text, or "Drawing", and the time): drag it into your DAW, or click **Save...** to keep a copy where you want it. From then on the file keeps up with you: change the drawing, the length, the tempo or the level and the chip says **Updating...** (it cannot be dragged then) until a new file, under a new name, is ready a moment later. So whatever you drag is what the canvas shows, and your DAW never mistakes it for an earlier bounce (DAWs remember audio files by name). Earlier bounces you dragged out stay where the DAW found them; FreqArt clears its bounce files away after a day, so use **Save...** for anything you want to keep.
+12. **Bounce WAV.** **Bounce WAV** renders one pass of the drawing to a WAV file in the background, with your Level. A chip appears with the file's name, such as **ArtFreq HELLO 14-03-27.wav** (the drawing's first text, or "Drawing", and the time): drag it into your DAW, or click **Save...** to keep a copy where you want it. From then on the file keeps up with you: change the drawing, the length, the tempo or the level and the chip says **Updating...** (it cannot be dragged then) until a new file, under a new name, is ready a moment later. So whatever you drag is what the canvas shows, and your DAW never mistakes it for an earlier bounce (DAWs remember audio files by name). Earlier bounces you dragged out stay where the DAW found them; ArtFreq clears its bounce files away after a day, so use **Save...** for anything you want to keep.
 
 The **?** button shows these steps inside the plug-in.
 
-## FreqArt FX: the drawing in a song
+## ArtFreq FX: the drawing in a song
 
-On a full song the drawing's own sound can get lost in everything else going on. FreqArt FX works the other way round: it **mutes the drawing's frequencies in the song** (Carve), so the drawing shows as dark shapes in the song's spectrogram.
+On a full song the drawing's own sound can get lost in everything else going on. ArtFreq FX works the other way round: it **mutes the drawing's frequencies in the song** (Carve), so the drawing shows as dark shapes in the song's spectrogram.
 
-1. **Put FreqArt FX on an audio track, a bus or the master** (it is listed under audio effects, as "FreqArt FX" by AnyMeans, category Fx / Filter). It takes mono or stereo.
-2. **Open a spectrogram after it**: MiniMeters on the master, as for FreqArt. Match the analyser in Settings as usual.
-3. **Draw** as in FreqArt. The canvas shows the drawing over a stand-in for a loud song (a master at about −10 dBFS RMS), as the analyser will show it in the chosen mode, in the Draw modes with the sines at the Level you set; the **Live** view shows what actually comes out (your song, carved).
+1. **Put ArtFreq FX on an audio track, a bus or the master** (it is listed under audio effects, as "ArtFreq FX" by AnyMeans, category Fx / Filter). It takes mono or stereo.
+2. **Open a spectrogram after it**: MiniMeters on the master, as for ArtFreq. Match the analyser in Settings as usual.
+3. **Draw** as in ArtFreq. The canvas shows the drawing over a stand-in for a loud song (a master at about −10 dBFS RMS), as the analyser will show it in the chosen mode, in the Draw modes with the sines at the Level you set; the **Live** view shows what actually comes out (your song, carved).
 4. **Choose the Mode and the Depth** at the top of the window:
    - **Carve** (the default): the drawing's frequencies are muted: dark shapes in the song.
-   - **Carve + Draw**: carved a little wider than the drawing (4 canvas rows and about 35 Hz above and below it, about 60 ms before and after it; a sixteenth of the length for drawings under a second), and FreqArt's sines played in the hole: the drawing shows bright with a dark edge, even in a dense mix.
+   - **Carve + Draw**: carved a little wider than the drawing (4 canvas rows and about 35 Hz above and below it, about 60 ms before and after it; a sixteenth of the length for drawings under a second), and ArtFreq's sines played in the hole: the drawing shows bright with a dark edge, even in a dense mix.
    - **Stencil**: the opposite of Carve: only the drawing's frequencies pass, everything else is muted.
    - **Draw**: the drawing's sines on top of the audio, which is left as it is. On a loud master they stand only a few dB above the song at the default Level (the canvas shows how far): raise **Level** for more (mind the peaks, below), or use Carve + Draw.
    - **Depth** (−120 to 0 dB, default −80 dB) is how far carved frequencies drop. −80 dB looks black in MiniMeters even over a master's bass and kick; −20 to −40 dB darkens without silencing. Greyed in Draw, which carves nothing. Click it to type a value, or drag it.
    - Mode and Depth can be automated, and switching modes or moving Depth while playing never clicks (the carve crossfades from frame to frame, the sines fade in and out).
    - Density, Contrast, Level and Lows shape the sines, so they only do something in Carve + Draw and Draw (greyed otherwise). Level is the sines' level: the song keeps its own.
-5. **Press play in your DAW.** Length, Trigger, Repeat, the start bar and Tempo work exactly as in FreqArt: with Transport and Repeat off, the drawing is carved once, from bar 1 (or the bar under Trigger) for one Length. **Outside the pass the song passes through untouched**: before and after a single pass, while the DAW is stopped and with nothing drawn (also in Stencil), with 5 ms fades into and out of the carving.
-6. **Bounce the track in your DAW.** Carving changes your song, which only the DAW has: export the mix, freeze the track or bounce it in place there. In Carve and Stencil the Export column says so; in Carve + Draw and Draw, **Bounce WAV** still renders the drawing's sines alone, as in FreqArt.
+5. **Press play in your DAW.** Length, Trigger, Repeat, the start bar and Tempo work exactly as in ArtFreq: with Transport and Repeat off, the drawing is carved once, from bar 1 (or the bar under Trigger) for one Length. **Outside the pass the song passes through untouched**: before and after a single pass, while the DAW is stopped and with nothing drawn (also in Stencil), with 5 ms fades into and out of the carving.
+6. **Bounce the track in your DAW.** Carving changes your song, which only the DAW has: export the mix, freeze the track or bounce it in place there. In Carve and Stencil the Export column says so; in Carve + Draw and Draw, **Bounce WAV** still renders the drawing's sines alone, as in ArtFreq.
 
-**Latency.** FreqArt FX analyses the audio in frames of 85 ms, so its output comes 85.3 ms (4096 samples at 48 kHz) after its input, in every mode, at every sample rate and also when the host bypasses it. It reports this to the DAW, which delays everything else to match (plug-in delay compensation), so the song stays in time; when you play live through it you hear it 85 ms late. The sines of the Draw modes are delayed as much, so they land in their holes.
+**Latency.** ArtFreq FX analyses the audio in frames of 85 ms, so its output comes 85.3 ms (4096 samples at 48 kHz) after its input, in every mode, at every sample rate and also when the host bypasses it. It reports this to the DAW, which delays everything else to match (plug-in delay compensation), so the song stays in time; when you play live through it you hear it 85 ms late. The sines of the Draw modes are delayed as much, so they land in their holes.
 
-**Peaks.** FreqArt FX does not limit the song: outside the pass it is passed on exactly as it came in. Carving changes the phases a limiter set the peaks with, and the Draw modes add their sines, so on a master limited to −0.3 dBFS the output can go over 0 dBFS (measured on pink noise at −11 dBFS RMS, default drawing and Level: Carve +0.8 dBFS, Carve + Draw +1.8, Draw +2.2; Stencil only takes away). Put FreqArt FX **before the final limiter** on the master (with MiniMeters after both), or leave that much headroom; otherwise a bounce clips during the pass.
+**Peaks.** ArtFreq FX does not limit the song: outside the pass it is passed on exactly as it came in. Carving changes the phases a limiter set the peaks with, and the Draw modes add their sines, so on a master limited to −0.3 dBFS the output can go over 0 dBFS (measured on pink noise at −11 dBFS RMS, default drawing and Level: Carve +0.8 dBFS, Carve + Draw +1.8, Draw +2.2; Stencil only takes away). Put ArtFreq FX **before the final limiter** on the master (with MiniMeters after both), or leave that much headroom; otherwise a bounce clips during the pass.
 
 **Preview** runs the drawing's pass from its start on whatever audio comes in, even while the DAW is stopped (once, or on a loop with Repeat), and plays the sines in the Draw modes. Most DAWs keep feeding audio to effects while stopped (a track monitoring its input, the master with other plug-ins playing); with silence coming in, Carve and Stencil have nothing to show, and the Live view stays dark.
 
-**MIDI.** FreqArt FX accepts MIDI, so Trigger = MIDI works where the DAW sends MIDI to an audio effect: **Reaper** (MIDI on the track reaches its effects), **Bitwig**, **Cubase** (pick FreqArt FX as a MIDI track's output) and **Studio One** (route a note track to it). **FL Studio** can too (in the effect's wrapper, set its MIDI input port, and send a MIDI Out channel or controller to that port). **Ableton Live does not send MIDI to audio effects**: use Transport there, which needs no MIDI.
+**MIDI.** ArtFreq FX accepts MIDI, so Trigger = MIDI works where the DAW sends MIDI to an audio effect: **Reaper** (MIDI on the track reaches its effects), **Bitwig**, **Cubase** (pick ArtFreq FX as a MIDI track's output) and **Studio One** (route a note track to it). **FL Studio** can too (in the effect's wrapper, set its MIDI input port, and send a MIDI Out channel or controller to that port). **Ableton Live does not send MIDI to audio effects**: use Transport there, which needs no MIDI.
 
 ### Moving between the two
 
-FreqArt and FreqArt FX save their state in the same format, with FreqArt FX adding Mode and Depth. But a DAW keeps presets and saved states per plug-in (the two have different plug-in IDs), and none of the DAWs named here (Ableton Live, Cubase, Studio One, Bitwig, Reaper, FL Studio) loads one's preset into the other, so a drawing made in FreqArt does not open in FreqArt FX: draw it again there, or add the same pictures and text. (Should a host load one's state into the other, the drawing and the shared settings come along, with Mode and Depth at Carve and −80 dB in FreqArt FX.)
+ArtFreq and ArtFreq FX save their state in the same format, with ArtFreq FX adding Mode and Depth. But a DAW keeps presets and saved states per plug-in (the two have different plug-in IDs), and none of the DAWs named here (Ableton Live, Cubase, Studio One, Bitwig, Reaper, FL Studio) loads one's preset into the other, so a drawing made in ArtFreq does not open in ArtFreq FX: draw it again there, or add the same pictures and text. (Should a host load one's state into the other, the drawing and the shared settings come along, with Mode and Depth at Carve and −80 dB in ArtFreq FX.)
 
 ## Tips
 
 - **The highs show the most detail.** An analyser's frequency bins are evenly spaced in hertz, so on a log scale the top octaves get many bins each and stay sharp. Text and fine pictures read best in the **High** band.
-- **The lowest octaves are coarse in every analyser.** The bottom octaves get only a few bins each, so shapes there come out blurred whatever made them. Keep low-band art big and simple. With **Lows** on **Smooth** the shapes stay filled; on **Stripes** FreqArt keeps its lines there at least 25 Hz apart (closer lines beat against each other and pulse on the analyser), which a long FFT shows as stripes.
-- **Keep Level modest if you mix FreqArt under music.** A spectrogram shows quiet sounds clearly, and a drawing full of highs is easy to hear. Turn Level down until it sits where you want it in the mix, then check that the drawing still shows.
+- **The lowest octaves are coarse in every analyser.** The bottom octaves get only a few bins each, so shapes there come out blurred whatever made them. Keep low-band art big and simple. With **Lows** on **Smooth** the shapes stay filled; on **Stripes** ArtFreq keeps its lines there at least 25 Hz apart (closer lines beat against each other and pulse on the analyser), which a long FFT shows as stripes.
+- **Keep Level modest if you mix ArtFreq under music.** A spectrogram shows quiet sounds clearly, and a drawing full of highs is easy to hear. Turn Level down until it sits where you want it in the mix, then check that the drawing still shows.
 - **Fit the length to the screen.** If your spectrogram shows, say, 8 seconds across its width, a drawing that lasts about 8 seconds fits on screen in one piece.
 - **Big solid shapes are loud.** Outline text, or an image in Outline mode, draws the same shape with much less sound.
 - **Density:** raise it for solid shapes, lower it for a scan-line look.
@@ -86,9 +88,9 @@ FreqArt and FreqArt FX save their state in the same format, with FreqArt FX addi
 
 | Control | What it does |
 | --- | --- |
-| **Mode** (FreqArt FX) | **Carve**, **Carve + Draw**, **Stencil** or **Draw**: what happens to the audio passing through (see [FreqArt FX](#freqart-fx-the-drawing-in-a-song)). Automatable. |
-| **Depth** (FreqArt FX) | −120 to 0 dB, default −80 dB: how far carved frequencies drop. Click to type, drag to change. Automatable. |
-| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats (in the song's time signature) along the bottom: the song's own bar numbers when it plays once at a bar (Transport, Repeat off). **Live** shows a scrolling spectrogram of FreqArt's own output, on the same scale, wide enough for a whole pass of the drawing (a quarter more than one pass, from 4 to 20 seconds). |
+| **Mode** (ArtFreq FX) | **Carve**, **Carve + Draw**, **Stencil** or **Draw**: what happens to the audio passing through (see [ArtFreq FX](#artfreq-fx-the-drawing-in-a-song)). Automatable. |
+| **Depth** (ArtFreq FX) | −120 to 0 dB, default −80 dB: how far carved frequencies drop. Click to type, drag to change. Automatable. |
+| **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats (in the song's time signature) along the bottom: the song's own bar numbers when it plays once at a bar (Transport, Repeat off). **Live** shows a scrolling spectrogram of ArtFreq's own output, on the same scale, wide enough for a whole pass of the drawing (a quarter more than one pass, from 4 to 20 seconds). |
 | **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, a drag, a scroll over a bar, holding down an arrow key, or one session of typing in a text box is one step. |
 | **?** | The how-to, inside the window. |
 | **Gear** | Settings: match your analyser (Scale, Low, High, Slope), window size, and Reset drawing. |
@@ -130,7 +132,7 @@ Hiding, reordering and deleting are one undo step each; selecting is none (nor i
 | --- | --- | --- | --- |
 | **Density** | 16–1024 lines | 256 | Sine lines across the height of the canvas. |
 | **Contrast** | 12–72 dB | 40 dB | Distance in level between the brightest and the faintest parts of the drawing. |
-| **Level** | −60 to 0 dB | −6 dB | Output volume. A safety clipper keeps FreqArt's output from going over 0 dBFS. In FreqArt FX it is the sines' level (Carve + Draw and Draw) and the clipper acts on the sines only: the song keeps its own level and peaks, and the sum can go over 0 dBFS (see [Peaks](#freqart-fx-the-drawing-in-a-song)). |
+| **Level** | −60 to 0 dB | −6 dB | Output volume. A safety clipper keeps ArtFreq's output from going over 0 dBFS. In ArtFreq FX it is the sines' level (Carve + Draw and Draw) and the clipper acts on the sines only: the song keeps its own level and peaks, and the sum can go over 0 dBFS (see [Peaks](#artfreq-fx-the-drawing-in-a-song)). |
 | **Length** | 1 beat to 32 bars | 4 bars | How long one pass of the drawing lasts. |
 | **Trigger** | Transport, MIDI | Transport | When the drawing plays (see step 10 above). |
 | **Repeat** | on/off | off | Off: it plays once (from a bar of the song, or per note). On: it loops while the DAW plays, or while a note is held. |
@@ -152,9 +154,9 @@ Hiding, reordering and deleting are one undo step each; selecting is none (nor i
 
 Knobs: drag to turn, hold Shift for fine adjustment, double-click to reset, double-click the value to type one. The window can also be resized from its corner (75–200 %, fixed proportions); its size is saved with the session, as are the drawing (pictures included) and every setting.
 
-Automation: Level, Length, Trigger, Repeat, Start bar, Tempo and BPM can be automated (and in FreqArt FX Mode and Depth) (in the automation list Trigger reads Transport, MIDI note). Density, Contrast and Lows cannot: the sound is rebuilt from them about 25 times a second by the clock, not in step with the song, so in a bounce faster than real time their changes would land in the wrong place.
+Automation: Level, Length, Trigger, Repeat, Start bar, Tempo and BPM can be automated (and in ArtFreq FX Mode and Depth) (in the automation list Trigger reads Transport, MIDI note). Density, Contrast and Lows cannot: the sound is rebuilt from them about 25 times a second by the clock, not in step with the song, so in a bounce faster than real time their changes would land in the wrong place.
 
-Projects saved before Lows existed (FreqArt 0.1 and 0.2) open with Lows on **Stripes**, so they look and sound as they did; new instances start on **Smooth**. Projects saved with FreqArt 0.1 open with Repeat off and from bar 1, so a Transport drawing that looped through the song now plays once from bar 1: turn **Repeat** on to have it loop again. The old **Free loop** trigger, which played by itself, opens as Transport with Repeat on. Automation recorded on the old Trigger is not rewritten: there, Free loop now reads as MIDI note.
+Projects saved before Lows existed (ArtFreq 0.1 and 0.2) open with Lows on **Stripes**, so they look and sound as they did; new instances start on **Smooth**. Projects saved with ArtFreq 0.1 open with Repeat off and from bar 1, so a Transport drawing that looped through the song now plays once from bar 1: turn **Repeat** on to have it loop again. The old **Free loop** trigger, which played by itself, opens as Transport with Repeat on. Automation recorded on the old Trigger is not rewritten: there, Free loop now reads as MIDI note.
 
 ## How it works
 
@@ -165,7 +167,7 @@ Projects saved before Lows existed (FreqArt 0.1 and 0.2) open with Lows on **Str
 - **Timing.** The position in the drawing comes from the DAW's transport (a single pass at a bar of the song, or looping) or from MIDI notes (once each, or looping while held), at the host's tempo or yours.
 - **Real time.** The canvas and the sine plan are rebuilt on the message thread within a few tens of milliseconds of each edit and handed to the audio thread without locks; the audio thread never allocates or waits.
 
-**Why sound and not MIDI?** A spectrogram shows the frequencies present at each moment. MIDI notes can only make the few pitches of a synth patch, on a semitone grid, with harmonics drawn on top; pictures need hundreds of exactly placed frequencies. So FreqArt *is* the instrument: MIDI is used as a trigger, and the drawing can also be bounced to a WAV file.
+**Why sound and not MIDI?** A spectrogram shows the frequencies present at each moment. MIDI notes can only make the few pitches of a synth patch, on a semitone grid, with harmonics drawn on top; pictures need hundreds of exactly placed frequencies. So ArtFreq *is* the instrument: MIDI is used as a trigger, and the drawing can also be bounced to a WAV file.
 
 ## Install
 
@@ -173,23 +175,23 @@ Downloads are on the repository's **Releases** page, under **Assets**. Every suc
 
 ### macOS: installer
 
-Download `FreqArt-<version>-macOS.pkg` and open it. It installs both plug-ins, `FreqArt.vst3` (the instrument) and `FreqArt FX.vst3` (the effect), into `/Library/Audio/Plug-Ins/VST3/` (**Customize** can leave one out). Then rescan plug-ins in your DAW. It runs on Apple Silicon and Intel Macs with macOS 10.15 or later.
+Download `ArtFreq-<version>-macOS.pkg` and open it. It installs both plug-ins, `ArtFreq.vst3` (the instrument) and `ArtFreq FX.vst3` (the effect), into `/Library/Audio/Plug-Ins/VST3/` (**Customize** can leave one out). Then rescan plug-ins in your DAW. It runs on Apple Silicon and Intel Macs with macOS 10.15 or later.
 
 The installer is not notarised by Apple, so macOS will not open it with a double-click the first time:
 
-- **macOS 15 and later:** double-click it and close the warning, then go to **System Settings > Privacy & Security**, scroll down to the message about the FreqArt installer and click **Open Anyway**, then confirm.
+- **macOS 15 and later:** double-click it and close the warning, then go to **System Settings > Privacy & Security**, scroll down to the message about the ArtFreq installer and click **Open Anyway**, then confirm.
 - **Earlier versions:** right-click (or Control-click) it, choose **Open**, then **Open** again.
 
 At the end the installer offers to move itself to the Trash.
 
 ### Manual install
 
-Download `FreqArt-VST3-macOS.zip`, unzip it, and copy `FreqArt.vst3` and `FreqArt FX.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (just for you) or `/Library/Audio/Plug-Ins/VST3/` (every user). Then rescan plug-ins in your DAW.
+Download `ArtFreq-VST3-macOS.zip`, unzip it, and copy `ArtFreq.vst3` and `ArtFreq FX.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (just for you) or `/Library/Audio/Plug-Ins/VST3/` (every user). Then rescan plug-ins in your DAW.
 
 A manually copied plug-in keeps the download quarantine flag. If the DAW refuses to load them, clear the flag once:
 
 ```sh
-xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3 "$HOME/Library/Audio/Plug-Ins/VST3/FreqArt FX.vst3"
+xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 "$HOME/Library/Audio/Plug-Ins/VST3/ArtFreq FX.vst3"
 ```
 
 Windows and Linux builds are paused until the macOS version is finished.
@@ -203,23 +205,23 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
 ```
 
-The plug-ins are written to `build/FreqArt_artefacts/Release/VST3/FreqArt.vst3` (target `FreqArt`) and `build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3` (target `FreqArtFX`; mind the space when you script it). For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring.
+The plug-ins are written to `build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3` (target `ArtFreq`) and `build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3` (target `ArtFreqFX`; mind the space when you script it). For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring.
 
 | CMake option | Default | Purpose |
 | --- | --- | --- |
-| `FREQART_BUILD_TESTS` | ON | Build `FreqArtTests`. |
-| `FREQART_BUILD_TOOLS` | ON | Build the `FreqArtSnapshot` interface snapshot tool, the `FreqArtLab` lows lab and the `FreqArtCarveLab` carving lab. |
-| `FREQART_COPY_PLUGIN_AFTER_BUILD` | OFF | Copy the plug-ins into your VST3 folder after each build. |
-| `FREQART_ENABLE_LTO` | ON | Link-time optimisation in Release builds (turn it off for faster development builds). |
+| `ARTFREQ_BUILD_TESTS` | ON | Build `ArtFreqTests`. |
+| `ARTFREQ_BUILD_TOOLS` | ON | Build the `ArtFreqSnapshot` interface snapshot tool, the `ArtFreqLab` lows lab and the `ArtFreqCarveLab` carving lab. |
+| `ARTFREQ_COPY_PLUGIN_AFTER_BUILD` | OFF | Copy the plug-ins into your VST3 folder after each build. |
+| `ARTFREQ_ENABLE_LTO` | ON | Link-time optimisation in Release builds (turn it off for faster development builds). |
 | `FETCHCONTENT_SOURCE_DIR_JUCE` | *(download)* | Use a local JUCE checkout instead of downloading it. |
 
 To build the macOS installer from a build folder (macOS only):
 
 ```sh
-installer/macos/build-pkg.sh build out        # writes out/FreqArt-<version>-macOS.pkg, with both plug-ins
+installer/macos/build-pkg.sh build out        # writes out/ArtFreq-<version>-macOS.pkg, with both plug-ins
 ```
 
-The version comes from `project(FreqArt VERSION ...)` in `CMakeLists.txt` unless given as a third argument. It needs a Release build of both targets (`FreqArt` and `FreqArtFX`). JUCE signs a plug-in before it writes `moduleinfo.json` into it, which breaks the signature's seal; the script signs its copies again (ad hoc) when needed.
+The version comes from `project(ArtFreq VERSION ...)` in `CMakeLists.txt` unless given as a third argument. It needs a Release build of both targets (`ArtFreq` and `ArtFreqFX`). JUCE signs a plug-in before it writes `moduleinfo.json` into it, which breaks the signature's seal; the script signs its copies again (ad hoc) when needed.
 
 On Linux, install the JUCE dependencies first:
 
@@ -234,35 +236,35 @@ sudo apt-get install libasound2-dev libx11-dev libxext-dev libxrandr-dev \
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-or run `build/FreqArtTests_artefacts/Release/FreqArtTests [filter]` to run only the tests whose names contain `filter`. `FreqArtTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); Smooth lows (the lines the comb replaces, its loudness grid and softened edges, thin strokes held steady on lines, no clicks or rumble where the sines fade in at the bottom, its power staying in the drawn band, determinism, crossfades, speed, the canvas showing the band filled); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, the single pass from a start bar and how the DAW's position, relocations, loops, time-signature changes and a typed tempo play it, MIDI one-shots and how they end, MIDI loops held by keys, preview once and looping, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas, and Smooth must fill the lows where Stripes leaves gaps at FFT sizes 8192 and 16384, read closer to the drawing and not pulse; the processor (state round trip, Lows on Smooth for new instances and on Stripes for projects saved before it, switching Lows while playing without a click, projects saved before Repeat and the Free loop trigger, a single pass and a held loop, a single pass through time-signature changes and at a typed tempo, Preview following Repeat, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export (and its file names); spectral carving (the mask plan and its halo, the carving engines: transparency, depth, Stencil, latency, block sizes, the gate, thin strokes, column edges, the halo per mode, the drawing read over a hop's callbacks and the plan a frame began with); FreqArt FX through the real processor (its layout and parameters, the latency at every rate and in bypass, the audio untouched outside the pass and with nothing drawn, Carve and Stencil on a sine in a drawn band, Carve + Draw's wider hole and Level, Draw adding exactly the instrument's sound as late as the audio, mode and depth changes without clicks, states moving between the two plug-ins, mono and stereo, block sizes, MIDI and Preview, a host's flush, the masks a frame still reads kept alive, the peaks on a limited master, and the worst callback at 48 to 192 kHz); and the editor, driven with synthetic mouse, wheel and key events (bounce files and the export following the drawing, undo steps, selecting and placing objects, the layer list and hidden layers, picking overlapping objects, the live view's span, pictures that cannot be read; in FreqArt FX the header's Mode and Depth, what each mode greys, the export's hint, the help fitting the window and the canvas in each mode and following Level). The editor tests need a display: on Linux run it under `xvfb-run -a`.
+or run `build/ArtFreqTests_artefacts/Release/ArtFreqTests [filter]` to run only the tests whose names contain `filter`. `ArtFreqTests` needs no host. It checks the frequency-scale maths; the document's save and load; the image modes (auto-invert on a white background, transparency, outline); text rendering; compositing and placement; the plan (frequencies, spacing, normalisation, contrast, slope); Smooth lows (the lines the comb replaces, its loudness grid and softened edges, thin strokes held steady on lines, no clicks or rumble where the sines fade in at the bottom, its power staying in the drawn band, determinism, crossfades, speed, the canvas showing the band filled); the plan exchange between threads; the engine (frequency of a single line, silence, click-free crossfades and jumps, the aliasing guard, real-time speed); the playhead (transport positions, tempo changes and ramps, bar lines, the single pass from a start bar and how the DAW's position, relocations, loops, time-signature changes and a typed tempo play it, MIDI one-shots and how they end, MIDI loops held by keys, preview once and looping, jumps); end to end, a canvas rendered to audio and analysed back must match the canvas, and Smooth must fill the lows where Stripes leaves gaps at FFT sizes 8192 and 16384, read closer to the drawing and not pulse; the processor (state round trip, Lows on Smooth for new instances and on Stripes for projects saved before it, switching Lows while playing without a click, projects saved before Repeat and the Free loop trigger, a single pass and a held loop, a single pass through time-signature changes and at a typed tempo, Preview following Repeat, MIDI and panic, bypass fades, the time signature, level and clipper bounds); the WAV export (and its file names); spectral carving (the mask plan and its halo, the carving engines: transparency, depth, Stencil, latency, block sizes, the gate, thin strokes, column edges, the halo per mode, the drawing read over a hop's callbacks and the plan a frame began with); ArtFreq FX through the real processor (its layout and parameters, the latency at every rate and in bypass, the audio untouched outside the pass and with nothing drawn, Carve and Stencil on a sine in a drawn band, Carve + Draw's wider hole and Level, Draw adding exactly the instrument's sound as late as the audio, mode and depth changes without clicks, states moving between the two plug-ins, mono and stereo, block sizes, MIDI and Preview, a host's flush, the masks a frame still reads kept alive, the peaks on a limited master, and the worst callback at 48 to 192 kHz); and the editor, driven with synthetic mouse, wheel and key events (bounce files and the export following the drawing, undo steps, selecting and placing objects, the layer list and hidden layers, picking overlapping objects, the live view's span, pictures that cannot be read; in ArtFreq FX the header's Mode and Depth, what each mode greys, the export's hint, the help fitting the window and the canvas in each mode and following Level). The editor tests need a display: on Linux run it under `xvfb-run -a`.
 
 ### Snapshot tool
 
-`FreqArtSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the layer list, Lows on Stripes, the brush, the settings and help panels, Repeat and the start bar, other window sizes; and FreqArt FX in each mode, its live view of a carved stand-in song, its help and window sizes, as `freqart-fx-*.png`) to PNG files, without a host, and checks what the controls do along the way. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a FreqArtSnapshot out`).
+`ArtFreqSnapshot <folder> [pixel-scale]` renders the editor in its main states (canvas and live view, selected objects, the layer list, Lows on Stripes, the brush, the settings and help panels, Repeat and the start bar, other window sizes; and ArtFreq FX in each mode, its live view of a carved stand-in song, its help and window sizes, as `artfreq-fx-*.png`) to PNG files, without a host, and checks what the controls do along the way. On macOS it runs as it is; on Linux run it under a virtual display (`xvfb-run -a ArtFreqSnapshot out`).
 
 ### Continuous integration
 
-Every push builds both universal macOS plug-ins on GitHub Actions, runs the tests natively and again on the Intel half under Rosetta, renders the interface snapshots of both (artifact **FreqArt-Snapshots**), validates both plug-ins with pluginval at strictness 10, builds the installer and test-installs it, then publishes everything as the release `v<version>`.
+Every push builds both universal macOS plug-ins on GitHub Actions, runs the tests natively and again on the Intel half under Rosetta, renders the interface snapshots of both (artifact **ArtFreq-Snapshots**), validates both plug-ins with pluginval at strictness 10, builds the installer and test-installs it, then publishes everything as the release `v<version>`.
 
 ## Layout
 
 | Path | Contents |
 | --- | --- |
 | `src/core/` | The drawing: document, text, pictures, compositing, the frequency scale, fonts, and the plan that turns the canvas into sine lines. No audio-thread code, no UI. |
-| `src/dsp/` | Everything the audio thread runs (the engine, the playhead tracker, the plan exchange, the spectral carvers of FreqArt FX), plus the WAV export and the live analyser. |
+| `src/dsp/` | Everything the audio thread runs (the engine, the playhead tracker, the plan exchange, the spectral carvers of ArtFreq FX), plus the WAV export and the live analyser. |
 | `src/ui/` | The editor: header, toolbar, canvas, inspector, live view, footer, settings and help. |
 | `src/Parameters.*` | Parameter ids, ranges and defaults, shared by the processor, the editor and the tests. |
 | `src/PluginProcessor.*` | The host-facing plug-in, both variants (instrument and effect): parameters, state, undo, plan and mask building, MIDI and transport, carving. |
-| `src/plugin/` | One entry point per plug-in target (`createPluginFilter`): the only code that differs between FreqArt and FreqArt FX. |
-| `tests/` | `FreqArtTests`. |
-| `tools/` | The interface snapshot tool, the lows lab (`FreqArtLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage) and the carving lab (`FreqArtCarveLab`: plays songs through a carving engine with test drawings and measures what an analyser shows). |
+| `src/plugin/` | One entry point per plug-in target (`createPluginFilter`): the only code that differs between ArtFreq and ArtFreq FX. |
+| `tests/` | `ArtFreqTests`. |
+| `tools/` | The interface snapshot tool, the lows lab (`ArtFreqLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage) and the carving lab (`ArtFreqCarveLab`: plays songs through a carving engine with test drawings and measures what an analyser shows). |
 | `assets/fonts/` | The embedded fonts and their licences. |
 | `installer/macos/` | The macOS installer (both plug-ins): `build-pkg.sh`, its distribution file, pages and postinstall script. |
 | `docs/DESIGN.md` | The design. |
 
 ## Licences
 
-- **FreqArt** is © 2026 AnyMeans and released under the GNU AGPLv3; see `LICENSE`.
-- **JUCE 8** is dual-licensed: AGPLv3, or a commercial licence from JUCE. Distributing FreqArt without publishing its source under the AGPLv3 requires a JUCE licence.
+- **ArtFreq** is © 2026 AnyMeans and released under the GNU AGPLv3; see `LICENSE`.
+- **JUCE 8** is dual-licensed: AGPLv3, or a commercial licence from JUCE. Distributing ArtFreq without publishing its source under the AGPLv3 requires a JUCE licence.
 - The **VST3 SDK** bundled with JUCE is used under its own licence. VST is a trademark of Steinberg Media Technologies GmbH.
 - The embedded fonts (Inter, Space Grotesk, Jost, Fraunces, DM Mono) are used under the SIL Open Font License 1.1; see `assets/fonts/OFL-*.txt`.

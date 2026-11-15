@@ -12,7 +12,7 @@
 #include <array>
 #include <cmath>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
@@ -94,7 +94,7 @@ namespace
 //==============================================================================
 struct CanvasView::Impl
 {
-    Impl (CanvasView& ownerToUse, FreqArtProcessor& processorToUse, EditorState& stateToUse)
+    Impl (CanvasView& ownerToUse, ArtFreqProcessor& processorToUse, EditorState& stateToUse)
         : owner (ownerToUse), processor (processorToUse), state (stateToUse),
           lengthParameter (processor.getParameters().getRawParameterValue (params::id::length))
     {
@@ -533,7 +533,7 @@ struct CanvasView::Impl
         const auto newSignature = processor.getTimeSignature();
         const auto newFirstBar = processor.getSinglePassStartBar();
 
-        // FreqArt FX: the mode, the depth and the level of the sines (against the stand-in song)
+        // ArtFreq FX: the mode, the depth and the level of the sines (against the stand-in song)
         // change what the canvas shows.
         const auto newMode = processor.getEffectMode();
         const auto newDepth = processor.getDepthDb();
@@ -585,7 +585,7 @@ struct CanvasView::Impl
                                           juce::roundToInt (a.getWidth() * pixelScale),
                                           juce::roundToInt (a.getHeight() * pixelScale), pixelScale);
 
-            // FreqArt FX: over a stand-in for the song, as the mode will show it.
+            // ArtFreq FX: over a stand-in for the song, as the mode will show it.
             if (processor.isEffect())
                 picture = effectPreview.get (planImage.getPixelLevels(), planImage.getRenderCount(), effectMode, depthDb,
                                              EffectPreviewImage::sinesDbFor (planImage.getLoudestAmplitude(), outputGain),
@@ -865,12 +865,12 @@ struct CanvasView::Impl
     // ---- state ---------------------------------------------------------------------------
 
     CanvasView& owner;
-    FreqArtProcessor& processor;
+    ArtFreqProcessor& processor;
     EditorState& state;
     std::atomic<float>* lengthParameter = nullptr;
 
     CanvasPlanImage planImage;
-    EffectPreviewImage effectPreview;     // FreqArt FX: the drawing as the effect's output shows it
+    EffectPreviewImage effectPreview;     // ArtFreq FX: the drawing as the effect's output shows it
     std::shared_ptr<const ArtPlan> plan;  // kept alive while it is shown
     FrequencyScale scale;
     EffectMode effectMode = EffectMode::carve;
@@ -932,7 +932,7 @@ struct CanvasView::Impl
 };
 
 //==============================================================================
-CanvasView::CanvasView (FreqArtProcessor& processor, EditorState& state)
+CanvasView::CanvasView (ArtFreqProcessor& processor, EditorState& state)
     : impl (std::make_unique<Impl> (*this, processor, state))
 {
     setOpaque (true);
@@ -1287,4 +1287,4 @@ void CanvasView::timerCallback()
     impl->pollParameters();
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

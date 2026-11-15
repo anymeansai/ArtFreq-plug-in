@@ -8,7 +8,7 @@
 
 #include <functional>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
 /** A row of mutually exclusive options (e.g. Low | Mid | High | Full). Nothing is selected if
@@ -92,4 +92,4 @@ private:
     bool flat = false;
 };
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

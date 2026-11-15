@@ -1,22 +1,22 @@
 #pragma once
 
-// The header bar: wordmark, Canvas | Live, undo / redo, help and settings; in FreqArt FX also
+// The header bar: wordmark, Canvas | Live, undo / redo, help and settings; in ArtFreq FX also
 // the effect's Mode and Depth. See docs/DESIGN.md, "Header".
 
 #include "Widgets.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 
 class Header final : public juce::Component
 {
 public:
-    /** forEffect: FreqArt FX's header ("FreqArt FX", room for the effect's controls). */
+    /** forEffect: ArtFreq FX's header ("ArtFreq FX", room for the effect's controls). */
     explicit Header (bool forEffect = false);
 
-    /** FreqArt FX: puts the effect's Mode and Depth in the header, between Canvas | Live (which
+    /** ArtFreq FX: puts the effect's Mode and Depth in the header, between Canvas | Live (which
         then moves next to the wordmark) and undo / redo. */
     void setEffectControls (juce::Component* controls, int idealWidth);
 
@@ -44,4 +44,4 @@ private:
 /** "Cmd+Z" on macOS, "Ctrl+Z" elsewhere: for tooltips. */
 juce::String shortcutText (const juce::String& keys);
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

@@ -6,7 +6,7 @@
 
 #include <cmath>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
@@ -29,7 +29,7 @@ namespace
     }
 
     // The colour window, in dBFS as the analyser reads them (a full-scale sine is 0 dB). Tuned
-    // so FreqArt's usual output (Level -6 dB, a few hundred lines) reads like the canvas: its
+    // so ArtFreq's usual output (Level -6 dB, a few hundred lines) reads like the canvas: its
     // loudest lines near the top of the colour map, Contrast 40 dB reaching well into it.
     constexpr float ceilingDb = -29.0f;
     constexpr float floorDb = -89.0f;
@@ -43,7 +43,7 @@ namespace
     double nowSeconds() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
 
     /** The analyser's slope as a choice index, read like the processor reads it. */
-    float slopeOf (FreqArtProcessor& processor)
+    float slopeOf (ArtFreqProcessor& processor)
     {
         const auto* value = processor.getParameters().getRawParameterValue (params::id::slope);
         return value != nullptr ? params::slopeForIndex (juce::roundToInt (value->load())) : 0.0f;
@@ -53,7 +53,7 @@ namespace
 //==============================================================================
 struct LiveView::Impl
 {
-    Impl (LiveView& ownerToUse, FreqArtProcessor& processorToUse)
+    Impl (LiveView& ownerToUse, ArtFreqProcessor& processorToUse)
         : owner (ownerToUse), processor (processorToUse)
     {
         scale = processor.getScale();
@@ -675,7 +675,7 @@ struct LiveView::Impl
     // ---- state ---------------------------------------------------------------------------
 
     LiveView& owner;
-    FreqArtProcessor& processor;
+    ArtFreqProcessor& processor;
     FrequencyScale scale;
     float slope = 0.0f;
     double span = shortestSpan;    // seconds across the view (spanForPass)
@@ -700,12 +700,12 @@ struct LiveView::Impl
 };
 
 //==============================================================================
-LiveView::LiveView (FreqArtProcessor& processor)
+LiveView::LiveView (ArtFreqProcessor& processor)
     : impl (std::make_unique<Impl> (*this, processor))
 {
     setOpaque (true);
     setTitle ("Live spectrogram");
-    setDescription ("FreqArt's own output as a scrolling spectrogram.");
+    setDescription ("ArtFreq's own output as a scrolling spectrogram.");
     setInterceptsMouseClicks (false, false);
 }
 
@@ -758,4 +758,4 @@ void LiveView::timerCallback()
     impl->tick();
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

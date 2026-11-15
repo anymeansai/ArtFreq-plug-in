@@ -8,7 +8,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
 class CanvasView final : public juce::Component,
@@ -20,7 +20,7 @@ public:
     static constexpr int axisWidth = 44;    // frequency labels on the left
     static constexpr int axisHeight = 22;   // bar/beat labels at the bottom
 
-    CanvasView (FreqArtProcessor& processor, EditorState& state);
+    CanvasView (ArtFreqProcessor& processor, EditorState& state);
     ~CanvasView() override;
 
     /** The area the drawing occupies (without the axes), in this component's coordinates. */
@@ -53,4 +53,4 @@ private:
     std::unique_ptr<Impl> impl;
 };
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

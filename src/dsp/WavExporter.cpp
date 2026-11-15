@@ -7,7 +7,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -257,9 +257,9 @@ juce::File reserveBounceFile (const juce::File& folder, const juce::String& labe
     if (folder.createDirectory().failed())
         return {};
 
-    const auto name = label.isEmpty() ? juce::String ("FreqArt")
-                    : label.startsWith ("FreqArt") ? label
-                    : "FreqArt " + label;
+    const auto name = label.isEmpty() ? juce::String ("ArtFreq")
+                    : label.startsWith ("ArtFreq") ? label
+                    : "ArtFreq " + label;
     const auto stem = name + " " + when.formatted ("%H-%M-%S");
 
     for (int number = 1; number < 1000; ++number)
@@ -275,4 +275,4 @@ juce::File reserveBounceFile (const juce::File& folder, const juce::String& labe
     return {};
 }
 
-} // namespace freqart
+} // namespace artfreq

@@ -16,7 +16,7 @@
 #include <cmath>
 #include <set>
 
-using namespace freqart;
+using namespace artfreq;
 
 namespace
 {
@@ -123,7 +123,7 @@ uint8_t paintAt (const ArtDocument& document, int x, int y)
 // Frequency scale
 // ================================================================================================
 
-FREQART_TEST (scaleRoundTrips)
+ARTFREQ_TEST (scaleRoundTrips)
 {
     const std::pair<double, double> ranges[] = { { 20.0, 20000.0 }, { 10.0, 24000.0 }, { 1000.0, 2000.0 }, { 100.0, 5000.0 } };
 
@@ -173,7 +173,7 @@ FREQART_TEST (scaleRoundTrips)
         CHECK (std::isfinite (makeScale (type).toNorm (-10.0)));
 }
 
-FREQART_TEST (scaleSanitised)
+ARTFREQ_TEST (scaleSanitised)
 {
     const auto fine = makeScale (ScaleType::mel, 30.0, 18000.0);
     CHECK (fine.sanitised() == fine);
@@ -194,7 +194,7 @@ FREQART_TEST (scaleSanitised)
     CHECK (std::isfinite (makeScale (ScaleType::log, 5.0, 5.0).toNorm (100.0)));
 }
 
-FREQART_TEST (scaleBandRanges)
+ARTFREQ_TEST (scaleBandRanges)
 {
     const auto log = makeScale (ScaleType::log);
     CHECK_NEAR (bandRange (Band::low, log).low, 40.0, 1.0e-9);
@@ -232,7 +232,7 @@ FREQART_TEST (scaleBandRanges)
     CHECK_NEAR (highOnly.toNorm (bandRange (Band::low, highOnly).low), 0.0, 1.0e-9);
 }
 
-FREQART_TEST (scaleFormatHz)
+ARTFREQ_TEST (scaleFormatHz)
 {
     CHECK (formatHz (20.0) == "20 Hz");
     CHECK (formatHz (250.0) == "250 Hz");
@@ -247,7 +247,7 @@ FREQART_TEST (scaleFormatHz)
     CHECK (formatHz (std::nan ("")) == "0 Hz");
 }
 
-FREQART_TEST (scaleGridFrequencies)
+ARTFREQ_TEST (scaleGridFrequencies)
 {
     const std::vector<double> expectedLog { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
     CHECK (gridFrequencies (makeScale (ScaleType::log)) == expectedLog);
@@ -283,7 +283,7 @@ FREQART_TEST (scaleGridFrequencies)
 // Fonts and text
 // ================================================================================================
 
-FREQART_TEST (fontsAreEmbedded)
+ARTFREQ_TEST (fontsAreEmbedded)
 {
     CHECK (fonts::numArtFonts() == 5);
     CHECK (fonts::artFontName (0) == "Inter Bold");
@@ -302,14 +302,14 @@ FREQART_TEST (fontsAreEmbedded)
     CHECK_GREATER (fonts::art (2, 40.0f).getHeight(), 20.0f);
 }
 
-FREQART_TEST (textPathShape)
+ARTFREQ_TEST (textPathShape)
 {
     CHECK (makeTextPath ("", 0).isEmpty());
     CHECK (makeTextPath ("  \n\t ", 0).isEmpty());
 
     for (int font = 0; font < fonts::numArtFonts(); ++font)
     {
-        const auto path = makeTextPath ("FreqArt", font);
+        const auto path = makeTextPath ("ArtFreq", font);
         CHECK (! path.isEmpty());
 
         const auto bounds = path.getBounds();
@@ -351,13 +351,13 @@ FREQART_TEST (textPathShape)
     CHECK_NEAR (right - left, width * 0.5, width * 0.1);
 }
 
-FREQART_TEST (textRenderCoverage)
+ARTFREQ_TEST (textRenderCoverage)
 {
     const juce::Rectangle<float> area (50.0f, 40.0f, 300.0f, 100.0f);
     const auto areaInt = area.toNearestInt();
 
     auto solid = singleChannel (400, 200);
-    renderTextInto (solid, area, "FreqArt", 0, TextStyle::solid);
+    renderTextInto (solid, area, "ArtFreq", 0, TextStyle::solid);
 
     const auto lit = countAbove (solid, areaInt, 0);
     const auto areaPixels = areaInt.getWidth() * areaInt.getHeight();
@@ -376,7 +376,7 @@ FREQART_TEST (textRenderCoverage)
     CHECK (countAbove (solid, areaInt.withTrimmedLeft (areaInt.getWidth() - inset + 1), 0) == 0);
 
     auto outline = singleChannel (400, 200);
-    renderTextInto (outline, area, "FreqArt", 0, TextStyle::outline);
+    renderTextInto (outline, area, "ArtFreq", 0, TextStyle::outline);
     const auto outlineLit = countAbove (outline, areaInt, 127);
     CHECK_GREATER (outlineLit, areaPixels / 20);
     CHECK_LESS (outlineLit, countAbove (solid, areaInt, 127));
@@ -398,7 +398,7 @@ FREQART_TEST (textRenderCoverage)
     CHECK (countAbove (blank, blank.getBounds(), 0) == 0);
 }
 
-FREQART_TEST (textRenderMaxCombinesAndClips)
+ARTFREQ_TEST (textRenderMaxCombinesAndClips)
 {
     auto image = singleChannel (200, 100);
     image.clear (image.getBounds(), juce::Colour::fromRGBA (0, 0, 0, 100));
@@ -417,17 +417,17 @@ FREQART_TEST (textRenderMaxCombinesAndClips)
     CHECK (countAbove (clipped, { 0, 0, 200, 50 }, 0) == 0);
 }
 
-FREQART_TEST (textRenderTiming)
+ARTFREQ_TEST (textRenderTiming)
 {
     auto target = singleChannel (Canvas::width, Canvas::height);
     const juce::Rectangle<float> area (0.0f, 300.0f, 1024.0f, 340.0f);
-    renderTextInto (target, area, "FreqArt", 0, TextStyle::solid);  // warm up (font loading)
+    renderTextInto (target, area, "ArtFreq", 0, TextStyle::solid);  // warm up (font loading)
 
     constexpr int runs = 10;
     const auto start = std::chrono::steady_clock::now();
 
     for (int i = 0; i < runs; ++i)
-        renderTextInto (target, area, "FreqArt", i % 2, i % 3 == 0 ? TextStyle::outline : TextStyle::solid);
+        renderTextInto (target, area, "ArtFreq", i % 2, i % 3 == 0 ? TextStyle::outline : TextStyle::solid);
 
     const auto ms = millisecondsSince (start) / runs;
     std::printf ("    renderTextInto 1024 x 340: %.2f ms (budget 5 ms)\n", ms);
@@ -438,7 +438,7 @@ FREQART_TEST (textRenderTiming)
 // Pictures
 // ================================================================================================
 
-FREQART_TEST (imageWhiteBackgroundBecomesNegative)
+ARTFREQ_TEST (imageWhiteBackgroundBecomesNegative)
 {
     auto image = makeImage (100, 80, juce::Colours::white);
     {
@@ -468,7 +468,7 @@ FREQART_TEST (imageWhiteBackgroundBecomesNegative)
     CHECK_NEAR (negative.at (50, 40), 1.0f, 1.0e-3f);
 }
 
-FREQART_TEST (imageDarkBackgroundStaysOriginal)
+ARTFREQ_TEST (imageDarkBackgroundStaysOriginal)
 {
     const auto image = makeImage (120, 90, juce::Colour (0xff101010), { 40, 30, 40, 30 }, juce::Colours::white);
     CHECK (resolveAutoMode (image) == ImageMode::original);
@@ -487,7 +487,7 @@ FREQART_TEST (imageDarkBackgroundStaysOriginal)
     CHECK_NEAR (blue.at (40, 10), 0.0f, 1.0e-6f);
 }
 
-FREQART_TEST (imageTransparentPngUsesAlpha)
+ARTFREQ_TEST (imageTransparentPngUsesAlpha)
 {
     // A black logo on a transparent background: its shape (alpha) is what should sound.
     juce::Image logo (juce::Image::ARGB, 64, 64, true, juce::SoftwareImageType());
@@ -521,7 +521,7 @@ FREQART_TEST (imageTransparentPngUsesAlpha)
     CHECK (! hasMeaningfulTransparency (makeImage (10, 10, juce::Colours::red).convertedToFormat (juce::Image::RGB)));
 }
 
-FREQART_TEST (imageOutlineDrawsEdgesOnly)
+ARTFREQ_TEST (imageOutlineDrawsEdgesOnly)
 {
     const juce::Rectangle<int> square (30, 30, 40, 40);
     const auto image = makeImage (100, 100, juce::Colours::black, square, juce::Colours::white);
@@ -549,7 +549,7 @@ FREQART_TEST (imageOutlineDrawsEdgesOnly)
     CHECK_NEAR (pageOutline.at (0, 50), 0.0f, 1.0e-6f);
 }
 
-FREQART_TEST (imageCleanupAndLevels)
+ARTFREQ_TEST (imageCleanupAndLevels)
 {
     // A bright square on a dark background with faint grain.
     auto image = makeImage (100, 100, juce::Colours::black, { 20, 20, 30, 30 }, juce::Colours::white);
@@ -613,10 +613,10 @@ FREQART_TEST (imageCleanupAndLevels)
     CHECK (! processImage ({}, ImageMode::automatic, 0.0f).isValid());
 }
 
-FREQART_TEST (imagePrepareAndLoad)
+ARTFREQ_TEST (imagePrepareAndLoad)
 {
     CHECK (! prepareImportedImage ({}).isValid());
-    CHECK (! loadImageFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("freqart-no-such-file.png")).isValid());
+    CHECK (! loadImageFile (juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("artfreq-no-such-file.png")).isValid());
 
     const auto big = prepareImportedImage (makeImage (3000, 1500, juce::Colours::red));
     CHECK (big.getWidth() == 1024 && big.getHeight() == 512);
@@ -661,7 +661,7 @@ FREQART_TEST (imagePrepareAndLoad)
 // Document and history
 // ================================================================================================
 
-FREQART_TEST (documentDefaults)
+ARTFREQ_TEST (documentDefaults)
 {
     const ArtDocument empty;
     CHECK (empty.isEmpty());
@@ -674,7 +674,7 @@ FREQART_TEST (documentDefaults)
 
     const auto& text = document.objects.front();
     CHECK (text.type == ArtObject::Type::text);
-    CHECK (text.text == "FreqArt");
+    CHECK (text.text == "ArtFreq");
     CHECK (text.fontIndex == 0);
     CHECK (text.textStyle == TextStyle::solid);
     CHECK_NEAR (text.lowHz, 300.0f, 1.0e-3f);
@@ -697,7 +697,7 @@ FREQART_TEST (documentDefaults)
     CHECK (made.id != text.id);
 }
 
-FREQART_TEST (documentPaintStroke)
+ARTFREQ_TEST (documentPaintStroke)
 {
     // A single hard dab: full inside the radius, nothing outside. Pixel centres are measured.
     ArtDocument document;
@@ -765,7 +765,7 @@ FREQART_TEST (documentPaintStroke)
     CHECK (! edge.hasPaint());
 }
 
-FREQART_TEST (documentRoundTrip)
+ARTFREQ_TEST (documentRoundTrip)
 {
     ArtDocument document;
 
@@ -792,7 +792,7 @@ FREQART_TEST (documentRoundTrip)
     const auto xml = document.toValueTree().createXml();
     CHECK (xml != nullptr);
     const auto tree = juce::ValueTree::fromXml (*xml);
-    CHECK (tree.hasType ("FreqArtDocument"));
+    CHECK (tree.hasType ("ArtFreqDocument"));
     CHECK (static_cast<int> (tree["version"]) == 1);
 
     const auto loaded = ArtDocument::fromValueTree (tree);
@@ -848,7 +848,7 @@ FREQART_TEST (documentRoundTrip)
     CHECK (ArtDocument::fromValueTree (ArtDocument().toValueTree()).isEmpty());
 }
 
-FREQART_TEST (documentLayersRoundTrip)
+ARTFREQ_TEST (documentLayersRoundTrip)
 {
     // Back to front: a picture, a hidden text, a text; the paint layer hidden.
     ArtDocument document;
@@ -917,7 +917,7 @@ FREQART_TEST (documentLayersRoundTrip)
     CHECK (cleared.paintVisible && ! cleared.hasPaint());
 }
 
-FREQART_TEST (documentRemembersPictureEncodings)
+ARTFREQ_TEST (documentRemembersPictureEncodings)
 {
     // The text of a saved picture, by identity: the same address means it was not encoded again.
     const auto encodingOf = [] (const juce::ValueTree& tree, int index)
@@ -985,12 +985,12 @@ FREQART_TEST (documentRemembersPictureEncodings)
         pixels->listeners.remove (&watcher);  // still alive (held by the cache)
 }
 
-FREQART_TEST (documentToleratesGarbage)
+ARTFREQ_TEST (documentToleratesGarbage)
 {
     CHECK (ArtDocument::fromValueTree ({}).isEmpty());
     CHECK (ArtDocument::fromValueTree (juce::ValueTree ("SomethingElse")).isEmpty());
 
-    juce::ValueTree tree ("FreqArtDocument");
+    juce::ValueTree tree ("ArtFreqDocument");
     tree.setProperty ("version", 99, nullptr);
     tree.setProperty ("paint", "!!! not base64 !!!", nullptr);
 
@@ -1047,12 +1047,12 @@ FREQART_TEST (documentToleratesGarbage)
         const std::vector<uint8_t> tooShort (1000, 200);
         zip.write (tooShort.data(), tooShort.size());
     }
-    juce::ValueTree wrongSize ("FreqArtDocument");
+    juce::ValueTree wrongSize ("ArtFreqDocument");
     wrongSize.setProperty ("paint", juce::Base64::toBase64 (compressed.getData(), compressed.getDataSize()), nullptr);
     CHECK (! ArtDocument::fromValueTree (wrongSize).hasPaint());
 
     // Out-of-range picture settings are clamped.
-    juce::ValueTree withImage ("FreqArtDocument");
+    juce::ValueTree withImage ("ArtFreqDocument");
     auto good = ArtDocument::makeImageObject (prepareImportedImage (makeImage (8, 8, juce::Colours::white)), 100.0f, 200.0f);
     ArtDocument holder;
     holder.objects.push_back (good);
@@ -1070,7 +1070,7 @@ FREQART_TEST (documentToleratesGarbage)
     }
 }
 
-FREQART_TEST (documentPaintScale)
+ARTFREQ_TEST (documentPaintScale)
 {
     // The paint layer remembers the scale it was painted on, through a save and a load.
     ArtDocument document;
@@ -1114,7 +1114,7 @@ FREQART_TEST (documentPaintScale)
     CHECK (cleared.paintScale == FrequencyScale {});
 }
 
-FREQART_TEST (documentHistory)
+ARTFREQ_TEST (documentHistory)
 {
     DocumentHistory history (3);
     ArtDocument current;
@@ -1162,7 +1162,7 @@ FREQART_TEST (documentHistory)
 // Compositor
 // ================================================================================================
 
-FREQART_TEST (compositorPlacesObjectsByHz)
+ARTFREQ_TEST (compositorPlacesObjectsByHz)
 {
     for (const auto type : allScaleTypes)
     {
@@ -1210,7 +1210,7 @@ FREQART_TEST (compositorPlacesObjectsByHz)
     CHECK_NEAR (linear.getHeight(), 3000.0 / 19980.0, 1.0e-5);
 }
 
-FREQART_TEST (compositorIntensityAndMax)
+ARTFREQ_TEST (compositorIntensityAndMax)
 {
     ArtDocument document;
     auto a = whiteImageObject (0.1f, 0.5f, 1000.0f, 4000.0f);
@@ -1249,7 +1249,7 @@ FREQART_TEST (compositorIntensityAndMax)
     CHECK_NEAR (maxIn (canvas, { 0, 0, Canvas::width, Canvas::height }), 0.0f, 1.0e-9f);
 }
 
-FREQART_TEST (compositorSkipsHiddenLayers)
+ARTFREQ_TEST (compositorSkipsHiddenLayers)
 {
     const auto scale = makeScale (ScaleType::log);
     const auto row = juce::roundToInt ((1.0 - scale.toNorm (2000.0)) * Canvas::height);
@@ -1293,7 +1293,7 @@ FREQART_TEST (compositorSkipsHiddenLayers)
     CHECK (hidden.values == all.values);
 }
 
-FREQART_TEST (compositorPaintUpsampling)
+ARTFREQ_TEST (compositorPaintUpsampling)
 {
     ArtDocument document;
 
@@ -1320,7 +1320,7 @@ FREQART_TEST (compositorPaintUpsampling)
     CHECK_NEAR (minIn (canvas, { 0, 0, Canvas::width, Canvas::height }), 1.0f, 1.0e-6f);
 }
 
-FREQART_TEST (compositorPaintKeepsItsFrequencies)
+ARTFREQ_TEST (compositorPaintKeepsItsFrequencies)
 {
     // Paint stays at its frequencies when the canvas scale or range changes, as objects do (they
     // are placed in Hz). It used to keep its height on screen instead, so a bass line painted on
@@ -1394,7 +1394,7 @@ FREQART_TEST (compositorPaintKeepsItsFrequencies)
     CHECK (before.values == after.values);
 }
 
-FREQART_TEST (compositorClipsAndDrawsText)
+ARTFREQ_TEST (compositorClipsAndDrawsText)
 {
     const auto scale = makeScale (ScaleType::log);
     Compositor compositor;
@@ -1460,10 +1460,10 @@ FREQART_TEST (compositorClipsAndDrawsText)
         CHECK_NEAR (canvas.get (x, midRow), 0.5f, 0.02f);
 }
 
-FREQART_TEST (compositorTiming)
+ARTFREQ_TEST (compositorTiming)
 {
     ArtDocument document;
-    auto text = ArtDocument::makeTextObject ("FreqArt", 300.0f, 3000.0f);
+    auto text = ArtDocument::makeTextObject ("ArtFreq", 300.0f, 3000.0f);
     text.startTime = 0.0f;
     text.endTime = 1.0f;
     document.objects.push_back (text);

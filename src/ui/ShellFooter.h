@@ -12,7 +12,7 @@
 
 #include <memory>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 
 /** The round play / stop button (accent2 while previewing). */
@@ -28,7 +28,7 @@ class Footer final : public juce::Component
 public:
     /** `inspectorLeft` is where the inspector starts, in the footer's coordinates: the Preview
         and Export columns line up with it. */
-    Footer (FreqArtProcessor& processor, int inspectorLeft);
+    Footer (ArtFreqProcessor& processor, int inspectorLeft);
     ~Footer() override;
 
     void paint (juce::Graphics&) override;
@@ -60,7 +60,7 @@ private:
     juce::String tempoHint() const;
     bool showsStartBar() const;
 
-    FreqArtProcessor& processor;
+    ArtFreqProcessor& processor;
     const int inspectorLeft;
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -78,4 +78,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Footer)
 };
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

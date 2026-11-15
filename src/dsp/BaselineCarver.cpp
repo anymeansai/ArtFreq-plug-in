@@ -21,7 +21,7 @@
 // build) takes a spin lock of its own per call; only this engine's audio thread ever calls it,
 // so it is never contended.
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -242,4 +242,4 @@ void BaselineCarver::runFrame (int numChannels, const CarveSettings& settings) n
     }
 }
 
-} // namespace freqart
+} // namespace artfreq

@@ -3,7 +3,7 @@
 #include <cmath>
 #include <utility>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -753,4 +753,4 @@ HostTiming makeHostTiming (const juce::Optional<juce::AudioPlayHead::PositionInf
     return timing;
 }
 
-} // namespace freqart
+} // namespace artfreq

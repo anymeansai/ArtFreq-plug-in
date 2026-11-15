@@ -6,7 +6,7 @@
 
 #include <cmath>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
@@ -78,7 +78,7 @@ struct LayerList::Impl
         juce::Rectangle<int> icon, name, remove, eye, settings;
     };
 
-    Impl (LayerList& ownerToUse, FreqArtProcessor& processorToUse, EditorState& stateToUse)
+    Impl (LayerList& ownerToUse, ArtFreqProcessor& processorToUse, EditorState& stateToUse)
         : owner (ownerToUse), processor (processorToUse), state (stateToUse)
     {
     }
@@ -479,7 +479,7 @@ struct LayerList::Impl
     // ---- state -----------------------------------------------------------------------------
 
     LayerList& owner;
-    FreqArtProcessor& processor;
+    ArtFreqProcessor& processor;
     EditorState& state;
     juce::ScrollBar scrollBar { true };
 
@@ -501,7 +501,7 @@ struct LayerList::Impl
 };
 
 //==============================================================================
-LayerList::LayerList (FreqArtProcessor& processor, EditorState& state)
+LayerList::LayerList (ArtFreqProcessor& processor, EditorState& state)
     : impl (std::make_unique<Impl> (*this, processor, state))
 {
     setWantsKeyboardFocus (true);
@@ -786,4 +786,4 @@ void LayerList::scrollBarMoved (juce::ScrollBar*, double newRangeStart)
     }
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

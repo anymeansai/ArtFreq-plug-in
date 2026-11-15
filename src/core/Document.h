@@ -22,7 +22,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 struct ArtObject
@@ -85,7 +85,7 @@ public:
 
     ArtDocument();  // empty paint layer, no objects
 
-    /** What a fresh instance shows: the word "FreqArt" in the mid band, Inter Bold, solid. */
+    /** What a fresh instance shows: the word "ArtFreq" in the mid band, Inter Bold, solid. */
     static ArtDocument createDefault();
 
     // Back to front: the last object is the front-most, which the canvas picks first where
@@ -120,7 +120,8 @@ public:
         again (an empty layer has nothing to hide, and the next stroke should show). */
     void clearPaint();
 
-    /** Serialisation. The ValueTree type is "FreqArtDocument" (version 1):
+    /** Serialisation. The ValueTree type is "ArtFreqDocument" (version 1; "FreqArtDocument",
+        written before 0.4, is read too):
           properties: version, paint (base64 of zlib-compressed paint bytes; absent if empty),
                       paintScale, paintMinHz, paintMaxHz (with the paint; a document without
                       them was painted on the default Log 20 Hz - 20 kHz scale), paintVisible
@@ -166,4 +167,4 @@ private:
     std::vector<ArtDocument> redoSteps;
 };
 
-} // namespace freqart
+} // namespace artfreq

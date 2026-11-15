@@ -7,7 +7,7 @@
 #include <cmath>
 #include <utility>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 namespace
 {
@@ -26,9 +26,10 @@ namespace
         return formatNumber (seconds, seconds < 10.0 ? 2 : 1) + " s";
     }
 
-    // Every name a bounce has had: FreqArt.wav (0.1.0), FreqArt-<uuid>.wav (0.1.1), the
-    // readable names (see reserveBounceFile), and the temporary files written beside them.
-    constexpr const char* bouncePattern = "FreqArt*.wav";
+    // Every name a bounce has had in this folder: the readable names (see reserveBounceFile) and
+    // the temporary files written beside them. (Before 0.4, as FreqArt, bounces went to a FreqArt
+    // folder and were named FreqArt*.wav; that folder is the system's to clear.)
+    constexpr const char* bouncePattern = "ArtFreq*.wav";
 
     /** Bounces are kept for dragging (a DAW may read one where it is) and a crash can leave one
         behind, so the folder is swept when an editor opens: anything a day old goes. */
@@ -53,8 +54,8 @@ namespace
         return true;
     }
 
-    /** The chip's two lines for a bounce file: "FreqArt HELLO 14-03-27 2.wav" shows as
-        "FreqArt HELLO" over "14-03-27 2.wav", so the part that tells files apart is never cut. */
+    /** The chip's two lines for a bounce file: "ArtFreq HELLO 14-03-27 2.wav" shows as
+        "ArtFreq HELLO" over "14-03-27 2.wav", so the part that tells files apart is never cut. */
     std::pair<juce::String, juce::String> chipLines (const juce::File& file)
     {
         const auto name = file.getFileNameWithoutExtension();
@@ -86,7 +87,7 @@ bool ExportPanel::Take::sameAs (const Take& other) const noexcept
 struct ExportPanel::Job final : public juce::Thread
 {
     Job (std::shared_ptr<const ArtPlan> planToRender, ExportSettings settingsToUse, juce::File targetFile, Take takeToRender)
-        : juce::Thread ("FreqArt bounce"),
+        : juce::Thread ("ArtFreq bounce"),
           plan (std::move (planToRender)),
           settings (settingsToUse),
           target (std::move (targetFile)),
@@ -271,7 +272,7 @@ private:
 };
 
 //==============================================================================
-ExportPanel::ExportPanel (FreqArtProcessor& p)
+ExportPanel::ExportPanel (ArtFreqProcessor& p)
     : processor (p),
       bounceButton ("Bounce WAV", icons::download(), "Bounce WAV"),
       chip (std::make_unique<Chip> (*this))
@@ -319,7 +320,7 @@ ExportPanel::~ExportPanel()
 
 juce::File ExportPanel::getBounceFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("FreqArt");
+    return juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ArtFreq");
 }
 
 juce::File ExportPanel::getBounceFile() const
@@ -692,7 +693,7 @@ void ExportPanel::finishPendingSave()
 
 void ExportPanel::chooseSaveTarget()
 {
-    const auto name = bounceFile != juce::File() ? bounceFile.getFileName() : juce::String ("FreqArt.wav");
+    const auto name = bounceFile != juce::File() ? bounceFile.getFileName() : juce::String ("ArtFreq.wav");
     const auto start = juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile (name);
     chooser = std::make_unique<juce::FileChooser> ("Save the bounce", start, "*.wav");
 
@@ -721,7 +722,7 @@ void ExportPanel::paint (juce::Graphics& g)
     g.setColour (isError ? theme::danger : look == Look::ready ? theme::accent2 : theme::textFaint);
     g.drawText (hintText(), 0, hintTop, getWidth(), hintHeight, juce::Justification::centredLeft, true);
 
-    // FreqArt FX carving: where the bounce happens instead, in a quiet box where the button was.
+    // ArtFreq FX carving: where the bounce happens instead, in a quiet box where the button was.
     if (look == Look::daw)
     {
         const auto row = juce::Rectangle<int> (0, rowTop, getWidth(), metrics::controlHeight).toFloat().reduced (0.5f);
@@ -744,4 +745,4 @@ void ExportPanel::resized()
     chip->setBounds (row.withRight (saveButton.getX() - saveGap));
 }
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

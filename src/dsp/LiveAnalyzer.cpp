@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -114,4 +114,4 @@ void LiveAnalyzer::computeColumn()
     }
 }
 
-} // namespace freqart
+} // namespace artfreq

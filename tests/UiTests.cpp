@@ -28,7 +28,7 @@
 #include <memory>
 #include <vector>
 
-using namespace freqart;
+using namespace artfreq;
 using testutil::setParameter;
 
 namespace
@@ -37,17 +37,17 @@ namespace
 constexpr double sampleRate = 48000.0;
 constexpr int blockSize = 512;
 
-std::unique_ptr<FreqArtProcessor> makeProcessor()
+std::unique_ptr<ArtFreqProcessor> makeProcessor()
 {
-    auto processor = std::make_unique<FreqArtProcessor>();
+    auto processor = std::make_unique<ArtFreqProcessor>();
     processor->setRateAndBufferSizeDetails (sampleRate, blockSize);
     processor->prepareToPlay (sampleRate, blockSize);
     return processor;
 }
 
-std::unique_ptr<FreqArtEditor> makeEditor (FreqArtProcessor& processor)
+std::unique_ptr<ArtFreqEditor> makeEditor (ArtFreqProcessor& processor)
 {
-    return std::unique_ptr<FreqArtEditor> (dynamic_cast<FreqArtEditor*> (processor.createEditor()));
+    return std::unique_ptr<ArtFreqEditor> (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
 }
 
 void pump (int milliseconds)
@@ -186,7 +186,7 @@ std::vector<float> readWav (const juce::File& file)
 }
 
 /** One pass of the processor's current plan, rendered here as the export panel would. */
-std::vector<float> renderCurrentPlan (FreqArtProcessor& processor)
+std::vector<float> renderCurrentPlan (ArtFreqProcessor& processor)
 {
     const auto plan = processor.getCurrentPlan();
 
@@ -259,8 +259,8 @@ struct ExportRig
 
     bool chipShows (const juce::String& text) const   { return chip->isVisible() && chip->getTitle() == text; }
 
-    std::unique_ptr<FreqArtProcessor> processor;
-    std::unique_ptr<FreqArtEditor> editor;
+    std::unique_ptr<ArtFreqProcessor> processor;
+    std::unique_ptr<ArtFreqEditor> editor;
     juce::Uuid textId;
     ui::shell::ExportPanel* exporter = nullptr;
     juce::Button* bounce = nullptr;
@@ -273,7 +273,7 @@ const juce::String updatingText = "Updating" + juce::String::fromUTF8 ("\xe2\x80
 } // namespace
 
 //==============================================================================
-FREQART_TEST (uiEveryBounceHasItsOwnFile)
+ARTFREQ_TEST (uiEveryBounceHasItsOwnFile)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processorA = makeProcessor();
@@ -303,10 +303,10 @@ FREQART_TEST (uiEveryBounceHasItsOwnFile)
     exportA->refresh();
 
     CHECK (fileA != fileB);
-    // Both named after the default drawing's text ("FreqArt") and the time (in the same second
+    // Both named after the default drawing's text ("ArtFreq") and the time (in the same second
     // the second one gets a number).
-    CHECK (fileA.getParentDirectory() == ui::shell::ExportPanel::getBounceFolder() && fileA.getFileName().startsWith ("FreqArt "));
-    CHECK (fileB.getFileName().startsWith ("FreqArt "));
+    CHECK (fileA.getParentDirectory() == ui::shell::ExportPanel::getBounceFolder() && fileA.getFileName().startsWith ("ArtFreq "));
+    CHECK (fileB.getFileName().startsWith ("ArtFreq "));
     CHECK (exportA->hasCurrentFile() && fileA.existsAsFile());
     CHECK (fileA.getSize() == bytesA && fileA.getLastModificationTime() == writtenA);
 
@@ -328,14 +328,14 @@ FREQART_TEST (uiEveryBounceHasItsOwnFile)
     CHECK (! fileB.exists());
 }
 
-FREQART_TEST (uiOldBouncesAreSweptAway)
+ARTFREQ_TEST (uiOldBouncesAreSweptAway)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     const auto folder = ui::shell::ExportPanel::getBounceFolder();
     folder.createDirectory();
 
-    const auto stale = folder.getChildFile ("FreqArt-uiTestStale.wav");
-    const auto fresh = folder.getChildFile ("FreqArt-uiTestFresh.wav");
+    const auto stale = folder.getChildFile ("ArtFreq-uiTestStale.wav");
+    const auto fresh = folder.getChildFile ("ArtFreq-uiTestFresh.wav");
     const auto other = folder.getChildFile ("uiTestOther.wav");
 
     for (const auto& file : { stale, fresh, other })
@@ -350,13 +350,13 @@ FREQART_TEST (uiOldBouncesAreSweptAway)
 
     CHECK (! stale.exists());
     CHECK (fresh.existsAsFile());
-    CHECK (other.existsAsFile());   // only FreqArt's own bounces
+    CHECK (other.existsAsFile());   // only ArtFreq's own bounces
 
     fresh.deleteFile();
     other.deleteFile();
 }
 
-FREQART_TEST (uiClosingDuringABounceDoesNotWaitForIt)
+ARTFREQ_TEST (uiClosingDuringABounceDoesNotWaitForIt)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -400,7 +400,7 @@ FREQART_TEST (uiClosingDuringABounceDoesNotWaitForIt)
     if (exporter == nullptr)
         return;
 
-    const auto bounces = [] { return ui::shell::ExportPanel::getBounceFolder().getNumberOfChildFiles (juce::File::findFiles, "FreqArt*.wav"); };
+    const auto bounces = [] { return ui::shell::ExportPanel::getBounceFolder().getNumberOfChildFiles (juce::File::findFiles, "ArtFreq*.wav"); };
     const auto before = bounces();
     exporter->startBounce();
     CHECK (exporter->isBouncing());
@@ -414,7 +414,7 @@ FREQART_TEST (uiClosingDuringABounceDoesNotWaitForIt)
     CHECK (bounces() == before);   // nothing left behind, not even the temporary file
 }
 
-FREQART_TEST (uiExportNeedsOneClick)
+ARTFREQ_TEST (uiExportNeedsOneClick)
 {
     // Nothing renders unasked: before the first "Bounce WAV", changes start no render.
     const juce::ScopedJuceInitialiser_GUI gui;
@@ -431,7 +431,7 @@ FREQART_TEST (uiExportNeedsOneClick)
     CHECK (rig.exporter->getBounceFile() == juce::File() && rig.bounce->isVisible() && ! rig.chip->isVisible());
 }
 
-FREQART_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
+ARTFREQ_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     ExportRig rig ("HELLO");
@@ -449,7 +449,7 @@ FREQART_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
     CHECK (exporter.waitForBounce (60000) && exporter.hasCurrentFile());
     const auto first = exporter.getBounceFile();
     const auto firstAudio = readWav (first);
-    CHECK (first.getFileName().startsWith ("FreqArt HELLO ") && first.getFileName().endsWith (".wav"));
+    CHECK (first.getFileName().startsWith ("ArtFreq HELLO ") && first.getFileName().endsWith (".wav"));
     CHECK (rig.chipShows (first.getFileName()) && rig.save->isEnabled() && exporter.getFileToHandOut() == first);
     CHECK (largestDifference (firstAudio, renderCurrentPlan (processor)) < 1.0e-6);
 
@@ -470,7 +470,7 @@ FREQART_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
 
     const auto second = exporter.getBounceFile();
     const auto secondAudio = readWav (second);
-    CHECK (second != first && second.getFileName().startsWith ("FreqArt WORLD "));
+    CHECK (second != first && second.getFileName().startsWith ("ArtFreq WORLD "));
     CHECK (rig.chipShows (second.getFileName()) && exporter.getFileToHandOut() == second);
     CHECK (! first.exists());   // superseded and never dragged out: gone
     CHECK_MSG (largestDifference (secondAudio, renderCurrentPlan (processor)) < 1.0e-6, "the new file is the new drawing");
@@ -506,7 +506,7 @@ FREQART_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
     CHECK (exporter.getFileToHandOut() == juce::File() && ! exporter.isBouncing());
     rig.setText ("AGAIN");
     CHECK (pumpUntil ([&] { return exporter.hasCurrentFile(); }, 60000));
-    CHECK (exporter.getBounceFile().getFileName().startsWith ("FreqArt AGAIN ") && ! fifth.exists());
+    CHECK (exporter.getBounceFile().getFileName().startsWith ("ArtFreq AGAIN ") && ! fifth.exists());
 
     // Closing takes the last file with it.
     const auto last = exporter.getBounceFile();
@@ -514,7 +514,7 @@ FREQART_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
     CHECK (! last.exists());
 }
 
-FREQART_TEST (uiExportStopsRendersThatAreNoLongerWanted)
+ARTFREQ_TEST (uiExportStopsRendersThatAreNoLongerWanted)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     ExportRig rig ("LONG");
@@ -562,7 +562,7 @@ FREQART_TEST (uiExportStopsRendersThatAreNoLongerWanted)
     CHECK (! secondRender.exists() && ! firstRender.exists());
 }
 
-FREQART_TEST (uiExportSavesTheCurrentFile)
+ARTFREQ_TEST (uiExportSavesTheCurrentFile)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     ExportRig rig ("SAVE");
@@ -595,7 +595,7 @@ FREQART_TEST (uiExportSavesTheCurrentFile)
     folder.deleteRecursively();
 }
 
-FREQART_TEST (uiExportWaitsWhileHidden)
+ARTFREQ_TEST (uiExportWaitsWhileHidden)
 {
     // Renders start by themselves only while the export can be seen.
     const juce::ScopedJuceInitialiser_GUI gui;
@@ -615,11 +615,11 @@ FREQART_TEST (uiExportWaitsWhileHidden)
 
     rig.editor->setVisible (true);
     CHECK (pumpUntil ([&] { return rig.exporter->hasCurrentFile(); }, 60000));
-    CHECK (rig.exporter->getBounceFile().getFileName().startsWith ("FreqArt CHANGED "));
+    CHECK (rig.exporter->getBounceFile().getFileName().startsWith ("ArtFreq CHANGED "));
 }
 
 //==============================================================================
-FREQART_TEST (uiWheelGestureIsOneUndoStep)
+ARTFREQ_TEST (uiWheelGestureIsOneUndoStep)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -670,7 +670,7 @@ FREQART_TEST (uiWheelGestureIsOneUndoStep)
     CHECK_NEAR (intensityOf(), 0.98f, 1.0e-4);
 }
 
-FREQART_TEST (uiNudgeGesturesAreSeparateUndoSteps)
+ARTFREQ_TEST (uiNudgeGesturesAreSeparateUndoSteps)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -731,7 +731,7 @@ FREQART_TEST (uiNudgeGesturesAreSeparateUndoSteps)
 }
 
 //==============================================================================
-FREQART_TEST (uiClickInsideTheSelectionKeepsIt)
+ARTFREQ_TEST (uiClickInsideTheSelectionKeepsIt)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -776,7 +776,7 @@ FREQART_TEST (uiClickInsideTheSelectionKeepsIt)
     CHECK (selected() == "A");
 }
 
-FREQART_TEST (uiLayerListSelectsHidesReordersAndDeletes)
+ARTFREQ_TEST (uiLayerListSelectsHidesReordersAndDeletes)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -925,7 +925,7 @@ FREQART_TEST (uiLayerListSelectsHidesReordersAndDeletes)
     CHECK (processor->undo() && processor->getDocument().paintVisible);
 }
 
-FREQART_TEST (uiLayerListScrollsToTheSelection)
+ARTFREQ_TEST (uiLayerListScrollsToTheSelection)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -967,7 +967,7 @@ FREQART_TEST (uiLayerListScrollsToTheSelection)
     CHECK (inView (list->getRowBounds (0)));
 }
 
-FREQART_TEST (uiClickingAgainPicksTheObjectUnderneath)
+ARTFREQ_TEST (uiClickingAgainPicksTheObjectUnderneath)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -1082,7 +1082,7 @@ FREQART_TEST (uiClickingAgainPicksTheObjectUnderneath)
     CHECK (showsShow);
 }
 
-FREQART_TEST (uiNewObjectsDoNotLandOnOthers)
+ARTFREQ_TEST (uiNewObjectsDoNotLandOnOthers)
 {
     const FrequencyScale scale;
 
@@ -1150,11 +1150,11 @@ FREQART_TEST (uiNewObjectsDoNotLandOnOthers)
     clickOn (*canvas, onCanvas (*canvas, defaultText, processor->getScale()).getCentre());
     pump (20);
     auto* field = find<juce::TextEditor> (*editor, "inspector-text");
-    CHECK (field != nullptr && field->getText() == "FreqArt");
+    CHECK (field != nullptr && field->getText() == "ArtFreq");
 }
 
 //==============================================================================
-FREQART_TEST (uiLiveViewShowsAWholePass)
+ARTFREQ_TEST (uiLiveViewShowsAWholePass)
 {
     const juce::ScopedJuceInitialiser_GUI gui;
     auto processor = makeProcessor();
@@ -1180,7 +1180,7 @@ FREQART_TEST (uiLiveViewShowsAWholePass)
 }
 
 //==============================================================================
-FREQART_TEST (uiPicturesThatCannotBeReadAreReported)
+ARTFREQ_TEST (uiPicturesThatCannotBeReadAreReported)
 {
     CHECK (ui::actions::isPictureFile (juce::File ("/x/photo.PNG")));
     CHECK (ui::actions::isPictureFile (juce::File ("/x/photo.jpeg")));

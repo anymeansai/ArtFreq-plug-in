@@ -1,9 +1,22 @@
 #!/bin/bash
-# Final step of the FreqArt installer (by AnyMeans). Runs as root once FreqArt.vst3 is in
-# /Library/Audio/Plug-Ins/VST3, and offers to move the downloaded installer to the Trash.
+# Final step of the ArtFreq installer (by AnyMeans). Runs as root once ArtFreq.vst3 is in
+# /Library/Audio/Plug-Ins/VST3: removes the old FreqArt bundles it replaces, and offers to move
+# the downloaded installer to the Trash.
 #
 # Nothing here may fail the installation: the plug-in is already in place, so every step is
 # optional and the script always exits 0 (which is also why it does not use set -e).
+
+# Before 0.4 the plug-ins were called FreqArt and FreqArt FX. They have the same plug-in IDs as
+# ArtFreq and ArtFreq FX (so old projects open with the new ones), and a DAW would list both
+# copies: remove each old bundle once its replacement is in place. ($3 is the target volume.)
+VST3_DIR="${3%/}/Library/Audio/Plug-Ins/VST3"
+for pair in "FreqArt|ArtFreq" "FreqArt FX|ArtFreq FX"; do
+    OLD_NAME="${pair%%|*}"
+    NEW_NAME="${pair#*|}"
+    if [ -d "$VST3_DIR/$NEW_NAME.vst3" ] && [ -e "$VST3_DIR/$OLD_NAME.vst3" ]; then
+        rm -rf "$VST3_DIR/$OLD_NAME.vst3" || true
+    fi
+done
 
 # Graphical installs only: `sudo installer -pkg ...` (and management tools) set
 # COMMAND_LINE_INSTALL, and there is nobody to ask.
@@ -30,8 +43,8 @@ as_user()
 # so quotes or backslashes in a file name cannot break the script or change what it does.
 ANSWER=$(as_user osascript \
     -e 'on run argv' \
-    -e 'set theQuestion to "FreqArt is installed." & return & return & "Move the installer \"" & (item 1 of argv) & "\" to the Trash?"' \
-    -e 'return button returned of (display dialog theQuestion buttons {"Keep", "Move to Trash"} default button "Move to Trash" with title "FreqArt" with icon note giving up after 120)' \
+    -e 'set theQuestion to "ArtFreq is installed." & return & return & "Move the installer \"" & (item 1 of argv) & "\" to the Trash?"' \
+    -e 'return button returned of (display dialog theQuestion buttons {"Keep", "Move to Trash"} default button "Move to Trash" with title "ArtFreq" with icon note giving up after 120)' \
     -e 'end run' \
     "$NAME" 2> /dev/null || true)
 

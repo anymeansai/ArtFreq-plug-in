@@ -1,7 +1,7 @@
 #pragma once
 
-// FreqArt FX's own controls, in the header: Mode (Carve | Carve + Draw | Stencil | Draw) and
-// Depth. See docs/DESIGN.md, "FreqArt FX".
+// ArtFreq FX's own controls, in the header: Mode (Carve | Carve + Draw | Stencil | Draw) and
+// Depth. See docs/DESIGN.md, "ArtFreq FX".
 
 #include "PluginProcessor.h"
 #include "ShellControls.h"
@@ -11,7 +11,7 @@
 
 #include <memory>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 
 class EffectControls final : public juce::Component
@@ -20,7 +20,7 @@ public:
     static constexpr int modeWidth = 284;
     static constexpr int depthWidth = 72;
 
-    explicit EffectControls (FreqArtProcessor& processor);
+    explicit EffectControls (ArtFreqProcessor& processor);
     ~EffectControls() override;
 
     /** The width the controls and their captions take. */
@@ -45,11 +45,11 @@ public:
     std::unique_ptr<NumberField> depth;
 
 private:
-    FreqArtProcessor& processor;
+    ArtFreqProcessor& processor;
     std::unique_ptr<ChoiceSegments> modeAttachment;
     juce::Rectangle<int> modeCaption, depthCaption;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EffectControls)
 };
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

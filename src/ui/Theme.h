@@ -8,7 +8,7 @@
 
 #include <array>
 
-namespace freqart::ui::theme
+namespace artfreq::ui::theme
 {
 
 inline const juce::Colour bg          { 0xff0b0d12 };
@@ -68,4 +68,4 @@ inline const std::array<juce::PixelARGB, 256>& spectrumTable()
 /** Uppercase label text with the design's tracking. */
 inline juce::Font labelFont() { return fonts::ui (labelSize, fonts::UiWeight::medium).withExtraKerningFactor (0.06f); }
 
-} // namespace freqart::ui::theme
+} // namespace artfreq::ui::theme

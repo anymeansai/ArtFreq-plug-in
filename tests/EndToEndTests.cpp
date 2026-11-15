@@ -1,4 +1,4 @@
-// The product's promise, measured: the spectrogram of FreqArt's output looks like the drawing.
+// The product's promise, measured: the spectrogram of ArtFreq's output looks like the drawing.
 //
 // Each test draws something, plays one pass through the processor, analyses the output with
 // a short-time Fourier transform like an analyser would, resamples that spectrogram onto the
@@ -18,7 +18,7 @@
 #include <cstdio>
 #include <numeric>
 
-using namespace freqart;
+using namespace artfreq;
 using namespace testutil;
 
 namespace
@@ -117,7 +117,7 @@ struct Result
 Result measure (const ArtDocument& document, int objectIndex, int scaleIndex, float density, const char* label,
                 int gridH = 64, int lowEndIndex = params::smoothLowEndIndex)
 {
-    FreqArtProcessor processor;
+    ArtFreqProcessor processor;
     processor.setPlayConfigDetails (0, 2, sampleRate, 512);
     processor.prepareToPlay (sampleRate, 512);
 
@@ -246,7 +246,7 @@ struct LowsLook
 
 LowsLook lowsLook (const ArtDocument& document, int lowEndIndex, int order, const char* label)
 {
-    FreqArtProcessor processor;
+    ArtFreqProcessor processor;
     processor.setPlayConfigDetails (0, 2, sampleRate, 512);
     processor.prepareToPlay (sampleRate, 512);
     setParameter (processor, params::id::lowEnd, static_cast<float> (lowEndIndex));
@@ -424,7 +424,7 @@ juce::Image ringOnWhite()
 
 } // namespace
 
-FREQART_TEST (endToEndTextInTheHighs)
+ARTFREQ_TEST (endToEndTextInTheHighs)
 {
     const auto result = measure (textIn ("HI", Band::high), 0, 0, 256.0f, "text HI, highs, log, 256 lines");
     CHECK_GREATER (result.correlation, 0.6);
@@ -432,14 +432,14 @@ FREQART_TEST (endToEndTextInTheHighs)
     CHECK_GREATER (result.energyInside, 0.95);
 }
 
-FREQART_TEST (endToEndTextInTheMids)
+ARTFREQ_TEST (endToEndTextInTheMids)
 {
     const auto result = measure (textIn ("FREQ", Band::mid), 0, 0, 256.0f, "text FREQ, mids, log, 256 lines");
     CHECK_GREATER (result.correlation, 0.6);
     CHECK_GREATER (result.energyInside, 0.95);
 }
 
-FREQART_TEST (endToEndTextInTheLows)
+ARTFREQ_TEST (endToEndTextInTheLows)
 {
     // (Stripes: how the lows played before Smooth, kept as a choice. Smooth's own test follows.)
     // The lows are merged into lines at least 25 Hz apart (about 8 lines between 40 and 250 Hz
@@ -454,7 +454,7 @@ FREQART_TEST (endToEndTextInTheLows)
     CHECK_GREATER (result.energyInside, 0.9);
 }
 
-FREQART_TEST (endToEndSmoothLowsFillWhereStripesShowGaps)
+ARTFREQ_TEST (endToEndSmoothLowsFillWhereStripesShowGaps)
 {
     // The customer's case: an analyser with a long FFT (MiniMeters at 8192 or 16384 points)
     // resolves the lows' lines, 25 Hz apart, into stripes with dark gaps. Smooth (the rising
@@ -496,7 +496,7 @@ FREQART_TEST (endToEndSmoothLowsFillWhereStripesShowGaps)
     }
 }
 
-FREQART_TEST (endToEndPicture)
+ARTFREQ_TEST (endToEndPicture)
 {
     ArtDocument document;
     const auto range = bandRange (Band::mid, FrequencyScale {});
@@ -511,7 +511,7 @@ FREQART_TEST (endToEndPicture)
     CHECK_GREATER (result.energyInside, 0.95);
 }
 
-FREQART_TEST (endToEndLinearScale)
+ARTFREQ_TEST (endToEndLinearScale)
 {
     FrequencyScale linear;
     linear.type = ScaleType::linear;
@@ -520,7 +520,7 @@ FREQART_TEST (endToEndLinearScale)
     CHECK_GREATER (result.energyInside, 0.95);
 }
 
-FREQART_TEST (endToEndDensityExtremes)
+ARTFREQ_TEST (endToEndDensityExtremes)
 {
     // 32 lines over the whole spectrum leave about 7 in the highs: a deliberate scan-line look,
     // so it is compared on a grid as coarse as its lines.

@@ -19,7 +19,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 /** Plan is a type with a public `uint64_t version` (ArtPlan, MaskPlan, MaskPlanSet: each is
@@ -83,4 +83,4 @@ using PlanExchange = VersionedExchange<ArtPlan>;
 using MaskPlanExchange = VersionedExchange<MaskPlan>;
 using MaskSetExchange = VersionedExchange<MaskPlanSet>;
 
-} // namespace freqart
+} // namespace artfreq

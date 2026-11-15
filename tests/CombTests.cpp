@@ -19,7 +19,7 @@
 #include <cstdio>
 #include <cstring>
 
-using namespace freqart;
+using namespace artfreq;
 
 namespace
 {
@@ -193,7 +193,7 @@ double levelSpreadDb (const std::vector<float>& audio, double hz, int order)
 
 } // namespace
 
-FREQART_TEST (planCombReplacesTheCrowdedLows)
+ARTFREQ_TEST (planCombReplacesTheCrowdedLows)
 {
     Canvas canvas;
     std::fill (canvas.values.begin(), canvas.values.end(), 1.0f);
@@ -294,7 +294,7 @@ FREQART_TEST (planCombReplacesTheCrowdedLows)
     CHECK_GREATER (empty->combLines, 100);
 }
 
-FREQART_TEST (planCombGridFollowsTheDrawing)
+ARTFREQ_TEST (planCombGridFollowsTheDrawing)
 {
     const auto plan = buildPlan (bandCanvas (100.0, 150.0), combSettings (smooth));
     CHECK_GREATER (plan->combLines, 100);
@@ -412,7 +412,7 @@ FREQART_TEST (planCombGridFollowsTheDrawing)
     CHECK (! highs->silent);
 }
 
-FREQART_TEST (engineCombFillsTheBand)
+ARTFREQ_TEST (engineCombFillsTheBand)
 {
     // A block over 100 - 500 Hz. With lines 25 Hz apart a 32768-sample analyser shows stripes:
     // most bins far from the median. The comb fills the band.
@@ -448,7 +448,7 @@ FREQART_TEST (engineCombFillsTheBand)
     CHECK_NEAR (test::toDb (test::rms (combAudio, 9600) / planTargetRms), 0.0, 1.0);
 }
 
-FREQART_TEST (engineCombIsDeterministic)
+ARTFREQ_TEST (engineCombIsDeterministic)
 {
     const auto plan = buildPlan (bandCanvas (40.0, 1500.0), combSettings (smooth));
 
@@ -468,7 +468,7 @@ FREQART_TEST (engineCombIsDeterministic)
     CHECK_LESS (largestDifference, 5.0e-3);
 }
 
-FREQART_TEST (engineCombCrossfadesWithoutClicks)
+ARTFREQ_TEST (engineCombCrossfadesWithoutClicks)
 {
     // Two plans with one layout (the comb's sines go on, their amplitudes cross), one without a
     // comb (other sines entirely), and none.
@@ -510,7 +510,7 @@ FREQART_TEST (engineCombCrossfadesWithoutClicks)
     CHECK_LESS (test::peak (out, out.size() - 960), 1.0e-6);
 }
 
-FREQART_TEST (engineCombPerformance)
+ARTFREQ_TEST (engineCombPerformance)
 {
     using clock = std::chrono::steady_clock;
 
@@ -562,7 +562,7 @@ FREQART_TEST (engineCombPerformance)
     }
 }
 
-FREQART_TEST (engineCombKeepsItsPowerInTheDrawnBand)
+ARTFREQ_TEST (engineCombKeepsItsPowerInTheDrawnBand)
 {
     // (Ported from the wobbling-lines prototype's containment test, so that leakage from the
     // comb cannot grow unnoticed.) A block over 100 - 300 Hz, played for 8 s and averaged by a
@@ -597,7 +597,7 @@ FREQART_TEST (engineCombKeepsItsPowerInTheDrawnBand)
     CHECK_LESS (strongest, 0.02);
 }
 
-FREQART_TEST (engineCombPlaysThinStrokesSteadily)
+ARTFREQ_TEST (engineCombPlaysThinStrokesSteadily)
 {
     // A stroke thinner than the comb's spacing (20 Hz) would be lit only while one of its sines,
     // passing every 0.1 s, is inside it: the whole stroke would blink ten times a second (15 - 28
@@ -641,7 +641,7 @@ FREQART_TEST (engineCombPlaysThinStrokesSteadily)
     }
 }
 
-FREQART_TEST (engineCombFadesInAboveTheLowestLine)
+ARTFREQ_TEST (engineCombFadesInAboveTheLowestLine)
 {
     // The comb's glide starts 15 Hz below its grid, which starts half a cell above the canvas's
     // bottom: with the analyser's low end at 10 Hz, below 0 Hz, where sines are not played; and a
@@ -706,7 +706,7 @@ FREQART_TEST (engineCombFadesInAboveTheLowestLine)
     }
 }
 
-FREQART_TEST (canvasShowsSmoothLowsAsAFilledBand)
+ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
 {
     // A block over 60 - 900 Hz and another over 3 - 4 kHz, all at full value. The canvas shows
     // the comb's band filled at every height (Stripes: scan lines with dark gaps, as before), and

@@ -7,7 +7,7 @@
 
 #include <juce_graphics/juce_graphics.h>
 
-namespace freqart::fonts
+namespace artfreq::fonts
 {
 
 enum class UiWeight
@@ -36,4 +36,4 @@ juce::Font art (int index, float height);
     the default sans-serif if an embedded face cannot be loaded. */
 juce::Typeface::Ptr artTypeface (int index);
 
-} // namespace freqart::fonts
+} // namespace artfreq::fonts

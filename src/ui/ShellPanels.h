@@ -14,7 +14,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 
 /** Covers the window under an open panel: dims it (optionally) and closes the panel when clicked. */
@@ -42,7 +42,7 @@ public:
     /** The window sizes offered (fractions of 1120 x 720). */
     static constexpr float windowScales[] = { 0.75f, 1.0f, 1.25f, 1.5f, 2.0f };
 
-    explicit SettingsPanel (FreqArtProcessor& processor);
+    explicit SettingsPanel (ArtFreqProcessor& processor);
     ~SettingsPanel() override;
 
     /** The height the content needs. */
@@ -97,7 +97,7 @@ class HelpPanel final : public juce::Component
 public:
     static constexpr int width = 920;
 
-    /** forEffect: FreqArt FX's help (where it goes, its modes, the latency, MIDI in effects). */
+    /** forEffect: ArtFreq FX's help (where it goes, its modes, the latency, MIDI in effects). */
     explicit HelpPanel (bool forEffect = false);
     ~HelpPanel() override;
 
@@ -120,4 +120,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HelpPanel)
 };
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

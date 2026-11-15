@@ -18,7 +18,7 @@ jobs:
     concurrency:
       group: build-${{ github.ref }}-${{ matrix.name }}
       cancel-in-progress: true
-    # Every target compiles all of FreqArt's sources (both plug-ins, and the tests and the
+    # Every target compiles all of ArtFreq's sources (both plug-ins, and the tests and the
     # snapshot tool, link the processor and the editor too), twice over for the universal build.
     timeout-minutes: 75
     strategy:
@@ -70,14 +70,14 @@ jobs:
           done
           exit 1
 
-      # All targets: the two plug-ins (FreqArt, the instrument, and FreqArtFX, the effect "FreqArt
-      # FX": one code base, registered once as each), the tests (FreqArtTests), the interface
-      # snapshot tool (FreqArtSnapshot) and the two labs.
+      # All targets: the two plug-ins (ArtFreq, the instrument, and ArtFreqFX, the effect "ArtFreq
+      # FX": one code base, registered once as each), the tests (ArtFreqTests), the interface
+      # snapshot tool (ArtFreqSnapshot) and the two labs.
       - name: Build
         shell: bash
         run: cmake --build build --config Release --parallel 4
 
-      # FreqArtTests links the processor and the editor as well as core and dsp, so a failure
+      # ArtFreqTests links the processor and the editor as well as core and dsp, so a failure
       # here can come from any part of the plug-in, not only the engine. It opens no window,
       # but on Linux it runs under a virtual display all the same, as JUCE's GUI classes are
       # linked in.
@@ -95,10 +95,10 @@ jobs:
         shell: bash
         run: |
           for binary in \
-            "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3/Contents/MacOS/FreqArt" \
-            "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3/Contents/MacOS/FreqArt FX" \
-            "build/FreqArtTests_artefacts/Release/FreqArtTests" \
-            "build/FreqArtSnapshot_artefacts/Release/FreqArtSnapshot"; do
+            "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3/Contents/MacOS/ArtFreq" \
+            "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3/Contents/MacOS/ArtFreq FX" \
+            "build/ArtFreqTests_artefacts/Release/ArtFreqTests" \
+            "build/ArtFreqSnapshot_artefacts/Release/ArtFreqSnapshot"; do
             lipo -info "$binary"
             lipo "$binary" -verify_arch arm64 x86_64
           done
@@ -109,7 +109,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          tests="build/FreqArtTests_artefacts/Release/FreqArtTests"
+          tests="build/ArtFreqTests_artefacts/Release/ArtFreqTests"
           test -x "$tests"
           if arch -x86_64 /usr/bin/true 2> /dev/null; then
             arch -x86_64 "$tests"
@@ -125,8 +125,8 @@ jobs:
         shell: bash
         run: |
           for plugin in \
-            "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" \
-            "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3"; do
+            "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" \
+            "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3"; do
             if [ ! -f "$plugin/Contents/Resources/moduleinfo.json" ]; then
               echo "::warning::$plugin has no Contents/Resources/moduleinfo.json; VST 3.7.5+ hosts scan it more slowly."
             fi
@@ -135,25 +135,25 @@ jobs:
           done
 
       # Renders the editor in its main states to PNG files, to check the interface on a real
-      # Mac (fonts, HiDPI): the instrument's (freqart-*.png) and FreqArt FX's in each of its
-      # modes (freqart-fx-*.png). It runs headless on the macOS runner; on Linux it needs a
+      # Mac (fonts, HiDPI): the instrument's (artfreq-*.png) and ArtFreq FX's in each of its
+      # modes (artfreq-fx-*.png). It runs headless on the macOS runner; on Linux it needs a
       # display (xvfb-run -a).
       - name: Interface snapshots
         id: snapshots
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          build/FreqArtSnapshot_artefacts/Release/FreqArtSnapshot snapshots
+          build/ArtFreqSnapshot_artefacts/Release/ArtFreqSnapshot snapshots
           ls -l snapshots
           ls snapshots/*.png > /dev/null
-          ls snapshots/freqart-fx-*.png > /dev/null
+          ls snapshots/artfreq-fx-*.png > /dev/null
 
       # Uploaded even when the tool failed part-way, to see how far it got.
       - name: Upload interface snapshots
         if: ${{ !cancelled() && steps.snapshots.outcome != 'skipped' && runner.os == 'macOS' }}
         uses: actions/upload-artifact@v4
         with:
-          name: FreqArt-Snapshots
+          name: ArtFreq-Snapshots
           path: snapshots/*.png
           if-no-files-found: warn
 
@@ -165,8 +165,8 @@ jobs:
             "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/${{ matrix.pluginval_zip }}"
           if [ "$RUNNER_OS" = "Windows" ]; then 7z x -y pluginval.zip > /dev/null; else unzip -oq pluginval.zip; fi
           for plugin in \
-            "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" \
-            "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3"; do
+            "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" \
+            "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3"; do
             echo "Validating $plugin"
             args=(--strictness-level 10 --validate-in-process --output-dir pluginval-logs --validate "$plugin")
             if [ "$RUNNER_OS" = "Linux" ]; then
@@ -184,34 +184,34 @@ jobs:
           path: pluginval-logs
           if-no-files-found: ignore
 
-      # One zip with both bundles side by side at its top: FreqArt.vst3 and "FreqArt FX.vst3".
+      # One zip with both bundles side by side at its top: ArtFreq.vst3 and "ArtFreq FX.vst3".
       - name: Package
         shell: bash
         run: |
           mkdir -p dist stage
           rm -rf stage/*
           if [ "$RUNNER_OS" = "macOS" ]; then
-            ditto "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" "stage/FreqArt.vst3"
-            ditto "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3" "stage/FreqArt FX.vst3"
-            codesign --verify --strict "stage/FreqArt.vst3"
-            codesign --verify --strict "stage/FreqArt FX.vst3"
+            ditto "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" "stage/ArtFreq.vst3"
+            ditto "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3" "stage/ArtFreq FX.vst3"
+            codesign --verify --strict "stage/ArtFreq.vst3"
+            codesign --verify --strict "stage/ArtFreq FX.vst3"
             # Without --keepParent ditto archives the folder's contents, not the folder.
-            ditto -c -k stage "$GITHUB_WORKSPACE/dist/FreqArt-VST3-macOS.zip"
+            ditto -c -k stage "$GITHUB_WORKSPACE/dist/ArtFreq-VST3-macOS.zip"
           else
-            cp -R "build/FreqArt_artefacts/Release/VST3/FreqArt.vst3" "stage/FreqArt.vst3"
-            cp -R "build/FreqArtFX_artefacts/Release/VST3/FreqArt FX.vst3" "stage/FreqArt FX.vst3"
+            cp -R "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" "stage/ArtFreq.vst3"
+            cp -R "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3" "stage/ArtFreq FX.vst3"
             if [ "$RUNNER_OS" = "Windows" ]; then
-              (cd stage && 7z a -tzip "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Windows.zip" FreqArt.vst3 "FreqArt FX.vst3" > /dev/null)
+              (cd stage && 7z a -tzip "$GITHUB_WORKSPACE/dist/ArtFreq-VST3-Windows.zip" ArtFreq.vst3 "ArtFreq FX.vst3" > /dev/null)
             else
-              (cd stage && zip -qry "$GITHUB_WORKSPACE/dist/FreqArt-VST3-Linux.zip" FreqArt.vst3 "FreqArt FX.vst3")
+              (cd stage && zip -qry "$GITHUB_WORKSPACE/dist/ArtFreq-VST3-Linux.zip" ArtFreq.vst3 "ArtFreq FX.vst3")
             fi
           fi
-          unzip -l dist/*.zip | grep -q "FreqArt FX.vst3/"
+          unzip -l dist/*.zip | grep -q "ArtFreq FX.vst3/"
 
       - name: Upload plug-in
         uses: actions/upload-artifact@v4
         with:
-          name: FreqArt-VST3-${{ matrix.name }}
+          name: ArtFreq-VST3-${{ matrix.name }}
           path: dist/*.zip
           if-no-files-found: error
 
@@ -222,18 +222,22 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          version=$(sed -n 's/^project(FreqArt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          version=$(sed -n 's/^project(ArtFreq VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           test -n "$version"
           bash installer/macos/build-pkg.sh build out "$version"
-          test -f "out/FreqArt-$version-macOS.pkg"
+          test -f "out/ArtFreq-$version-macOS.pkg"
 
       # Prove it: install it on this machine and validate the installed copies.
       - name: Test-install the macOS installer
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          version=$(sed -n 's/^project(FreqArt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
-          sudo installer -pkg "out/FreqArt-$version-macOS.pkg" -target / -verbose
+          version=$(sed -n 's/^project(ArtFreq VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          # Stand-ins for the plug-ins as they were called before 0.4: the installer removes them.
+          sudo mkdir -p "/Library/Audio/Plug-Ins/VST3/FreqArt.vst3/Contents" "/Library/Audio/Plug-Ins/VST3/FreqArt FX.vst3/Contents"
+          sudo installer -pkg "out/ArtFreq-$version-macOS.pkg" -target / -verbose
+          test ! -e "/Library/Audio/Plug-Ins/VST3/FreqArt.vst3"
+          test ! -e "/Library/Audio/Plug-Ins/VST3/FreqArt FX.vst3"
           check_installed()
           {
             local name="$1" target="$2" package="$3"
@@ -246,14 +250,14 @@ jobs:
             pkgutil --pkg-info "$package"
             "./${{ matrix.pluginval_bin }}" --strictness-level 5 --validate-in-process --validate "$installed"
           }
-          check_installed "FreqArt" FreqArt com.anymeans.freqart.vst3
-          check_installed "FreqArt FX" FreqArtFX com.anymeans.freqartfx.vst3
+          check_installed "ArtFreq" ArtFreq com.anymeans.artfreq.vst3
+          check_installed "ArtFreq FX" ArtFreqFX com.anymeans.artfreqfx.vst3
 
       - name: Upload macOS installer
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: FreqArt-Installer-macOS
+          name: ArtFreq-Installer-macOS
           path: out/*.pkg
           if-no-files-found: error
 
@@ -280,13 +284,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: FreqArt-VST3-*
+          pattern: ArtFreq-VST3-*
           merge-multiple: true
 
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: FreqArt-Installer-*
+          pattern: ArtFreq-Installer-*
           merge-multiple: true
 
       - name: Publish
@@ -295,27 +299,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          version=$(sed -n 's/^project(FreqArt VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          version=$(sed -n 's/^project(ArtFreq VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
           test -n "$version"
           tag="v$version"
           ls -l dist
-          test -f "dist/FreqArt-$version-macOS.pkg"
-          test -f "dist/FreqArt-VST3-macOS.zip"
+          test -f "dist/ArtFreq-$version-macOS.pkg"
+          test -f "dist/ArtFreq-VST3-macOS.zip"
 
           cat > notes.md <<EOF
-          FreqArt $version by AnyMeans, built from commit ${GITHUB_SHA::7}. Turns text, pictures and brush strokes into sound whose spectrogram shows them, as two VST3 plug-ins from the same code: **FreqArt**, an instrument for MIDI / instrument tracks that plays the drawing, and **FreqArt FX**, an audio effect for audio tracks, buses and the master that carves the drawing into the song (Carve), keeps only it (Stencil), plays it in a hole carved for it (Carve + Draw) or plays it on top (Draw). Universal (Apple Silicon and Intel), macOS 10.15 or later.
+          ArtFreq $version by AnyMeans, built from commit ${GITHUB_SHA::7}. Turns text, pictures and brush strokes into sound whose spectrogram shows them, as two VST3 plug-ins from the same code: **ArtFreq**, an instrument for MIDI / instrument tracks that plays the drawing, and **ArtFreq FX**, an audio effect for audio tracks, buses and the master that carves the drawing into the song (Carve), keeps only it (Stencil), plays it in a hole carved for it (Carve + Draw) or plays it on top (Draw). Universal (Apple Silicon and Intel), macOS 10.15 or later.
 
-          **macOS:** download \`FreqArt-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`FreqArt.vst3\` and \`FreqArt FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`.
+          **macOS:** download \`ArtFreq-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`.
 
-          **Manual install:** download \`FreqArt-VST3-macOS.zip\`, unzip it and copy \`FreqArt.vst3\` and \`FreqArt FX.vst3\` into \`~/Library/Audio/Plug-Ins/VST3\`. If your DAW will not load them, clear the download quarantine once: \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/FreqArt.vst3 ~/Library/Audio/Plug-Ins/VST3/FreqArt\\ FX.vst3\`. Windows and Linux builds are paused until the macOS version is finished.
+          **Manual install:** download \`ArtFreq-VST3-macOS.zip\`, unzip it and copy \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`~/Library/Audio/Plug-Ins/VST3\`. If your DAW will not load them, clear the download quarantine once: \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 ~/Library/Audio/Plug-Ins/VST3/ArtFreq\\ FX.vst3\`. Windows and Linux builds are paused until the macOS version is finished.
 
-          Then rescan plug-ins in your DAW. Put FreqArt on an instrument track, or FreqArt FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
+          Then rescan plug-ins in your DAW. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
+
+          **New in 0.4**
+          - FreqArt is now called **ArtFreq** (and FreqArt FX **ArtFreq FX**). Old projects keep working: they open with the renamed plug-ins, and the installer removes the old FreqArt bundles from \`/Library/Audio/Plug-Ins/VST3\`. Rescan plug-ins in your DAW after installing (after a manual install, delete \`FreqArt.vst3\` and \`FreqArt FX.vst3\` yourself).
 
           **New in 0.3**
-          - **FreqArt FX**, a second plug-in installed alongside FreqArt (listed under audio effects, category Fx / Filter): put it on an audio track, a bus or the master. **Mode**: Carve (the default) mutes the drawing's frequencies in the song so it shows as dark shapes, Carve + Draw plays the drawing in a hole carved a little wider, Stencil keeps only the drawing, Draw plays it on top; **Depth** (default -80 dB) is how far carved frequencies drop. It uses the same window, drawing tools, Length, Trigger, Repeat and start bar.
-          - FreqArt FX delays the audio by **85 ms** (4096 samples at 48 kHz) in every mode and in bypass, and tells your DAW, which keeps the song in time. Put it before the master's final limiter (MiniMeters after both) or leave some headroom: carving and the sines can raise peaks above 0 dBFS.
-          - **Lows**: Smooth (new instances) fills shapes in the low end at every FFT size, with gliding sines; Stripes keeps the separate lines of 0.1 and 0.2. Projects saved with FreqArt 0.1 or 0.2 open with Stripes, so they look and sound as before.
-          - FreqArt and FreqArt FX save the same state, but your DAW keeps presets and projects per plug-in, so a drawing does not move from one to the other by itself: redraw it, or re-add its pictures and text.
+          - **ArtFreq FX**, a second plug-in installed alongside ArtFreq (listed under audio effects, category Fx / Filter): put it on an audio track, a bus or the master. **Mode**: Carve (the default) mutes the drawing's frequencies in the song so it shows as dark shapes, Carve + Draw plays the drawing in a hole carved a little wider, Stencil keeps only the drawing, Draw plays it on top; **Depth** (default -80 dB) is how far carved frequencies drop. It uses the same window, drawing tools, Length, Trigger, Repeat and start bar.
+          - ArtFreq FX delays the audio by **85 ms** (4096 samples at 48 kHz) in every mode and in bypass, and tells your DAW, which keeps the song in time. Put it before the master's final limiter (MiniMeters after both) or leave some headroom: carving and the sines can raise peaks above 0 dBFS.
+          - **Lows**: Smooth (new instances) fills shapes in the low end at every FFT size, with gliding sines; Stripes keeps the separate lines of 0.1 and 0.2. Projects saved with 0.1 or 0.2 open with Stripes, so they look and sound as before.
+          - ArtFreq and ArtFreq FX save the same state, but your DAW keeps presets and projects per plug-in, so a drawing does not move from one to the other by itself: redraw it, or re-add its pictures and text.
           EOF
 
           # Never take the existing download away before the new one is up. An existing
@@ -362,13 +369,13 @@ jobs:
               fi
             done
 
-            gh release edit "$tag" --title "FreqArt $version" --notes-file notes.md --latest
+            gh release edit "$tag" --title "ArtFreq $version" --notes-file notes.md --latest
             gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$tag" -f sha="$GITHUB_SHA" -F force=true > /dev/null \
               || echo "::warning::Could not move tag $tag to $GITHUB_SHA; the release assets are up to date."
           else
             # GitHub refuses to let a workflow tag a commit whose workflow files differ from
             # the default branch's (an older build being re-run, for instance). Tagging the
             # branch itself is always allowed, so fall back to that.
-            gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "FreqArt $version" --notes-file notes.md --latest \
-              || gh release create "$tag" dist/* --target "$GITHUB_REF_NAME" --title "FreqArt $version" --notes-file notes.md --latest
+            gh release create "$tag" dist/* --target "$GITHUB_SHA" --title "ArtFreq $version" --notes-file notes.md --latest \
+              || gh release create "$tag" dist/* --target "$GITHUB_REF_NAME" --title "ArtFreq $version" --notes-file notes.md --latest
           fi

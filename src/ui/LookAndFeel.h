@@ -1,6 +1,6 @@
 #pragma once
 
-// The look of every standard JUCE control inside the FreqArt window: knobs, linear sliders,
+// The look of every standard JUCE control inside the ArtFreq window: knobs, linear sliders,
 // combo boxes and their menus, text fields, buttons, tooltips and scrollbars. Colours and type
 // come from Theme.h. See docs/DESIGN.md, "Look".
 
@@ -8,14 +8,14 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
-class FreqArtLookAndFeel final : public juce::LookAndFeel_V4
+class ArtFreqLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
-    FreqArtLookAndFeel();
-    ~FreqArtLookAndFeel() override;
+    ArtFreqLookAndFeel();
+    ~ArtFreqLookAndFeel() override;
 
     /** Marks the component that combo-box menus and tooltips open inside (the editor's scaled
         content), so they scale with the window and never become separate desktop windows. */
@@ -93,7 +93,7 @@ public:
     void drawCornerResizer (juce::Graphics&, int width, int height, bool isMouseOver, bool isMouseDragging) override;
 
 private:
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FreqArtLookAndFeel)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtFreqLookAndFeel)
 };
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

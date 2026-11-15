@@ -29,7 +29,7 @@
 //
 // The gate, jump and plan fades are gains on the summed output, per sample.
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -1137,4 +1137,4 @@ int ArtEngine::gatherComb (const ArtPlan& plan, float weightStart, float weightE
     return count;
 }
 
-} // namespace freqart
+} // namespace artfreq

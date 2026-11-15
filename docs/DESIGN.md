@@ -1,10 +1,10 @@
-# FreqArt: design
+# ArtFreq: design
 
-FreqArt is an AnyMeans instrument plug-in (VST3, macOS first) that turns text, pictures and
+ArtFreq is an AnyMeans instrument plug-in (VST3, macOS first) that turns text, pictures and
 brush strokes into sound whose **spectrogram shows them**. Open a spectrogram (MiniMeters, or
 any analyser with a scrolling spectrogram) on the output and the drawing scrolls past. The same
-code is also built as **FreqArt FX**, an audio effect that carves the drawing into a song (see
-[FreqArt FX](#freqart-fx)).
+code is also built as **ArtFreq FX**, an audio effect that carves the drawing into a song (see
+[ArtFreq FX](#artfreq-fx)).
 
 ## How it works
 
@@ -40,14 +40,14 @@ code is also built as **FreqArt FX**, an audio effect that carves the drawing in
 
 Why sound and not MIDI: a spectrogram shows the frequencies present at each moment. MIDI notes
 can only make the few pitches of a synth patch, on a semitone grid, with harmonics drawn on top;
-pictures need hundreds of exactly placed frequencies. So FreqArt *is* the instrument: MIDI is
+pictures need hundreds of exactly placed frequencies. So ArtFreq *is* the instrument: MIDI is
 used as a trigger, and the drawing can also be bounced to a WAV file.
 
 ## Threads
 
 - **Message thread**: the document, undo history, compositor and plan building (debounced by a
-  timer, ~25 Hz; in FreqArt FX also the masks), the editor, the live view analysis.
-- **Audio thread**: tracker + engine + level + safety clipper (in FreqArt FX: tracker + carver,
+  timer, ~25 Hz; in ArtFreq FX also the masks), the editor, the live view analysis.
+- **Audio thread**: tracker + engine + level + safety clipper (in ArtFreq FX: tracker + carver,
   and in the Draw modes the engine, level and clipper on the sines, then their delay); pushes
   output to the live analyser only while the live view is visible. No locks, no allocation.
 - **Plans** travel through `PlanExchange`, the effect's masks through `MaskSetExchange` (wait-free
@@ -75,8 +75,8 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | rangeLow | Analyser low | 10..1000 Hz | 20 Hz | no |
 | rangeHigh | Analyser high | 2000..24000 Hz | 20000 Hz | no |
 | slope | Analyser slope | 0, 3, 4.5, 6 dB/oct | 0 dB/oct | no |
-| mode | Mode (FreqArt FX only) | Carve, Carve + Draw, Stencil, Draw | Carve | yes |
-| depth | Depth (FreqArt FX only) | -120..0 dB | -80 dB | yes |
+| mode | Mode (ArtFreq FX only) | Carve, Carve + Draw, Stencil, Draw | Carve | yes |
+| depth | Depth (ArtFreq FX only) | -120..0 dB | -80 dB | yes |
 
 Density, Contrast and Lows reshape the plan, which the message thread rebuilds on its timer (by
 wall-clock time, not in step with the audio): automated, they would land late, and somewhere
@@ -85,7 +85,7 @@ automation targets.
 
 Repeat and Start bar were added after 0.1 (parameter version hint 2). A saved parameter tree
 that lacks a parameter loads it at its default (Repeat off, bar 1), not at whatever the instance
-had; FreqArt 0.1's third trigger, "Free loop" (index 2, or its name), loads as Transport with
+had; ArtFreq 0.1's third trigger, "Free loop" (index 2, or its name), loads as Transport with
 Repeat on, the nearest thing left (a plain clamp to the two choices would make it MIDI note).
 Host automation lanes recorded on the old three-choice Trigger cannot be rewritten: there,
 Free loop now reads as MIDI note.
@@ -146,7 +146,7 @@ The customer, after 0.1: the stripes in the lows are a nice effect, but they los
 picture. On a log scale the lows hold few lines (merged to 25 Hz apart, as closer lines beat and
 pulse), and an analyser with a long FFT (MiniMeters at 8192 and up) resolves them into stripes
 with dark gaps: low-band fill 0.38 at 8192, 0.21 at 16384. Three ways of filling the gaps were
-built and measured with FreqArtLab: lines that wobble inside their spans, narrow noise bands,
+built and measured with ArtFreqLab: lines that wobble inside their spans, narrow noise bands,
 and a rising comb. The comb won (it filled best and flickered least, and at 4096, where the lines
 already looked fine, it stayed as good), so it is **Smooth**, the default for new instances;
 **Stripes** stays as the other choice, as the customer liked it as an effect.
@@ -211,7 +211,7 @@ already looked fine, it stayed as good), so it is **Smooth**, the default for ne
 - **Cost.** 93 sines + 88 lines at density 256 (Stripes: 142 lines), 101 + 295 at 1024 (366); in
   the worst case (a one-beat, fully drawn density-1024 plan) 65 - 95 x real time on one core
   (Stripes: 100 - 150 x); buildPlan 2 - 8 ms (1 - 3 ms); about 1.5 MB more per plan.
-- **Measured** (FreqArtLab, Hann, interpolated, mean over four drawings and both densities;
+- **Measured** (ArtFreqLab, Hann, interpolated, mean over four drawings and both densities;
   low = 30 - 250 Hz / mid = 250 Hz - 2 kHz, Stripes -> Smooth):
 
   | FFT | fidelity | fill | gap dB | flicker dB | leak dB |
@@ -230,8 +230,8 @@ already looked fine, it stayed as good), so it is **Smooth**, the default for ne
 
 The producer asked for a "negative mode" for full songs: instead of playing the drawing, mute
 its frequencies in the incoming audio, so it shows as dark shapes in the song's spectrogram
-(Carve), or let only the drawing through (Stencil). FreqArt FX offers it (see
-[FreqArt FX](#freqart-fx)); this is the engine side, and the lab two engines were measured in:
+(Carve), or let only the drawing through (Stencil). ArtFreq FX offers it (see
+[ArtFreq FX](#artfreq-fx)); this is the engine side, and the lab two engines were measured in:
 
 - **The mask plan** (`core/MaskPlan.h`) is built on the message thread from the same canvas as
   the sine plan: per canvas column a mask over frequency, 0 = untouched, 1 = carved by all of
@@ -328,7 +328,7 @@ its frequencies in the incoming audio, so it shows as dark shapes in the song's 
   with a full-band drawing one beat long, its typical worst callback at 96 kHz / 32 samples went
   from 1.2 to 0.5 ms and at 192 kHz / 128 from 2.3 to 0.9 ms, about the transforms alone (JUCE's
   portable FFT on Linux; on the Mac vDSP's, several times faster). The mean cost halved at 192 kHz.
-- **The lab** (`tools/CarveLab.cpp`, target `FreqArtCarveLab`) plays dense songs (pink noise, a
+- **The lab** (`tools/CarveLab.cpp`, target `ArtFreqCarveLab`) plays dense songs (pink noise, a
   busy synthetic mix, or a WAV) through an engine with four drawings (text, a filled sun, a
   ramp, a photo-like portrait), one 8 s pass from bar 2, in Carve and Stencil, and measures
   what an analyser like MiniMeters (log, 20 Hz - 20 kHz, FFT 4096 / 8192 / 16384) shows: carve
@@ -337,18 +337,18 @@ its frequencies in the incoming audio, so it shows as dark shapes in the song's 
   transparency, block-size independence, cost and latency (see the top of the file). It writes
   metrics.txt / metrics.json and pictures of the input, output and attenuation.
 
-## FreqArt FX
+## ArtFreq FX
 
 The producer, on a full song: the played frequencies get lost in everything else, so could
-there be a negative mode that mutes them instead, and could FreqArt go on audio tracks and the
+there be a negative mode that mutes them instead, and could ArtFreq go on audio tracks and the
 master as well as MIDI tracks? Hosts decide from a VST3's category where it may go (Ableton Live,
 FL Studio and Cubase offer an instrument only on MIDI / instrument tracks and an effect only on
 audio tracks, buses and the master), so no one plug-in can be both. The same plug-in is
-therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and **FreqArt FX**
-(Fx, Filter; plug-in code FqFx, bundle id com.anymeans.freqartfx), one installer for both.
+therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and **ArtFreq FX**
+(Fx, Filter; plug-in code FqFx, bundle id com.anymeans.artfreqfx), one installer for both.
 
-- **One code base.** `FreqArtProcessor` takes a `Variant` (instrument | effect); the editor is the
-  same class and asks the processor which it is. Each CMake target (`freqart_add_plugin`) adds
+- **One code base.** `ArtFreqProcessor` takes a `Variant` (instrument | effect); the editor is the
+  same class and asks the processor which it is. Each CMake target (`artfreq_add_plugin`) adds
   only its own `createPluginFilter` (`src/plugin/`). The effect has stereo or mono in and out (as
   many out as in), takes MIDI (hosts that send effects MIDI can trigger it), and reports one
   carver frame of latency.
@@ -391,7 +391,7 @@ therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and *
   transparency holds; but carving changes the phases a limiter set the peaks with, and the Draw
   modes add sines. On pink noise at -11 dBFS RMS limited to -0.3 dBFS, with the default drawing
   and Level: Carve +0.8 dBFS, Carve + Draw +1.8, Draw +2.2, Stencil below the input
-  (`effectPeaksOnALimitedMaster`). The README tells users to put FreqArt FX before the master's
+  (`effectPeaksOnALimitedMaster`). The README tells users to put ArtFreq FX before the master's
   final limiter, or leave that headroom.
 - **Bypass** (`processBlockBypassed`): the same path with Depth 0 and the gate closing: the carve
   crossfades out over a frame, the sines fade out, then the output is the delayed input bit for
@@ -412,7 +412,7 @@ therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and *
 - **MIDI.** The effect asks for MIDI: Reaper, Bitwig, Cubase, Studio One and FL Studio (through
   the wrapper's MIDI input port) can send it to an audio effect, so Trigger = MIDI works there.
   Ableton Live never sends MIDI to audio effects: Transport needs none.
-- **State.** The same XML as the instrument's (`FreqArtState`, now with a `plugin` attribute
+- **State.** The same XML as the instrument's (`ArtFreqState`, now with a `plugin` attribute
   naming the variant that saved it), so either loads the other's drawing and shared settings:
   the instrument leaves out Mode and Depth (unknown parameters are dropped on load, so they are
   not saved back as its own), the effect fills them in at their defaults. Hosts do not offer
@@ -420,8 +420,14 @@ therefore registered twice: **FreqArt** (Instrument, Generator; unchanged) and *
   SDK's preset loader refuses another class's preset), so moving a drawing between the two needs
   a feature of its own (copy and paste of the drawing, or an export and import of it), not yet
   built; the README says so.
+- **The rename (0.4).** FreqArt became ArtFreq. The plug-in codes (Anym, FqAr, FqFx), and so the
+  VST3 class IDs, and the parameter IDs are unchanged, so old projects open the renamed
+  plug-ins. The state is written as `ArtFreqState` / `ArtFreqParameters` / `ArtFreqDocument`;
+  the `FreqArt*` tags of earlier versions are read too. The installer removes old `FreqArt.vst3`
+  and `FreqArt FX.vst3` bundles from the system VST3 folder once their replacements are in, so a
+  DAW does not list each plug-in twice.
 - **The editor** is the instrument's with:
-  - **Header**: "FreqArt FX" (FX in accent2); Canvas | Live beside the wordmark; then, centred
+  - **Header**: "ArtFreq FX" (FX in accent2); Canvas | Live beside the wordmark; then, centred
     between it and undo, MODE and a segmented Carve | Carve + Draw | Stencil | Draw (284 px; its
     tooltip says what each does) and DEPTH with a number field (72 px, "-80 dB": drag, click to
     type; greyed in Draw). 24 px either side of the group; it fits from 75 to 200 % (the
@@ -490,7 +496,7 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 
 ```
 +--------------------------------------------------------------------------------------+
-| Header 52: FreqArt wordmark + "by AnyMeans" | [Canvas | Live] | undo redo | ? | gear  |
+| Header 52: ArtFreq wordmark + "by AnyMeans" | [Canvas | Live] | undo redo | ? | gear  |
 +--------------------------------------------------------------------------------------+
 | Toolbar 44: [Select][Brush][Erase]  Size --o-- Soft --o-- Strength --o-- | +Text +Image | Clear |
 +-------------------------------------------------------------------+------------------+
@@ -549,7 +555,7 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 
 ### Live view
 
-A scrolling spectrogram of FreqArt's own output (`LiveAnalyzer`), right to left, same scale,
+A scrolling spectrogram of ArtFreq's own output (`LiveAnalyzer`), right to left, same scale,
 range, slope and colour map as the canvas. It shows one pass of the drawing and a quarter more
 (whole seconds, 4 to 20 s; it follows the length and the tempo), so the whole drawing is on screen
 for a while each pass; seconds are labelled every 1, 2 or 5 s, as room allows. A small "LIVE" badge
@@ -617,14 +623,14 @@ while visible.
 - Preview: a round play/stop button (accent2 when on). Plays the drawing from its start, on a
   loop with Repeat, else once (then it turns itself off).
 - Export: "Bounce WAV" renders one pass in the background ("Rendering..." on the button); then a
-  draggable chip names the file on two lines ("FreqArt HELLO" over "14-03-27.wav"), plus "Save..."
+  draggable chip names the file on two lines ("ArtFreq HELLO" over "14-03-27.wav"), plus "Save..."
   (async FileChooser).
-  - **Names.** Every bounce is a new file in <temp>/FreqArt, "FreqArt <first text, or Drawing>
+  - **Names.** Every bounce is a new file in <temp>/ArtFreq, "ArtFreq <first text, or Drawing>
     <HH-MM-SS>.wav" (the text cut to letters, digits, spaces and `-_()'&+!`, at most 20
     characters; " 2", " 3" ... in the same second). The file is created when its render starts,
     which reserves the name, so no two bounces (of this instance or another) ever share one. DAWs
     (Logic, Live, FL Studio) know dropped audio by its path and name and keep what they read the
-    first time: a file rewritten under the same name (0.1.0 wrote FreqArt.wav every time) plays
+    first time: a file rewritten under the same name (0.1.0 wrote ArtFreq.wav every time) plays
     the old audio after the second drag.
   - **Always fresh.** From the first click until the window closes, the file follows the drawing.
     A change to the drawing, length, tempo, level (or the sample rate) turns the chip into
@@ -639,15 +645,15 @@ while visible.
   - **Save...** saves the current file; chosen while an update is on its way, it saves the update
     once it is in.
   - **Clean-up.** A file is deleted when the next one takes over and when the window closes,
-    unless it was dragged out (a DAW may read it where it is); FreqArt*.wav files a day old are
+    unless it was dragged out (a DAW may read it where it is); ArtFreq*.wav files a day old are
     deleted when an editor opens. Closing the window stops running renders (the render checks once
     per block) instead of waiting for them.
 
 ### Header
 
-Wordmark "FreqArt" (Inter SemiBold 20; "FreqArt FX" in the effect, FX in accent2) and "by
+Wordmark "ArtFreq" (Inter SemiBold 20; "ArtFreq FX" in the effect, FX in accent2) and "by
 AnyMeans" (11 px dim). Segmented Canvas | Live (in the effect beside the wordmark, with Mode and
-Depth after it: see [FreqArt FX](#freqart-fx)).
+Depth after it: see [ArtFreq FX](#artfreq-fx)).
 Undo / Redo icon buttons (also Cmd+Z / Cmd+Shift+Z). "?" opens the help panel; gear opens
 settings. Icons are drawn with juce::Path (no image assets).
 
@@ -659,7 +665,7 @@ Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawin
 
 ### Help panel (overlay)
 
-Short numbered steps: put FreqArt on an instrument track; open a spectrogram (MiniMeters) on the
+Short numbered steps: put ArtFreq on an instrument track; open a spectrogram (MiniMeters) on the
 output; match scale/range in Settings; add text/image/paint; choose a band and density; press
 play in the DAW (or Preview, once or on a loop); Trigger modes and Repeat explained (nothing
 plays by itself); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
@@ -670,7 +676,7 @@ a scan-line look.
 
 ## Tests
 
-`FreqArtTests` (no host): scale maths; document round trip; image modes (auto-invert on a white
+`ArtFreqTests` (no host): scale maths; document round trip; image modes (auto-invert on a white
 background, transparency, outline); text rendering coverage; compositor placement; plan
 (frequencies, spacing, normalisation, contrast, slope); Smooth lows, the rising comb (the lines it
 replaces, its loudness grid and softened edges, thin strokes played steady on the replaced lines
@@ -711,7 +717,7 @@ carved by nearly all of Depth and a stroke thinner than a bin by its share; the 
 output: exact before and after a pass, the carve complete from its start to its end; a stroke
 between two frames' centres carved at a one-beat length; columns read alike at their edges
 whatever the host's rounding; the halo per mode and holdLoudest; the wide dilation against a
-direct maximum). FreqArt FX (`EffectTests.cpp`, through the real processor): its name, buses and
+direct maximum). ArtFreq FX (`EffectTests.cpp`, through the real processor): its name, buses and
 parameters, the latency at 44.1 - 96 kHz in every mode, the audio bit for bit outside the pass,
 with the DAW stopped and with nothing drawn or everything hidden, Carve and Stencil on a sine in
 a drawn band at -80 and -40 dB, Carve + Draw's wider hole, its sines and Level, Draw adding
@@ -724,8 +730,8 @@ them, what each mode greys, the export's hint, both help panels fitting the wind
 canvas in each mode (black where Carve carves at -80 dB, Stencil the other way round, Carve +
 Draw's halo dark and its sines bright, nothing drawn leaving the stand-in).
 
-`FreqArtSnapshot <dir>` renders the editor in its main states to PNG (FreqArt FX's as
-`freqart-fx-*.png`: each mode, a shallow Depth typed in, the Mode tooltip, the live view of a
+`ArtFreqSnapshot <dir>` renders the editor in its main states to PNG (ArtFreq FX's as
+`artfreq-fx-*.png`: each mode, a shallow Depth typed in, the Mode tooltip, the live view of a
 stand-in song carved by the real processor, the help, 75 / 100 / 200 %, with checks of the
 header's layout, Mode and Depth driven with the mouse, what they grey, the export's hint, Preview
 carving the audio coming in; and the instrument's: Repeat, MIDI with Repeat,
@@ -736,7 +742,7 @@ and the brush settings; Stripes and back changing the plan and the canvas; hidde
 object's settings), and the footer's Trigger, Repeat, the start bar field (drag, type, Enter,
 Esc, clamping), the hint line, Preview stopping by itself without Repeat, and the layout.
 
-`FreqArtLab <dir> [--lows stripes|smooth]` (tools/LowsLab.cpp) is the bench the lows were chosen
+`ArtFreqLab <dir> [--lows stripes|smooth]` (tools/LowsLab.cpp) is the bench the lows were chosen
 on: it renders four drawings through the real plan and engine, analyses them like a spectrogram
 (Hann and Blackman-Harris, 4096 to 32768 points, interpolated and nearest-bin) and measures, over
 30 Hz - 2 kHz, fidelity, fill, gap depth, flicker, regular pulsing and leakage, with PNG sheets

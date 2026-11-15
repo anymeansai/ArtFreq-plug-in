@@ -2,7 +2,7 @@
 
 #include "Parameters.h"
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 namespace
 {
@@ -12,7 +12,7 @@ namespace
     constexpr const char* modeCaptionText = "Mode";
     constexpr const char* depthCaptionText = "Depth";
 
-    juce::RangedAudioParameter& parameter (FreqArtProcessor& processor, const char* id)
+    juce::RangedAudioParameter& parameter (ArtFreqProcessor& processor, const char* id)
     {
         auto* p = processor.getParameters().getParameter (id);
         jassert (p != nullptr);
@@ -20,7 +20,7 @@ namespace
     }
 } // namespace
 
-EffectControls::EffectControls (FreqArtProcessor& p)
+EffectControls::EffectControls (ArtFreqProcessor& p)
     : processor (p)
 {
     setComponentID ("effect-controls");
@@ -87,4 +87,4 @@ void EffectControls::resized()
     depth->setBounds (x, y, depthWidth, height);
 }
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

@@ -6,7 +6,7 @@
 #include <cmath>
 #include <limits>
 
-namespace freqart::ui::axes
+namespace artfreq::ui::axes
 {
 namespace
 {
@@ -236,4 +236,4 @@ void drawTimeLabels (juce::Graphics& g, juce::Rectangle<float> axis, juce::Recta
     }
 }
 
-} // namespace freqart::ui::axes
+} // namespace artfreq::ui::axes

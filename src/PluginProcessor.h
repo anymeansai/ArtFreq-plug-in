@@ -2,10 +2,10 @@
 
 // The host-facing plug-in, in two variants built from the same code (one class, a flag):
 //
-// - FreqArt, an instrument: its output is the sound of the drawing.
-// - FreqArt FX, an audio effect for audio tracks, buses and the master: the drawing is carved
+// - ArtFreq, an instrument: its output is the sound of the drawing.
+// - ArtFreq FX, an audio effect for audio tracks, buses and the master: the drawing is carved
 //   out of the audio coming in (Carve), kept alone (Stencil), played into a hole carved for it
-//   (Carve + Draw) or played on top of it (Draw). See docs/DESIGN.md, "FreqArt FX".
+//   (Carve + Draw) or played on top of it (Draw). See docs/DESIGN.md, "ArtFreq FX".
 //
 // Hosts decide from a VST3's category whether it goes in an instrument slot or an effect slot
 // (Ableton Live, FL Studio and Cubase offer an instrument only on MIDI / instrument tracks and an
@@ -28,10 +28,10 @@
 #include <functional>
 #include <memory>
 
-namespace freqart
+namespace artfreq
 {
 
-class FreqArtProcessor final : public juce::AudioProcessor,
+class ArtFreqProcessor final : public juce::AudioProcessor,
                                public juce::ChangeBroadcaster,
                                private juce::AudioProcessorValueTreeState::Listener,
                                private juce::Timer,
@@ -40,12 +40,12 @@ class FreqArtProcessor final : public juce::AudioProcessor,
 public:
     enum class Variant
     {
-        instrument,  // FreqArt: no audio in, makes the sound
-        effect       // FreqArt FX: audio in and out, Mode and Depth
+        instrument,  // ArtFreq: no audio in, makes the sound
+        effect       // ArtFreq FX: audio in and out, Mode and Depth
     };
 
-    explicit FreqArtProcessor (Variant variant = Variant::instrument);
-    ~FreqArtProcessor() override;
+    explicit ArtFreqProcessor (Variant variant = Variant::instrument);
+    ~ArtFreqProcessor() override;
 
     Variant getVariant() const noexcept { return variant; }
     bool isEffect() const noexcept { return variant == Variant::effect; }
@@ -63,7 +63,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return isEffect() ? "FreqArt FX" : "FreqArt"; }
+    const juce::String getName() const override { return isEffect() ? "ArtFreq FX" : "ArtFreq"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -151,7 +151,7 @@ public:
 
     LiveAnalyzer& getAnalyzer() noexcept { return analyzer; }
 
-    // ---- FreqArt FX ------------------------------------------------------------------------
+    // ---- ArtFreq FX ------------------------------------------------------------------------
 
     /** The effect's Mode (Carve for the instrument, which has none). */
     EffectMode getEffectMode() const noexcept;
@@ -285,7 +285,7 @@ private:
     std::atomic<float>* modeParam = nullptr;       // the effect only
     std::atomic<float>* depthParam = nullptr;      // the effect only
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FreqArtProcessor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtFreqProcessor)
 };
 
-} // namespace freqart
+} // namespace artfreq

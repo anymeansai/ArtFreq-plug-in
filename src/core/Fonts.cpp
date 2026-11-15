@@ -1,10 +1,10 @@
 #include "Fonts.h"
 
-#include "FreqArtAssets.h"
+#include "ArtFreqAssets.h"
 
 #include <array>
 
-namespace freqart::fonts
+namespace artfreq::fonts
 {
 
 namespace
@@ -46,15 +46,15 @@ const std::array<juce::Typeface::Ptr, numFaces>& faces()
             result[static_cast<size_t> (face)] = typeface;
         };
 
-        load (Face::interRegular,         FreqArtAssets::InterRegular_ttf,         FreqArtAssets::InterRegular_ttfSize);
-        load (Face::interMedium,          FreqArtAssets::InterMedium_ttf,          FreqArtAssets::InterMedium_ttfSize);
-        load (Face::interSemiBold,        FreqArtAssets::InterSemiBold_ttf,        FreqArtAssets::InterSemiBold_ttfSize);
-        load (Face::interBold,            FreqArtAssets::InterBold_ttf,            FreqArtAssets::InterBold_ttfSize);
-        load (Face::spaceGroteskSemiBold, FreqArtAssets::SpaceGroteskSemiBold_ttf, FreqArtAssets::SpaceGroteskSemiBold_ttfSize);
-        load (Face::jostMedium,           FreqArtAssets::JostMedium_ttf,           FreqArtAssets::JostMedium_ttfSize);
-        load (Face::frauncesSemiBold,     FreqArtAssets::FrauncesSemiBold_ttf,     FreqArtAssets::FrauncesSemiBold_ttfSize);
-        load (Face::dmMonoRegular,        FreqArtAssets::DMMonoRegular_ttf,        FreqArtAssets::DMMonoRegular_ttfSize);
-        load (Face::dmMonoMedium,         FreqArtAssets::DMMonoMedium_ttf,         FreqArtAssets::DMMonoMedium_ttfSize);
+        load (Face::interRegular,         ArtFreqAssets::InterRegular_ttf,         ArtFreqAssets::InterRegular_ttfSize);
+        load (Face::interMedium,          ArtFreqAssets::InterMedium_ttf,          ArtFreqAssets::InterMedium_ttfSize);
+        load (Face::interSemiBold,        ArtFreqAssets::InterSemiBold_ttf,        ArtFreqAssets::InterSemiBold_ttfSize);
+        load (Face::interBold,            ArtFreqAssets::InterBold_ttf,            ArtFreqAssets::InterBold_ttfSize);
+        load (Face::spaceGroteskSemiBold, ArtFreqAssets::SpaceGroteskSemiBold_ttf, ArtFreqAssets::SpaceGroteskSemiBold_ttfSize);
+        load (Face::jostMedium,           ArtFreqAssets::JostMedium_ttf,           ArtFreqAssets::JostMedium_ttfSize);
+        load (Face::frauncesSemiBold,     ArtFreqAssets::FrauncesSemiBold_ttf,     ArtFreqAssets::FrauncesSemiBold_ttfSize);
+        load (Face::dmMonoRegular,        ArtFreqAssets::DMMonoRegular_ttf,        ArtFreqAssets::DMMonoRegular_ttfSize);
+        load (Face::dmMonoMedium,         ArtFreqAssets::DMMonoMedium_ttf,         ArtFreqAssets::DMMonoMedium_ttfSize);
 
         for (auto& typeface : result)
             if (typeface == nullptr)
@@ -141,4 +141,4 @@ juce::Typeface::Ptr artTypeface (int index)
     return face (artFont (index).face);
 }
 
-} // namespace freqart::fonts
+} // namespace artfreq::fonts

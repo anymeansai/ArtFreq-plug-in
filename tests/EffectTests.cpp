@@ -1,4 +1,4 @@
-// FreqArt FX, the effect variant of the processor, driven like a host would: its layout and
+// ArtFreq FX, the effect variant of the processor, driven like a host would: its layout and
 // parameters, the latency (constant in every mode, at every rate, and in bypass), transparency
 // outside the pass and with nothing drawn, carving and stencilling a sine in a drawn band through
 // the real processor, Carve + Draw's hole and sines, Draw's sines on top of the audio (the
@@ -23,14 +23,14 @@
 #include <memory>
 #include <vector>
 
-using namespace freqart;
+using namespace artfreq;
 using namespace testutil;
 
 namespace
 {
 
 using Stereo = std::vector<std::vector<float>>;
-using Variant = FreqArtProcessor::Variant;
+using Variant = ArtFreqProcessor::Variant;
 
 constexpr double defaultRate = 48000.0;
 
@@ -54,11 +54,11 @@ ArtDocument bandDocument (std::initializer_list<std::pair<double, double>> bands
 }
 
 /** A processor of either variant, set up (parameters, drawing) before the host prepares it. */
-std::unique_ptr<FreqArtProcessor> makeProcessor (Variant variant, const ArtDocument& document,
-                                                 const std::function<void (FreqArtProcessor&)>& setup = {},
+std::unique_ptr<ArtFreqProcessor> makeProcessor (Variant variant, const ArtDocument& document,
+                                                 const std::function<void (ArtFreqProcessor&)>& setup = {},
                                                  double rate = defaultRate, int block = 512, int channels = 2)
 {
-    auto processor = std::make_unique<FreqArtProcessor> (variant);
+    auto processor = std::make_unique<ArtFreqProcessor> (variant);
 
     if (setup != nullptr)
         setup (*processor);
@@ -71,10 +71,10 @@ std::unique_ptr<FreqArtProcessor> makeProcessor (Variant variant, const ArtDocum
 }
 
 /** Mode, Repeat and so on, by index. */
-std::function<void (FreqArtProcessor&)> settingsOf (EffectMode mode, bool repeat = true, float depth = params::defaultDepthDb,
+std::function<void (ArtFreqProcessor&)> settingsOf (EffectMode mode, bool repeat = true, float depth = params::defaultDepthDb,
                                                     int lengthIndex = 2, int startBar = 1)
 {
-    return [=] (FreqArtProcessor& p)
+    return [=] (ArtFreqProcessor& p)
     {
         if (p.isEffect())
         {
@@ -95,12 +95,12 @@ struct Run
     double bpm = 120.0;
     std::function<void (int start, int length, juce::MidiBuffer&)> midi;
     std::function<bool (int start)> bypassed;
-    std::function<void (FreqArtProcessor&, int start)> beforeBlock;
+    std::function<void (ArtFreqProcessor&, int start)> beforeBlock;
 };
 
 /** Plays `input` through the processor as a host would, block by block, with the DAW's
     transport at the song's start (or stopped). Returns what comes out. */
-Stereo process (FreqArtProcessor& processor, const Stereo& input, const Run& run = {})
+Stereo process (ArtFreqProcessor& processor, const Stereo& input, const Run& run = {})
 {
     FakePlayHead head;
     processor.setPlayHead (&head);
@@ -256,14 +256,14 @@ constexpr EffectMode allModes[] { EffectMode::carve, EffectMode::carveDraw, Effe
 
 } // namespace
 
-FREQART_TEST (effectHasItsOwnNameLayoutAndParameters)
+ARTFREQ_TEST (effectHasItsOwnNameLayoutAndParameters)
 {
     const auto effect = makeProcessor (Variant::effect, ArtDocument());
     const auto instrument = makeProcessor (Variant::instrument, ArtDocument());
 
     CHECK (effect->isEffect() && ! instrument->isEffect());
-    CHECK (effect->getName() == "FreqArt FX");
-    CHECK (instrument->getName() == "FreqArt");
+    CHECK (effect->getName() == "ArtFreq FX");
+    CHECK (instrument->getName() == "ArtFreq");
     CHECK (effect->acceptsMidi() && ! effect->producesMidi() && ! effect->isMidiEffect());
 
     // Mode (Carve by default) and Depth (-80 dB), both automatable; the instrument has neither.
@@ -302,7 +302,7 @@ FREQART_TEST (effectHasItsOwnNameLayoutAndParameters)
     CHECK (effect->getBusCount (true) == 1 && instrument->getBusCount (true) == 0);
 }
 
-FREQART_TEST (effectLatencyIsConstant)
+ARTFREQ_TEST (effectLatencyIsConstant)
 {
     // One frame of the carver, about 85.3 ms at every rate, in every mode, whatever is drawn.
     for (const auto rate : { 44100.0, 48000.0, 88200.0, 96000.0 })
@@ -329,7 +329,7 @@ FREQART_TEST (effectLatencyIsConstant)
     CHECK (makeProcessor (Variant::effect, ArtDocument())->getLatencySamples() == 4096);
 }
 
-FREQART_TEST (effectLeavesTheAudioAloneOutsideThePass)
+ARTFREQ_TEST (effectLeavesTheAudioAloneOutsideThePass)
 {
     // A pass of one bar from bar 2 (2 s to 4 s at 120 BPM) over 800 - 1250 Hz. Before it, after
     // it (and its 5 ms fade) and with the DAW stopped, the output is the input one latency later,
@@ -367,7 +367,7 @@ FREQART_TEST (effectLeavesTheAudioAloneOutsideThePass)
     }
 }
 
-FREQART_TEST (effectLeavesTheAudioAloneWithNothingDrawn)
+ARTFREQ_TEST (effectLeavesTheAudioAloneWithNothingDrawn)
 {
     // Nothing drawn (or everything hidden): every mode passes the audio through untouched, as
     // late as ever (Stencil does not mute it all, and Draw has no sines to add).
@@ -388,7 +388,7 @@ FREQART_TEST (effectLeavesTheAudioAloneWithNothingDrawn)
     }
 }
 
-FREQART_TEST (effectCarvesAndStencilsASineInADrawnBand)
+ARTFREQ_TEST (effectCarvesAndStencilsASineInADrawnBand)
 {
     // Through the real processor: a 1 kHz sine in a drawn band of 800 - 1250 Hz and a 4 kHz one
     // outside it. Carve drops the first by Depth (within a few dB) and leaves the second alone;
@@ -420,7 +420,7 @@ FREQART_TEST (effectCarvesAndStencilsASineInADrawnBand)
     CHECK_LESS (levelDb (out, 4000.0, from, to) - levelDb (input, 4000.0, from - latency, to - latency), -70.0);
 }
 
-FREQART_TEST (effectCarveAndDrawPlaysTheDrawingInAWiderHole)
+ARTFREQ_TEST (effectCarveAndDrawPlaysTheDrawingInAWiderHole)
 {
     // A band of 800 - 1000 Hz. Carve + Draw plays the drawing's sines there and carves a little
     // wider than the drawing (4 rows and 3 bins): a sine at 1020 Hz, just above the drawing, is
@@ -432,7 +432,7 @@ FREQART_TEST (effectCarveAndDrawPlaysTheDrawingInAWiderHole)
 
     const auto run = [&] (EffectMode mode, float levelDb)
     {
-        auto effect = makeProcessor (Variant::effect, document, [&] (FreqArtProcessor& p)
+        auto effect = makeProcessor (Variant::effect, document, [&] (ArtFreqProcessor& p)
         {
             settingsOf (mode, true) (p);
             setParameter (p, params::id::level, levelDb);
@@ -458,7 +458,7 @@ FREQART_TEST (effectCarveAndDrawPlaysTheDrawingInAWiderHole)
     CHECK_NEAR (sinesDb - bandDb (quieter, 830.0, 970.0, from, to), 12.0, 1.0);
 }
 
-FREQART_TEST (effectDrawAddsTheInstrumentsSoundAsLateAsTheAudio)
+ARTFREQ_TEST (effectDrawAddsTheInstrumentsSoundAsLateAsTheAudio)
 {
     // Draw leaves the audio as it is and adds the drawing's sines: what it adds is exactly what
     // the instrument plays (same plan, same pass, Level and clipper), one latency later, so the
@@ -487,7 +487,7 @@ FREQART_TEST (effectDrawAddsTheInstrumentsSoundAsLateAsTheAudio)
     CHECK_LESS (largest, 1.0e-6f);
 }
 
-FREQART_TEST (effectBypassKeepsTheLatency)
+ARTFREQ_TEST (effectBypassKeepsTheLatency)
 {
     // Carving while playing, then the host bypasses it: the carve and the sines fade out within a
     // frame, then the output is the input as late as before, bit for bit (a host's bypass never
@@ -518,7 +518,7 @@ FREQART_TEST (effectBypassKeepsTheLatency)
     }
 }
 
-FREQART_TEST (effectModeAndDepthChangesDoNotClick)
+ARTFREQ_TEST (effectModeAndDepthChangesDoNotClick)
 {
     // A sine in a drawn low band, the modes switched every half second while playing and Depth
     // jumped from -80 to 0 to -120 dB: carving changes from frame to frame, crossfaded by the
@@ -532,7 +532,7 @@ FREQART_TEST (effectModeAndDepthChangesDoNotClick)
                                   EffectMode::carve, EffectMode::draw, EffectMode::stencil, EffectMode::carveDraw };
 
     Run run;
-    run.beforeBlock = [&] (FreqArtProcessor& p, int start)
+    run.beforeBlock = [&] (ArtFreqProcessor& p, int start)
     {
         const auto step = start / 24000;
 
@@ -553,13 +553,13 @@ FREQART_TEST (effectModeAndDepthChangesDoNotClick)
     CHECK_GREATER (largestBend (played, 0, 5 * 48000), 0.0f);
 }
 
-FREQART_TEST (effectStateRoundTrips)
+ARTFREQ_TEST (effectStateRoundTrips)
 {
     // FX states load in FX (Mode, Depth, the drawing); an FX state loaded into the instrument
     // keeps the drawing and the shared settings (and drops Mode and Depth), and an instrument
     // state loaded into FX keeps its drawing too, with Mode and Depth at their defaults.
     const auto document = ArtDocument::createDefault();
-    auto effect = makeProcessor (Variant::effect, document, [] (FreqArtProcessor& p)
+    auto effect = makeProcessor (Variant::effect, document, [] (ArtFreqProcessor& p)
     {
         setParameter (p, params::id::mode, 2.0f);
         setParameter (p, params::id::depth, -50.0f);
@@ -587,10 +587,10 @@ FREQART_TEST (effectStateRoundTrips)
     juce::MemoryBlock instrumentState;
     instrument->getStateInformation (instrumentState);
     const auto saved = juce::AudioProcessor::getXmlFromBinary (instrumentState.getData(), static_cast<int> (instrumentState.getSize()));
-    CHECK (saved != nullptr && saved->getStringAttribute ("plugin") == "FreqArt");
+    CHECK (saved != nullptr && saved->getStringAttribute ("plugin") == "ArtFreq");
     CHECK (saved != nullptr && saved->toString().contains ("\"depth\"") == false);
 
-    auto fromInstrument = makeProcessor (Variant::effect, ArtDocument(), [] (FreqArtProcessor& p) { setParameter (p, params::id::mode, 3.0f); });
+    auto fromInstrument = makeProcessor (Variant::effect, ArtDocument(), [] (ArtFreqProcessor& p) { setParameter (p, params::id::mode, 3.0f); });
     fromInstrument->setStateInformation (instrumentState.getData(), static_cast<int> (instrumentState.getSize()));
     CHECK (fromInstrument->getDocument().objects.size() == document.objects.size());
     CHECK (fromInstrument->getEffectMode() == EffectMode::carve);
@@ -598,7 +598,7 @@ FREQART_TEST (effectStateRoundTrips)
     CHECK_NEAR (getParameter (*fromInstrument, params::id::level), -12.0f, 0.05);
 }
 
-FREQART_TEST (effectWorksInMonoAndStereo)
+ARTFREQ_TEST (effectWorksInMonoAndStereo)
 {
     // One channel in and out carves like each of two; the two channels of a stereo signal are
     // carved alike.
@@ -624,7 +624,7 @@ FREQART_TEST (effectWorksInMonoAndStereo)
     CHECK_LESS (largest, 1.0e-6f);
 }
 
-FREQART_TEST (effectFollowsSampleRatesAndBlockSizes)
+ARTFREQ_TEST (effectFollowsSampleRatesAndBlockSizes)
 {
     // 44.1 to 96 kHz carve alike; any block sizes (also longer than prepared, and single
     // samples) give the same output, in Carve + Draw too (the sines and the carve).
@@ -683,7 +683,7 @@ FREQART_TEST (effectFollowsSampleRatesAndBlockSizes)
     }
 }
 
-FREQART_TEST (effectSpreadsItsWorkOverTheHop)
+ARTFREQ_TEST (effectSpreadsItsWorkOverTheHop)
 {
     // A frame of the carver needs the last sample of its hop, and the first sample played out
     // after it needs the frame, so its transforms run in the callback that completes the hop.
@@ -784,7 +784,7 @@ FREQART_TEST (effectSpreadsItsWorkOverTheHop)
     }
 }
 
-FREQART_TEST (effectKeepsTheMasksItIsReadingAlive)
+ARTFREQ_TEST (effectKeepsTheMasksItIsReadingAlive)
 {
     // The carver works out a frame's gains over its hop, from the masks it began with. A drawing
     // that changes in the middle of a hop publishes new masks; the old ones must outlive that
@@ -821,9 +821,9 @@ FREQART_TEST (effectKeepsTheMasksItIsReadingAlive)
     CHECK (old.expired());
 }
 
-FREQART_TEST (effectPeaksOnALimitedMaster)
+ARTFREQ_TEST (effectPeaksOnALimitedMaster)
 {
-    // FreqArt FX passes the song as it is (no clipper on it: outside the pass it is the input,
+    // ArtFreq FX passes the song as it is (no clipper on it: outside the pass it is the input,
     // bit for bit), so on a master limited to -0.3 dBFS carving can raise the peaks (an STFT
     // changes the phases the peaks were limited at) and the Draw modes add their sines: the
     // output can go over 0 dBFS, which the README says (put it before the final limiter, or
@@ -895,7 +895,7 @@ FREQART_TEST (effectPeaksOnALimitedMaster)
     }
 }
 
-FREQART_TEST (effectResetFlushesTheAudioInFlight)
+ARTFREQ_TEST (effectResetFlushesTheAudioInFlight)
 {
     // A VST3 host's setProcessing (false) (on stop, on a seek, or while it suspends a silent
     // effect) reaches the plug-in as reset(). The song and the sines in flight must go with it:
@@ -928,7 +928,7 @@ FREQART_TEST (effectResetFlushesTheAudioInFlight)
     }
 }
 
-FREQART_TEST (effectFollowsMidiAndPreview)
+ARTFREQ_TEST (effectFollowsMidiAndPreview)
 {
     // With the DAW stopped (hosts keep feeding effects audio), a MIDI note plays the pass (for
     // the hosts that send effects MIDI), and so does Preview: the audio coming in is carved from
@@ -936,7 +936,7 @@ FREQART_TEST (effectFollowsMidiAndPreview)
     const auto document = bandDocument ({ { 800.0, 1250.0 } });
     const auto input = sines (3 * 48000, { { 1000.0, 0.25f } });
 
-    auto midi = makeProcessor (Variant::effect, document, [] (FreqArtProcessor& p)
+    auto midi = makeProcessor (Variant::effect, document, [] (ArtFreqProcessor& p)
     {
         settingsOf (EffectMode::carve, false) (p);
         setParameter (p, params::id::trigger, 1.0f);
@@ -958,7 +958,7 @@ FREQART_TEST (effectFollowsMidiAndPreview)
     auto preview = makeProcessor (Variant::effect, document, settingsOf (EffectMode::carve, false));
     Run stopped;
     stopped.playing = false;
-    stopped.beforeBlock = [] (FreqArtProcessor& p, int start)
+    stopped.beforeBlock = [] (ArtFreqProcessor& p, int start)
     {
         if (start == 24576)
             p.setPreview (true);

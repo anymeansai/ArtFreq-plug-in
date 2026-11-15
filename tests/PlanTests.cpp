@@ -10,7 +10,7 @@
 #include <chrono>
 #include <cmath>
 
-using namespace freqart;
+using namespace artfreq;
 
 namespace
 {
@@ -113,7 +113,7 @@ bool activeListsMatch (const ArtPlan& plan)
 
 } // namespace
 
-FREQART_TEST (planLineLayout)
+ARTFREQ_TEST (planLineLayout)
 {
     const Canvas empty;
 
@@ -170,7 +170,7 @@ FREQART_TEST (planLineLayout)
     CHECK (buildPlan (empty, settingsFor (ScaleType::linear, 5000))->numLines == 1024);
 }
 
-FREQART_TEST (planSpacingAndLimits)
+ARTFREQ_TEST (planSpacingAndLimits)
 {
     const Canvas empty;
 
@@ -194,7 +194,7 @@ FREQART_TEST (planSpacingAndLimits)
     CHECK_LESS (low->numLines, 1024);
 }
 
-FREQART_TEST (planSingleRowBecomesOneLine)
+ARTFREQ_TEST (planSingleRowBecomesOneLine)
 {
     for (const auto type : { ScaleType::log, ScaleType::linear, ScaleType::mel })
     {
@@ -259,7 +259,7 @@ FREQART_TEST (planSingleRowBecomesOneLine)
     }
 }
 
-FREQART_TEST (planMergedLinesKeepTheirRows)
+ARTFREQ_TEST (planMergedLinesKeepTheirRows)
 {
     // Where lines are merged (the lows on a log scale) a thin stroke on any row must still
     // sound, and on its NEAREST line: a merged line keeps its lowest cell's frequency and the
@@ -341,7 +341,7 @@ FREQART_TEST (planMergedLinesKeepTheirRows)
     }
 }
 
-FREQART_TEST (planContrastMapping)
+ARTFREQ_TEST (planContrastMapping)
 {
     for (const auto contrast : { 12.0f, 40.0f, 72.0f })
     {
@@ -373,7 +373,7 @@ FREQART_TEST (planContrastMapping)
     CHECK_NEAR (toDb (plan->amplitude (0, Canvas::height - 1 - 900) / plan->amplitude (0, Canvas::height - 1 - 100)), -40.0 * (1.0 - 0.0011), 0.01);
 }
 
-FREQART_TEST (planSlopeCompensation)
+ARTFREQ_TEST (planSlopeCompensation)
 {
     // A log scale on which line 4 is exactly 500 Hz and line 8 exactly 1 kHz (4 lines per octave).
     const auto minHz = 500.0 / std::pow (2.0, 1.125);
@@ -405,7 +405,7 @@ FREQART_TEST (planSlopeCompensation)
     CHECK_NEAR (toDb (negative->amplitude (0, 4) / negative->amplitude (0, 8)), -3.0, 0.01);
 }
 
-FREQART_TEST (planEmptyCanvasIsSilent)
+ARTFREQ_TEST (planEmptyCanvasIsSilent)
 {
     const Canvas empty;
     const auto plan = buildPlan (empty, settingsFor (ScaleType::log, 256));
@@ -422,7 +422,7 @@ FREQART_TEST (planEmptyCanvasIsSilent)
     CHECK (buildPlan (faint, settingsFor (ScaleType::log, 256))->silent);
 }
 
-FREQART_TEST (planNormalisationAndActiveLists)
+ARTFREQ_TEST (planNormalisationAndActiveLists)
 {
     juce::Random random (7);
     Canvas canvas;
@@ -463,7 +463,7 @@ FREQART_TEST (planNormalisationAndActiveLists)
     CHECK (plan->amplitude (Canvas::width - 1, line900) <= 0.0f);
 }
 
-FREQART_TEST (planTiming)
+ARTFREQ_TEST (planTiming)
 {
     juce::Random random (3);
     Canvas canvas;
@@ -485,7 +485,7 @@ FREQART_TEST (planTiming)
     CHECK_LESS (ms, 4 * 15.0);
 }
 
-FREQART_TEST (planDefaultSpacing)
+ARTFREQ_TEST (planDefaultSpacing)
 {
     // Lines closer than an analyser can separate beat in visible pulses; the default spacing
     // keeps the lows steady (25 Hz beats average out inside a typical analysis window).

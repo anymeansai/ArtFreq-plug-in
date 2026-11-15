@@ -5,7 +5,7 @@
 #include <cmath>
 #include <utility>
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 namespace
 {
@@ -732,4 +732,4 @@ void ShellButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
     g.drawText (getButtonText(), getLocalBounds(), juce::Justification::centred, false);
 }
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

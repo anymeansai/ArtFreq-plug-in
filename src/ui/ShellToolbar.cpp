@@ -3,7 +3,7 @@
 #include "Actions.h"
 #include "ShellHeader.h"
 
-namespace freqart::ui::shell
+namespace artfreq::ui::shell
 {
 namespace
 {
@@ -176,4 +176,4 @@ void Toolbar::updateFromState()
         slider->setAlpha (alpha);
 }
 
-} // namespace freqart::ui::shell
+} // namespace artfreq::ui::shell

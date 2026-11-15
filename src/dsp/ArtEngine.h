@@ -10,7 +10,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 /** A stretch of the block over which playback is uniform. The PlayheadTracker produces these. */
@@ -154,4 +154,4 @@ private:
     std::vector<float> combSum;               // chunkSize
 };
 
-} // namespace freqart
+} // namespace artfreq

@@ -5,7 +5,7 @@
 
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -70,7 +70,7 @@ bool onMessageThread() noexcept
 
 } // namespace
 
-juce::AudioProcessor::BusesProperties FreqArtProcessor::busesFor (Variant variant)
+juce::AudioProcessor::BusesProperties ArtFreqProcessor::busesFor (Variant variant)
 {
     // The instrument makes its sound from nothing; the effect works on the audio it is given.
     if (variant == Variant::effect)
@@ -81,10 +81,10 @@ juce::AudioProcessor::BusesProperties FreqArtProcessor::busesFor (Variant varian
     return BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true);
 }
 
-FreqArtProcessor::FreqArtProcessor (Variant variantToUse)
+ArtFreqProcessor::ArtFreqProcessor (Variant variantToUse)
     : juce::AudioProcessor (busesFor (variantToUse)),
       variant (variantToUse),
-      parameters (*this, nullptr, "FreqArtParameters", params::createLayout (variantToUse == Variant::effect)),
+      parameters (*this, nullptr, "ArtFreqParameters", params::createLayout (variantToUse == Variant::effect)),
       history (40)
 {
     levelParam       = parameters.getRawParameterValue (params::id::level);
@@ -149,7 +149,7 @@ FreqArtProcessor::FreqArtProcessor (Variant variantToUse)
     startTimerHz (timerHz);
 }
 
-FreqArtProcessor::~FreqArtProcessor()
+ArtFreqProcessor::~ArtFreqProcessor()
 {
     stopTimer();
     cancelPendingUpdate();
@@ -160,7 +160,7 @@ FreqArtProcessor::~FreqArtProcessor()
 
 // ---- playback ------------------------------------------------------------------------------
 
-void FreqArtProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock)
+void ArtFreqProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock)
 {
     const auto rate = sampleRate > 0.0 && std::isfinite (sampleRate) ? sampleRate : 48000.0;
     currentSampleRate.store (rate);
@@ -215,7 +215,7 @@ void FreqArtProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamp
     }
 }
 
-void FreqArtProcessor::releaseResources()
+void ArtFreqProcessor::releaseResources()
 {
     engine.reset();
     tracker.reset();
@@ -224,7 +224,7 @@ void FreqArtProcessor::releaseResources()
         carver.reset();
 }
 
-void FreqArtProcessor::reset()
+void ArtFreqProcessor::reset()
 {
     // A host's flush: VST3 setProcessing (false), on stop, on a seek, or while it suspends a
     // silent effect. The effect drops the audio it holds (the song in the carver, the sines in
@@ -257,7 +257,7 @@ void FreqArtProcessor::reset()
     sounding.store (false);
 }
 
-bool FreqArtProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool ArtFreqProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto& out = layouts.getMainOutputChannelSet();
     const auto monoOrStereo = out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
@@ -273,7 +273,7 @@ bool FreqArtProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
     return monoOrStereo;
 }
 
-TrackerSettings FreqArtProcessor::currentTrackerSettings() const noexcept
+TrackerSettings ArtFreqProcessor::currentTrackerSettings() const noexcept
 {
     TrackerSettings settings;
     settings.mode = params::triggerForIndex (juce::roundToInt (triggerParam->load()));
@@ -287,14 +287,14 @@ TrackerSettings FreqArtProcessor::currentTrackerSettings() const noexcept
     return settings;
 }
 
-void FreqArtProcessor::renderChunk (float* out, int numSamples, const HostTiming& timing,
+void ArtFreqProcessor::renderChunk (float* out, int numSamples, const HostTiming& timing,
                                     const juce::MidiBuffer& midi, const TrackerSettings& settings) noexcept
 {
     const auto numSegments = tracker.process (timing, midi, numSamples, settings, segments);
     engine.render (out, numSamples, segments, numSegments);
 }
 
-void FreqArtProcessor::writeOutput (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept
+void ArtFreqProcessor::writeOutput (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept
 {
     // The level and the safety clipper on the mono render, then every channel and the analyser.
     auto* out = mono.get();
@@ -309,7 +309,7 @@ void FreqArtProcessor::writeOutput (juce::AudioBuffer<float>& buffer, int start,
         analyzer.push (out, numSamples);
 }
 
-HostTiming FreqArtProcessor::readHostTiming() noexcept
+HostTiming ArtFreqProcessor::readHostTiming() noexcept
 {
     // Host timing, and the time signature for the editor.
     HostTiming timing;
@@ -332,7 +332,7 @@ HostTiming FreqArtProcessor::readHostTiming() noexcept
     return timing;
 }
 
-void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void ArtFreqProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -424,7 +424,7 @@ void FreqArtProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     midi.clear();
 }
 
-void FreqArtProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+void ArtFreqProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -470,9 +470,9 @@ void FreqArtProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, j
     sounding.store (engine.isSounding());
 }
 
-// ---- FreqArt FX ----------------------------------------------------------------------------
+// ---- ArtFreq FX ----------------------------------------------------------------------------
 
-void FreqArtProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, bool bypassed) noexcept
+void ArtFreqProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, bool bypassed) noexcept
 {
     // The audio comes in, the carver carves it in place (one frame late, the latency the host
     // was told), and in the modes that play the drawing its sines are added, as late as the
@@ -665,7 +665,7 @@ void FreqArtProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
     midi.clear();
 }
 
-void FreqArtProcessor::addDelayedSines (juce::AudioBuffer<float>& buffer, int start, int numSamples,
+void ArtFreqProcessor::addDelayedSines (juce::AudioBuffer<float>& buffer, int start, int numSamples,
                                         int numChannels, bool rendered) noexcept
 {
     // Once the delay holds nothing but silence and nothing new comes in, there is nothing to
@@ -694,17 +694,17 @@ void FreqArtProcessor::addDelayedSines (juce::AudioBuffer<float>& buffer, int st
         buffer.addFrom (channel, start, sines, numSamples);
 }
 
-EffectMode FreqArtProcessor::getEffectMode() const noexcept
+EffectMode ArtFreqProcessor::getEffectMode() const noexcept
 {
     return modeParam != nullptr ? params::effectModeForIndex (juce::roundToInt (modeParam->load())) : EffectMode::carve;
 }
 
-float FreqArtProcessor::getDepthDb() const noexcept
+float ArtFreqProcessor::getDepthDb() const noexcept
 {
     return depthParam != nullptr ? depthParam->load() : 0.0f;
 }
 
-int FreqArtProcessor::wantedHaloColumns() const noexcept
+int ArtFreqProcessor::wantedHaloColumns() const noexcept
 {
     // About haloSeconds of the drawing, in columns at the length in use, at most a sixteenth of
     // it (in a drawing a beat long, 60 ms would blur a lot of it).
@@ -713,7 +713,7 @@ int FreqArtProcessor::wantedHaloColumns() const noexcept
     return juce::jlimit (1, maxHaloColumns, columns);
 }
 
-void FreqArtProcessor::buildMasks (const FrequencyScale& scale)
+void ArtFreqProcessor::buildMasks (const FrequencyScale& scale)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -730,7 +730,7 @@ void FreqArtProcessor::buildMasks (const FrequencyScale& scale)
     maskExchange.publish (std::move (masks));
 }
 
-void FreqArtProcessor::setPreview (bool shouldPreview) noexcept
+void ArtFreqProcessor::setPreview (bool shouldPreview) noexcept
 {
     if (! shouldPreview)
     {
@@ -748,7 +748,7 @@ void FreqArtProcessor::setPreview (bool shouldPreview) noexcept
     previewToken.compare_exchange_strong (off, token);
 }
 
-double FreqArtProcessor::getEffectiveTempo() const noexcept
+double ArtFreqProcessor::getEffectiveTempo() const noexcept
 {
     if (juce::roundToInt (tempoSourceParam->load()) != 0)
         return static_cast<double> (bpmParam->load());
@@ -756,7 +756,7 @@ double FreqArtProcessor::getEffectiveTempo() const noexcept
     return effectiveTempo.load();
 }
 
-double FreqArtProcessor::getLengthSeconds() const noexcept
+double ArtFreqProcessor::getLengthSeconds() const noexcept
 {
     const auto lengthQn = params::lengthInQuarterNotes (juce::roundToInt (lengthParam->load()),
                                                         quarterNotesPerBar (timeSignature.load()));
@@ -764,7 +764,7 @@ double FreqArtProcessor::getLengthSeconds() const noexcept
     return lengthQn * 60.0 / tempo;
 }
 
-int FreqArtProcessor::getSinglePassStartBar() const noexcept
+int ArtFreqProcessor::getSinglePassStartBar() const noexcept
 {
     const auto transport = params::triggerForIndex (juce::roundToInt (triggerParam->load())) == TriggerMode::transport;
 
@@ -774,14 +774,14 @@ int FreqArtProcessor::getSinglePassStartBar() const noexcept
     return juce::jlimit (params::firstStartBar, params::lastStartBar, juce::roundToInt (startBarParam->load()));
 }
 
-float FreqArtProcessor::getOutputGain() const noexcept
+float ArtFreqProcessor::getOutputGain() const noexcept
 {
     return juce::Decibels::decibelsToGain (levelParam->load(), -100.0f);
 }
 
 // ---- the plan ------------------------------------------------------------------------------
 
-FrequencyScale FreqArtProcessor::getScale() const
+FrequencyScale ArtFreqProcessor::getScale() const
 {
     FrequencyScale scale;
     scale.type = params::scaleForIndex (juce::roundToInt (scaleParam->load()));
@@ -790,7 +790,7 @@ FrequencyScale FreqArtProcessor::getScale() const
     return scale.sanitised();
 }
 
-PlanSettings FreqArtProcessor::getPlanSettings() const
+PlanSettings ArtFreqProcessor::getPlanSettings() const
 {
     PlanSettings settings;
     settings.scale = getScale();
@@ -804,7 +804,7 @@ PlanSettings FreqArtProcessor::getPlanSettings() const
     return settings;
 }
 
-void FreqArtProcessor::rebuildPlanIfNeeded()
+void ArtFreqProcessor::rebuildPlanIfNeeded()
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -846,13 +846,13 @@ void FreqArtProcessor::rebuildPlanIfNeeded()
     sendChangeMessage();
 }
 
-void FreqArtProcessor::parameterChanged (const juce::String&, float)
+void ArtFreqProcessor::parameterChanged (const juce::String&, float)
 {
     // May be called on any thread: just note it; the timer rebuilds.
     parametersDirty.store (true);
 }
 
-void FreqArtProcessor::timerCallback()
+void ArtFreqProcessor::timerCallback()
 {
     rebuildPlanIfNeeded();
     planExchange.collectGarbage();
@@ -864,7 +864,7 @@ void FreqArtProcessor::timerCallback()
 
 // ---- the drawing ---------------------------------------------------------------------------
 
-void FreqArtProcessor::documentChanged()
+void ArtFreqProcessor::documentChanged()
 {
     documentDirty = true;
     savedDocumentStale = true;
@@ -873,7 +873,7 @@ void FreqArtProcessor::documentChanged()
     markProjectChanged();
 }
 
-void FreqArtProcessor::markProjectChanged()
+void ArtFreqProcessor::markProjectChanged()
 {
     // The drawing and the window size are saved state but not parameters, so the host cannot
     // see them change: without this a VST3 host would not offer to save the project, and the
@@ -882,7 +882,7 @@ void FreqArtProcessor::markProjectChanged()
     updateHostDisplay (ChangeDetails().withNonParameterStateChanged (true));
 }
 
-void FreqArtProcessor::setEditorSize (int width, int height)
+void ArtFreqProcessor::setEditorSize (int width, int height)
 {
     const auto oldWidth = editorWidth.exchange (width);
     const auto oldHeight = editorHeight.exchange (height);
@@ -891,14 +891,14 @@ void FreqArtProcessor::setEditorSize (int width, int height)
     const auto shown = [] (int w, int h)
     {
         return w > 0 && h > 0 ? juce::Point<int> (w, h)
-                              : juce::Point<int> (FreqArtEditor::baseWidth, FreqArtEditor::baseHeight);
+                              : juce::Point<int> (ArtFreqEditor::baseWidth, ArtFreqEditor::baseHeight);
     };
 
     if (shown (oldWidth, oldHeight) != shown (width, height))
         markProjectChanged();
 }
 
-void FreqArtProcessor::editDocument (const std::function<void (ArtDocument&)>& edit, const juce::String& coalesceKey)
+void ArtFreqProcessor::editDocument (const std::function<void (ArtDocument&)>& edit, const juce::String& coalesceKey)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -913,7 +913,7 @@ void FreqArtProcessor::editDocument (const std::function<void (ArtDocument&)>& e
     documentChanged();
 }
 
-void FreqArtProcessor::setDocument (const ArtDocument& newDocument)
+void ArtFreqProcessor::setDocument (const ArtDocument& newDocument)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -923,7 +923,7 @@ void FreqArtProcessor::setDocument (const ArtDocument& newDocument)
     documentChanged();
 }
 
-bool FreqArtProcessor::undo()
+bool ArtFreqProcessor::undo()
 {
     lastCoalesceKey.clear();
 
@@ -934,7 +934,7 @@ bool FreqArtProcessor::undo()
     return true;
 }
 
-bool FreqArtProcessor::redo()
+bool ArtFreqProcessor::redo()
 {
     lastCoalesceKey.clear();
 
@@ -947,7 +947,7 @@ bool FreqArtProcessor::redo()
 
 // ---- state ---------------------------------------------------------------------------------
 
-void FreqArtProcessor::refreshSavedDocument()
+void ArtFreqProcessor::refreshSavedDocument()
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -958,16 +958,16 @@ void FreqArtProcessor::refreshSavedDocument()
     savedDocumentStale = false;
 }
 
-void FreqArtProcessor::getStateInformation (juce::MemoryBlock& destData)
+void ArtFreqProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     // Hosts may save from any thread. On the message thread the document is serialised now;
     // elsewhere the copy made when the last edit settled is used.
     if (onMessageThread() && savedDocumentStale)
         refreshSavedDocument();
 
-    juce::XmlElement root ("FreqArtState");
+    juce::XmlElement root ("ArtFreqState");
     root.setAttribute ("version", stateVersion);
-    root.setAttribute ("pluginVersion", FREQART_VERSION_STRING);
+    root.setAttribute ("pluginVersion", ARTFREQ_VERSION_STRING);
     // Which of the two saved it. The state is the same otherwise, so either loads the other's
     // drawing and shared settings (the effect's Mode and Depth are left out by the instrument).
     root.setAttribute ("plugin", getName());
@@ -990,22 +990,37 @@ void FreqArtProcessor::getStateInformation (juce::MemoryBlock& destData)
     copyXmlToBinary (root, destData);
 }
 
-void FreqArtProcessor::setStateInformation (const void* data, int sizeInBytes)
+void ArtFreqProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     if (data == nullptr || sizeInBytes <= 0)
         return;
 
     const auto root = getXmlFromBinary (data, sizeInBytes);
 
-    if (root == nullptr || ! root->hasTagName ("FreqArtState"))
+    // Before 0.4 the plug-in was called FreqArt and its state used FreqArt* tags; those load too.
+    if (root == nullptr || ! (root->hasTagName ("ArtFreqState") || root->hasTagName ("FreqArtState")))
         return;
 
     editorWidth.store (juce::jlimit (0, 8000, root->getIntAttribute ("editorWidth", 0)));
     editorHeight.store (juce::jlimit (0, 8000, root->getIntAttribute ("editorHeight", 0)));
 
-    if (auto* parametersXml = root->getChildByName (parameters.state.getType().toString()))
+    auto* parametersXml = root->getChildByName (parameters.state.getType().toString());
+
+    if (parametersXml == nullptr)
+        parametersXml = root->getChildByName ("FreqArtParameters");
+
+    if (parametersXml != nullptr)
     {
         auto loadedParameters = juce::ValueTree::fromXml (*parametersXml);
+
+        // Saved under the old name: the same tree, kept under the type this version saves.
+        if (loadedParameters.isValid() && ! loadedParameters.hasType (parameters.state.getType()))
+        {
+            juce::ValueTree renamed (parameters.state.getType());
+            renamed.copyPropertiesAndChildrenFrom (loadedParameters, nullptr);
+            loadedParameters = renamed;
+        }
+
         prepareLoadedParameters (loadedParameters);
         parameters.replaceState (loadedParameters);
     }
@@ -1014,8 +1029,20 @@ void FreqArtProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     juce::ValueTree documentTree;
 
-    if (auto* documentXml = root->getChildByName ("FreqArtDocument"))
+    auto* documentXml = root->getChildByName ("ArtFreqDocument");
+
+    if (documentXml == nullptr)
+        documentXml = root->getChildByName ("FreqArtDocument");
+
+    if (documentXml != nullptr)
         documentTree = juce::ValueTree::fromXml (*documentXml);
+
+    if (documentTree.isValid() && ! documentTree.hasType ("ArtFreqDocument"))
+    {
+        juce::ValueTree renamed ("ArtFreqDocument");
+        renamed.copyPropertiesAndChildrenFrom (documentTree, nullptr);
+        documentTree = renamed;
+    }
 
     // A state without a drawing loads as an empty drawing, not as whatever was there before.
     if (! documentTree.isValid())
@@ -1038,7 +1065,7 @@ void FreqArtProcessor::setStateInformation (const void* data, int sizeInBytes)
     }
 }
 
-void FreqArtProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameters) const
+void ArtFreqProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameters) const
 {
     // The value tree state keeps each parameter as a PARAM child with an "id" and its plain
     // "value".
@@ -1046,7 +1073,7 @@ void FreqArtProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameter
 
     const auto child = [&] (const juce::String& id) { return loadedParameters.getChildWithProperty (idProperty, id); };
 
-    // FreqArt 0.1's third trigger, "Free loop", looped by itself; nothing plays by itself any
+    // ArtFreq 0.1's third trigger, "Free loop", looped by itself; nothing plays by itself any
     // more, so it becomes the nearest thing left: Transport with Repeat on. (A clamp to the two
     // choices left would make it MIDI note.)
     if (auto trigger = child (params::id::trigger); trigger.isValid())
@@ -1126,7 +1153,7 @@ void FreqArtProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameter
     }
 }
 
-void FreqArtProcessor::handleAsyncUpdate()
+void ArtFreqProcessor::handleAsyncUpdate()
 {
     juce::ValueTree documentTree;
     {
@@ -1138,7 +1165,7 @@ void FreqArtProcessor::handleAsyncUpdate()
         applyDocumentState (documentTree);
 }
 
-void FreqArtProcessor::applyDocumentState (const juce::ValueTree& documentTree)
+void ArtFreqProcessor::applyDocumentState (const juce::ValueTree& documentTree)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -1161,12 +1188,12 @@ void FreqArtProcessor::applyDocumentState (const juce::ValueTree& documentTree)
     sendChangeMessage();
 }
 
-juce::AudioProcessorEditor* FreqArtProcessor::createEditor()
+juce::AudioProcessorEditor* ArtFreqProcessor::createEditor()
 {
-    return new FreqArtEditor (*this);
+    return new ArtFreqEditor (*this);
 }
 
-} // namespace freqart
+} // namespace artfreq
 
 // createPluginFilter, which makes the one or the other, is in src/plugin/ (one file per plug-in
 // target).

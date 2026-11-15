@@ -9,17 +9,17 @@
 
 #include <memory>
 
-namespace freqart
+namespace artfreq
 {
 
-class FreqArtEditor final : public juce::AudioProcessorEditor
+class ArtFreqEditor final : public juce::AudioProcessorEditor
 {
 public:
     static constexpr int baseWidth = 1120;
     static constexpr int baseHeight = 720;
 
-    explicit FreqArtEditor (FreqArtProcessor& processor);
-    ~FreqArtEditor() override;
+    explicit ArtFreqEditor (ArtFreqProcessor& processor);
+    ~ArtFreqEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -45,7 +45,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FreqArtEditor)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ArtFreqEditor)
 };
 
-} // namespace freqart
+} // namespace artfreq

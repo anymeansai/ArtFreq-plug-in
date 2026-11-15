@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -148,4 +148,4 @@ int getNumSpectralCarvers() noexcept
     return 2;
 }
 
-} // namespace freqart
+} // namespace artfreq

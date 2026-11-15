@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 namespace
 {
@@ -183,7 +183,7 @@ struct Inspector::Impl
         image
     };
 
-    Impl (Inspector& ownerToUse, FreqArtProcessor& processorToUse, EditorState& stateToUse)
+    Impl (Inspector& ownerToUse, ArtFreqProcessor& processorToUse, EditorState& stateToUse)
         : owner (ownerToUse), processor (processorToUse), state (stateToUse),
           layerList (processorToUse, stateToUse),
           addTextButton ("Add text", icons::text(), "Add text"),
@@ -918,7 +918,7 @@ struct Inspector::Impl
     // ---- state ---------------------------------------------------------------------------
 
     Inspector& owner;
-    FreqArtProcessor& processor;
+    ArtFreqProcessor& processor;
     EditorState& state;
 
     Mode mode = Mode::layers;
@@ -992,7 +992,7 @@ struct Inspector::Impl
 };
 
 //==============================================================================
-Inspector::Inspector (FreqArtProcessor& processor, EditorState& state)
+Inspector::Inspector (ArtFreqProcessor& processor, EditorState& state)
     : impl (std::make_unique<Impl> (*this, processor, state))
 {
     setOpaque (true);
@@ -1065,4 +1065,4 @@ void Inspector::changeListenerCallback (juce::ChangeBroadcaster*)
     impl->refresh();
 }
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

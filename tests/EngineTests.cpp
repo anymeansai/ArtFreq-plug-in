@@ -9,8 +9,8 @@
 #include <chrono>
 #include <cstdio>
 
-using freqart::ArtEngine;
-using freqart::ArtPlan;
+using artfreq::ArtEngine;
+using artfreq::ArtPlan;
 
 namespace
 {
@@ -35,7 +35,7 @@ std::vector<float> concat (std::vector<float> a, const std::vector<float>& b)
 
 /** A "text-like" plan: in every column a quarter of the lines are on, in runs of 8 lines that
     move with the columns, at varying levels. */
-std::shared_ptr<ArtPlan> sparsePlan (int numLines, int numColumns = freqart::Canvas::width)
+std::shared_ptr<ArtPlan> sparsePlan (int numLines, int numColumns = artfreq::Canvas::width)
 {
     return test::makePlan (test::logLines (numLines, 40.0, 16000.0), [] (int column, int line)
     {
@@ -46,7 +46,7 @@ std::shared_ptr<ArtPlan> sparsePlan (int numLines, int numColumns = freqart::Can
 
 } // namespace
 
-FREQART_TEST (engineSingleLineFrequencyAndLevel)
+ARTFREQ_TEST (engineSingleLineFrequencyAndLevel)
 {
     const auto plan = test::makeConstantPlan ({ 1000.0f }, 0.5f);
     ArtEngine engine;
@@ -74,7 +74,7 @@ FREQART_TEST (engineSingleLineFrequencyAndLevel)
     CHECK_LESS (test::toDb (strongestElsewhere / 0.5), -90.0);
 }
 
-FREQART_TEST (engineSilenceForNullAndSilentPlans)
+ARTFREQ_TEST (engineSilenceForNullAndSilentPlans)
 {
     ArtEngine engine;
     engine.prepare (rate48, 512);
@@ -96,7 +96,7 @@ FREQART_TEST (engineSilenceForNullAndSilentPlans)
     CHECK (! closed.isSounding());
 }
 
-FREQART_TEST (engineAmplitudeFollowsColumns)
+ARTFREQ_TEST (engineAmplitudeFollowsColumns)
 {
     // 16 columns of 4800 samples. Columns 0 and 8..11 are loud, the rest quiet; amplitudes
     // move linearly from one column to the next, and from the last back to the first.
@@ -125,7 +125,7 @@ FREQART_TEST (engineAmplitudeFollowsColumns)
     CHECK_LESS (test::largestStep (out), test::sineStepBound ({ 1000.0f }, { 0.8f }, rate48) * 1.02 + 1.0e-4);
 }
 
-FREQART_TEST (engineCrossfadeSameLayoutKeepsPhases)
+ARTFREQ_TEST (engineCrossfadeSameLayoutKeepsPhases)
 {
     const std::vector<float> lines { 500.0f, 1500.0f, 4000.0f };
     const auto first = test::makeConstantPlan (lines, 0.2f);
@@ -165,7 +165,7 @@ FREQART_TEST (engineCrossfadeSameLayoutKeepsPhases)
     CHECK_LESS (largestDifference, 1.0e-4);
 }
 
-FREQART_TEST (engineCrossfadeDifferentLayout)
+ARTFREQ_TEST (engineCrossfadeDifferentLayout)
 {
     const auto first = test::makeConstantPlan ({ 1000.0f }, 0.5f);
     const auto second = test::makeConstantPlan ({ 1500.0f, 3000.0f }, 0.3f);
@@ -216,7 +216,7 @@ FREQART_TEST (engineCrossfadeDifferentLayout)
     CHECK (engine.getFadingPlan() == nullptr);
 }
 
-FREQART_TEST (engineJumpFadesWithoutClick)
+ARTFREQ_TEST (engineJumpFadesWithoutClick)
 {
     // Quiet first half, loud second half: a jump between them without a fade would step.
     const auto plan = test::makePlan ({ 500.0f }, [] (int column, int) { return column < 8 ? 0.1f : 0.9f; }, 16);
@@ -229,7 +229,7 @@ FREQART_TEST (engineJumpFadesWithoutClick)
 
     // Jump to 0.6 in the middle of a block.
     std::vector<float> block (512);
-    const freqart::PlaySegment segments[] = {
+    const artfreq::PlaySegment segments[] = {
         test::segment (0, 200, true, 0.1 + 4800 * perSample, perSample),
         test::segment (200, 312, true, 0.6, perSample, true)
     };
@@ -261,7 +261,7 @@ FREQART_TEST (engineJumpFadesWithoutClick)
     CHECK_NEAR (quiet.getFraction(), 0.7 + perSample, 1.0e-12);
 }
 
-FREQART_TEST (engineGateFades)
+ARTFREQ_TEST (engineGateFades)
 {
     const auto plan = test::makeConstantPlan ({ 1000.0f }, 0.5f);
     ArtEngine engine;
@@ -299,7 +299,7 @@ FREQART_TEST (engineGateFades)
     split.setPlan (plan.get());
     test::play (split, 2048, 0.0, perSampleFor (8.0), 512, true);
     std::vector<float> block (1024);
-    const freqart::PlaySegment segments[] = {
+    const artfreq::PlaySegment segments[] = {
         test::segment (0, 300, true, 2048 * perSampleFor (8.0), perSampleFor (8.0)),
         test::segment (300, 724, false, 2348 * perSampleFor (8.0), 0.0)
     };
@@ -308,7 +308,7 @@ FREQART_TEST (engineGateFades)
     CHECK (test::peak (block, static_cast<size_t> (300 + fadeSamples + 1)) <= 0.0);
 }
 
-FREQART_TEST (engineNyquistGuard)
+ARTFREQ_TEST (engineNyquistGuard)
 {
     constexpr double rate44 = 44100.0;
     // 21 kHz is below the guard (0.48 x 44.1 kHz = 21168 Hz); 21.5 kHz is above it; 30 kHz is
@@ -327,7 +327,7 @@ FREQART_TEST (engineNyquistGuard)
     CHECK_LESS (spectrum.levelAt (14100.0), 1.0e-5);
 }
 
-FREQART_TEST (engineIsDeterministic)
+ARTFREQ_TEST (engineIsDeterministic)
 {
     const auto plan = sparsePlan (256);
     const auto perSample = perSampleFor (2.0);
@@ -372,7 +372,7 @@ FREQART_TEST (engineIsDeterministic)
     CHECK_LESS (largestDifference, 1.0e-5);
 }
 
-FREQART_TEST (enginePositionAndLongBlocks)
+ARTFREQ_TEST (enginePositionAndLongBlocks)
 {
     const auto plan = test::makeConstantPlan ({ 440.0f }, 0.3f);
     const auto perSample = perSampleFor (1.0);
@@ -391,7 +391,7 @@ FREQART_TEST (enginePositionAndLongBlocks)
     CHECK_NEAR (engine.getFraction(), 0.25 + 9000 * perSample, 1.0e-9);
 }
 
-FREQART_TEST (engineTruncatesToMaxLines)
+ARTFREQ_TEST (engineTruncatesToMaxLines)
 {
     // 1100 lines 15 Hz apart (30 Hz .. 16.5 kHz); only line 10 (180 Hz) and line 1050
     // (15780 Hz) are on. Line 1050 is past maxLines and must not play.
@@ -411,7 +411,7 @@ FREQART_TEST (engineTruncatesToMaxLines)
     CHECK_LESS (spectrum.levelAt (15780.0), 1.0e-5);
 }
 
-FREQART_TEST (enginePerformance)
+ARTFREQ_TEST (enginePerformance)
 {
     using clock = std::chrono::steady_clock;
 
@@ -461,7 +461,7 @@ FREQART_TEST (enginePerformance)
     CHECK_GREATER (sparseSpeed, 40.0);
 }
 
-FREQART_TEST (engineSurvivesRandomUse)
+ARTFREQ_TEST (engineSurvivesRandomUse)
 {
     // Random blocks, segments, gate changes, jumps and plan changes (same layout, another
     // layout, silent, none, several within one crossfade), as a host and a busy editor might
@@ -499,7 +499,7 @@ FREQART_TEST (engineSurvivesRandomUse)
         }
 
         const auto length = 1 + random.nextInt (700);
-        freqart::PlaySegment segments[3];
+        artfreq::PlaySegment segments[3];
         const auto numSegments = 1 + random.nextInt (std::min (3, length));
         auto start = 0;
 

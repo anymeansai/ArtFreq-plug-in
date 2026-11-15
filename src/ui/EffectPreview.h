@@ -1,6 +1,6 @@
 #pragma once
 
-// FreqArt FX's canvas: what an analyser will show of the effect's output in each mode.
+// ArtFreq FX's canvas: what an analyser will show of the effect's output in each mode.
 //
 // The effect works on a song the canvas does not have, so a stand-in is drawn under the drawing:
 // a texture with a song's shape (louder lows, a beat, a few held notes, grain), carved by the
@@ -36,7 +36,7 @@
 #include <memory>
 #include <vector>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
 class EffectPreviewImage
@@ -78,4 +78,4 @@ private:
     std::vector<juce::PixelARGB> rowPixels;
 };
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

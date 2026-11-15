@@ -8,7 +8,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace freqart::ui
+namespace artfreq::ui
 {
 
 /** Each object row shows its type, its name, an eye (show / hide), a delete button (while the
@@ -28,7 +28,7 @@ class LayerList final : public juce::Component,
 public:
     static constexpr int rowHeight = 30;
 
-    LayerList (FreqArtProcessor& processor, EditorState& state);
+    LayerList (ArtFreqProcessor& processor, EditorState& state);
     ~LayerList() override;
 
     /** Reads the document and the selection again (the inspector calls this on every change). */
@@ -72,4 +72,4 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LayerList)
 };
 
-} // namespace freqart::ui
+} // namespace artfreq::ui

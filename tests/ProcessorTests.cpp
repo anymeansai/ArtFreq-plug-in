@@ -12,7 +12,7 @@
 #include <chrono>
 #include <cstdio>
 
-using namespace freqart;
+using namespace artfreq;
 using namespace testutil;
 
 namespace
@@ -21,9 +21,9 @@ namespace
 constexpr double sampleRate = 48000.0;
 constexpr int blockSize = 512;
 
-std::unique_ptr<FreqArtProcessor> makeProcessor()
+std::unique_ptr<ArtFreqProcessor> makeProcessor()
 {
-    auto processor = std::make_unique<FreqArtProcessor>();
+    auto processor = std::make_unique<ArtFreqProcessor>();
     processor->setPlayConfigDetails (0, 2, sampleRate, blockSize);
     processor->prepareToPlay (sampleRate, blockSize);
     return processor;
@@ -53,7 +53,7 @@ float largestStep (const std::vector<float>& x, size_t from, size_t to)
 
 } // namespace
 
-FREQART_TEST (processorParameterDefaults)
+ARTFREQ_TEST (processorParameterDefaults)
 {
     auto processor = makeProcessor();
 
@@ -106,7 +106,7 @@ FREQART_TEST (processorParameterDefaults)
     CHECK_NEAR (density->convertFrom0to1 (0.5f), 200.0f, 2.0f);
 }
 
-FREQART_TEST (processorLengths)
+ARTFREQ_TEST (processorLengths)
 {
     CHECK_NEAR (params::lengthInQuarterNotes (0), 1.0, 1.0e-9);
     CHECK_NEAR (params::lengthInQuarterNotes (1), 2.0, 1.0e-9);
@@ -125,9 +125,9 @@ FREQART_TEST (processorLengths)
     CHECK_NEAR (processor->getLengthSeconds(), 16.0 * 60.0 / 90.0, 0.01);
 }
 
-FREQART_TEST (processorBusLayouts)
+ARTFREQ_TEST (processorBusLayouts)
 {
-    FreqArtProcessor processor;
+    ArtFreqProcessor processor;
 
     juce::AudioProcessor::BusesLayout stereo;
     stereo.outputBuses.add (juce::AudioChannelSet::stereo());
@@ -142,7 +142,7 @@ FREQART_TEST (processorBusLayouts)
     CHECK (! processor.checkBusesLayoutSupported (surround));
 }
 
-FREQART_TEST (processorStateRoundTrip)
+ARTFREQ_TEST (processorStateRoundTrip)
 {
     auto source = makeProcessor();
     setParameter (*source, params::id::density, 512.0f);
@@ -204,9 +204,56 @@ FREQART_TEST (processorStateRoundTrip)
     CHECK (plan != nullptr && ! plan->silent);
 }
 
-FREQART_TEST (processorLoadsStatesFromBeforeRepeat)
+ARTFREQ_TEST (processorLoadsStatesSavedAsFreqArt)
 {
-    // A state as FreqArt 0.1 saved it: no Repeat, no start bar, no Lows, and a trigger of 0, 1
+    // Before 0.4 the plug-in was called FreqArt and saved FreqArtState, FreqArtParameters and
+    // FreqArtDocument: an old project opens with its settings and drawing, and saves again
+    // under the new names.
+    auto source = makeProcessor();
+    setParameter (*source, params::id::repeat, 1.0f);
+    setParameter (*source, params::id::startBar, 17.0f);
+    source->editDocument ([] (ArtDocument& document)
+    {
+        document.objects.push_back (ArtDocument::makeTextObject ("Old project", 300.0f, 3000.0f));
+    });
+
+    juce::MemoryBlock state;
+    source->getStateInformation (state);
+    auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), static_cast<int> (state.getSize()));
+    CHECK (xml != nullptr && xml->hasTagName ("ArtFreqState"));
+
+    if (xml == nullptr)
+        return;
+
+    xml->setTagName ("FreqArtState");
+
+    for (auto* child : xml->getChildIterator())
+        child->setTagName (child->getTagName().replace ("ArtFreq", "FreqArt"));
+
+    CHECK (xml->getChildByName ("FreqArtParameters") != nullptr && xml->getChildByName ("FreqArtDocument") != nullptr);
+
+    juce::MemoryBlock old;
+    juce::AudioProcessor::copyXmlToBinary (*xml, old);
+
+    auto restored = makeProcessor();
+    restored->setStateInformation (old.getData(), static_cast<int> (old.getSize()));
+
+    CHECK_NEAR (getParameter (*restored, params::id::repeat), 1.0f, 1.0e-4);
+    CHECK_NEAR (getParameter (*restored, params::id::startBar), 17.0f, 1.0e-4);
+    CHECK (restored->getDocument().objects.size() == source->getDocument().objects.size());
+    CHECK (! restored->getDocument().objects.empty() && restored->getDocument().objects.back().text == "Old project");
+
+    juce::MemoryBlock resaved;
+    restored->getStateInformation (resaved);
+    auto again = juce::AudioProcessor::getXmlFromBinary (resaved.getData(), static_cast<int> (resaved.getSize()));
+    CHECK (again != nullptr && again->hasTagName ("ArtFreqState")
+           && again->getChildByName ("ArtFreqParameters") != nullptr
+           && again->getChildByName ("ArtFreqDocument") != nullptr);
+}
+
+ARTFREQ_TEST (processorLoadsStatesFromBeforeRepeat)
+{
+    // A state as ArtFreq 0.1 saved it: no Repeat, no start bar, no Lows, and a trigger of 0, 1
     // or 2 ("Free loop", saved as its index or, by some hosts' presets, as its name).
     const auto oldState = [] (const juce::String& triggerValue)
     {
@@ -215,7 +262,7 @@ FREQART_TEST (processorLoadsStatesFromBeforeRepeat)
         processor->getStateInformation (state);
 
         auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), static_cast<int> (state.getSize()));
-        auto* parametersXml = xml != nullptr ? xml->getChildByName ("FreqArtParameters") : nullptr;
+        auto* parametersXml = xml != nullptr ? xml->getChildByName ("ArtFreqParameters") : nullptr;
         CHECK (parametersXml != nullptr);
 
         if (parametersXml != nullptr)
@@ -267,7 +314,7 @@ FREQART_TEST (processorLoadsStatesFromBeforeRepeat)
     CHECK_NEAR (getParameter (*reloaded, params::id::repeat), 1.0f, 1.0e-4);
 }
 
-FREQART_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
+ARTFREQ_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
 {
     // New instances play Smooth lows (the rising comb). Lows is a setting of the plan, so, like
     // Density, not an automation target.
@@ -284,7 +331,7 @@ FREQART_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
     juce::MemoryBlock state;
     fresh->getStateInformation (state);
     auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), static_cast<int> (state.getSize()));
-    auto* parametersXml = xml != nullptr ? xml->getChildByName ("FreqArtParameters") : nullptr;
+    auto* parametersXml = xml != nullptr ? xml->getChildByName ("ArtFreqParameters") : nullptr;
     CHECK (parametersXml != nullptr && parametersXml->getChildByAttribute ("id", params::id::lowEnd) != nullptr);
 
     if (parametersXml != nullptr)
@@ -316,7 +363,7 @@ FREQART_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
     CHECK (smoothAgain->getCurrentPlan() != nullptr && smoothAgain->getCurrentPlan()->combLines > 0);
 }
 
-FREQART_TEST (processorSwitchingLowsWhilePlayingDoesNotClick)
+ARTFREQ_TEST (processorSwitchingLowsWhilePlayingDoesNotClick)
 {
     // Lows changes the plan's layout (the comb's sines or the lines), so the engine crossfades
     // from one to the other: no click either way, also when switched back before the crossfade
@@ -361,7 +408,7 @@ FREQART_TEST (processorSwitchingLowsWhilePlayingDoesNotClick)
     CHECK_GREATER (rms (switching), 0.02);
 }
 
-FREQART_TEST (processorGarbageState)
+ARTFREQ_TEST (processorGarbageState)
 {
     auto processor = makeProcessor();
     const auto before = processor->getCurrentPlan();
@@ -383,9 +430,9 @@ FREQART_TEST (processorGarbageState)
     CHECK (processor->getCurrentPlan() != nullptr);
     CHECK (! processor->getDocument().isEmpty());
 
-    // A FreqArt state with a broken drawing loads as an empty drawing.
-    juce::XmlElement root ("FreqArtState");
-    auto* documentXml = root.createNewChildElement ("FreqArtDocument");
+    // An ArtFreq state with a broken drawing loads as an empty drawing.
+    juce::XmlElement root ("ArtFreqState");
+    auto* documentXml = root.createNewChildElement ("ArtFreqDocument");
     documentXml->setAttribute ("paint", "!!!not base64!!!");
     documentXml->createNewChildElement ("Object")->setAttribute ("type", "banana");
     juce::MemoryBlock broken;
@@ -401,7 +448,7 @@ FREQART_TEST (processorGarbageState)
     CHECK_LESS (peak (out), 1.0e-6);
 }
 
-FREQART_TEST (processorSavesManyPicturesQuickly)
+ARTFREQ_TEST (processorSavesManyPicturesQuickly)
 {
     using clock = std::chrono::steady_clock;
     const auto msSince = [] (clock::time_point start)
@@ -486,8 +533,8 @@ FREQART_TEST (processorSavesManyPicturesQuickly)
 
     if (sourceXml != nullptr && restoredXml != nullptr)
     {
-        const auto* a = sourceXml->getChildByName ("FreqArtDocument");
-        const auto* b = restoredXml->getChildByName ("FreqArtDocument");
+        const auto* a = sourceXml->getChildByName ("ArtFreqDocument");
+        const auto* b = restoredXml->getChildByName ("ArtFreqDocument");
         CHECK (a != nullptr && b != nullptr && a->isEquivalentTo (b, false));
     }
 
@@ -497,7 +544,7 @@ FREQART_TEST (processorSavesManyPicturesQuickly)
     CHECK_LESS (savedAfterLoad, 0.5 * firstSave);
 }
 
-FREQART_TEST (processorTellsTheHostAboutUnsavedChanges)
+ARTFREQ_TEST (processorTellsTheHostAboutUnsavedChanges)
 {
     // What the VST3 wrapper listens to: it marks the project dirty (IComponentHandler2::setDirty)
     // only for nonParameterStateChanged.
@@ -534,7 +581,7 @@ FREQART_TEST (processorTellsTheHostAboutUnsavedChanges)
     CHECK (host.dirty == 4);
 
     // The window size is saved too: resizing counts, opening at the size it had does not.
-    processor->setEditorSize (FreqArtEditor::baseWidth, FreqArtEditor::baseHeight);  // never resized = this size
+    processor->setEditorSize (ArtFreqEditor::baseWidth, ArtFreqEditor::baseHeight);  // never resized = this size
     CHECK (host.dirty == 4);
     processor->setEditorSize (1400, 900);
     CHECK (host.dirty == 5);
@@ -544,7 +591,7 @@ FREQART_TEST (processorTellsTheHostAboutUnsavedChanges)
     processor->removeListener (&host);
 }
 
-FREQART_TEST (processorTransportStoppedIsSilent)
+ARTFREQ_TEST (processorTransportStoppedIsSilent)
 {
     auto processor = makeProcessor();
     FakePlayHead playHead;
@@ -557,7 +604,7 @@ FREQART_TEST (processorTransportStoppedIsSilent)
     processor->setPlayHead (nullptr);
 }
 
-FREQART_TEST (processorTransportPlayingFollowsTheTimeline)
+ARTFREQ_TEST (processorTransportPlayingFollowsTheTimeline)
 {
     auto processor = makeProcessor();
     processor->setDocument (textDocument ("FULL", Band::mid));
@@ -585,7 +632,7 @@ FREQART_TEST (processorTransportPlayingFollowsTheTimeline)
     processor->setPlayHead (nullptr);
 }
 
-FREQART_TEST (processorTransportPlaysOnceFromTheStartBar)
+ARTFREQ_TEST (processorTransportPlaysOnceFromTheStartBar)
 {
     // Repeat off (the default), "1 bar" from bar 2: at 120 BPM the drawing sounds from 2 s to
     // 4 s of the song and nowhere else. Then Repeat on: it loops every bar from bar 1.
@@ -630,7 +677,7 @@ FREQART_TEST (processorTransportPlaysOnceFromTheStartBar)
     processor->setPlayHead (nullptr);
 }
 
-FREQART_TEST (processorSinglePassFollowsTheSongsBars)
+ARTFREQ_TEST (processorSinglePassFollowsTheSongsBars)
 {
     // A painted drawing played once (Repeat off) through songs whose time signature changes, from
     // the song start, the host reporting each block's signature and bar start. Returns which
@@ -708,9 +755,9 @@ FREQART_TEST (processorSinglePassFollowsTheSongsBars)
     CHECK (soundingQuarters ({ { 0.0, 4 }, { 16.0, 2 }, { 18.0, 4 } }, 4, 9, 50) == range (30, 45));
 }
 
-FREQART_TEST (processorSinglePassAtATypedTempoStartsOnTheDawsBar)
+ARTFREQ_TEST (processorSinglePassAtATypedTempoStartsOnTheDawsBar)
 {
-    // The DAW at 90 BPM, FreqArt at a typed 120: "1 bar" from bar 9 sounds from the DAW's bar 9
+    // The DAW at 90 BPM, ArtFreq at a typed 120: "1 bar" from bar 9 sounds from the DAW's bar 9
     // (21.33 s), for 2 s.
     auto processor = makeProcessor();
     ArtDocument painted;
@@ -739,7 +786,7 @@ FREQART_TEST (processorSinglePassAtATypedTempoStartsOnTheDawsBar)
     CHECK (processor->getSinglePassStartBar() == 9);
 }
 
-FREQART_TEST (processorMidiRepeatLoopsWhileHeld)
+ARTFREQ_TEST (processorMidiRepeatLoopsWhileHeld)
 {
     // "1 beat" (0.5 s at 120). With Repeat a held note plays on past the end of the drawing;
     // letting go ends it.
@@ -767,7 +814,7 @@ FREQART_TEST (processorMidiRepeatLoopsWhileHeld)
     CHECK (! processor->isSounding());
 }
 
-FREQART_TEST (processorMidiNoteStartsTheDrawing)
+ARTFREQ_TEST (processorMidiNoteStartsTheDrawing)
 {
     auto processor = makeProcessor();
     processor->setDocument (textDocument ("MIDI", Band::mid));
@@ -794,7 +841,7 @@ FREQART_TEST (processorMidiNoteStartsTheDrawing)
     processor->setPlayHead (nullptr);
 }
 
-FREQART_TEST (processorMidiPassEndsOnPanicAndStop)
+ARTFREQ_TEST (processorMidiPassEndsOnPanicAndStop)
 {
     // A 4-bar pass lasts 8 s. All Sound Off, All Notes Off (on any channel) and stopping the
     // DAW each end it within the gate fade; a note-off alone does not.
@@ -849,7 +896,7 @@ FREQART_TEST (processorMidiPassEndsOnPanicAndStop)
     }
 }
 
-FREQART_TEST (processorPreviewPlaysWhileStopped)
+ARTFREQ_TEST (processorPreviewPlaysWhileStopped)
 {
     auto processor = makeProcessor();
     processor->setDocument (textDocument ("PREVIEW", Band::high));
@@ -870,7 +917,7 @@ FREQART_TEST (processorPreviewPlaysWhileStopped)
     processor->setPlayHead (nullptr);
 }
 
-FREQART_TEST (processorPreviewFollowsRepeat)
+ARTFREQ_TEST (processorPreviewFollowsRepeat)
 {
     // "1 beat" (0.5 s at 120). Without Repeat the preview plays it once and turns itself off.
     auto processor = makeProcessor();
@@ -912,7 +959,7 @@ FREQART_TEST (processorPreviewFollowsRepeat)
     CHECK_LESS (peak (out, 960), 1.0e-6);
 }
 
-FREQART_TEST (processorNeverExceedsFullScale)
+ARTFREQ_TEST (processorNeverExceedsFullScale)
 {
     auto processor = makeProcessor();
     setParameter (*processor, params::id::level, 0.0f);
@@ -945,7 +992,7 @@ FREQART_TEST (processorNeverExceedsFullScale)
         }
 }
 
-FREQART_TEST (processorLevelScalesTheOutput)
+ARTFREQ_TEST (processorLevelScalesTheOutput)
 {
     auto processor = makeProcessor();
     processor->setDocument (textDocument ("LEVEL", Band::mid));
@@ -967,7 +1014,7 @@ FREQART_TEST (processorLevelScalesTheOutput)
     CHECK_NEAR (juce::Decibels::gainToDecibels (quietRms / loudRms), -20.0, 0.5);
 }
 
-FREQART_TEST (processorEmptyDrawingIsSilent)
+ARTFREQ_TEST (processorEmptyDrawingIsSilent)
 {
     auto processor = makeProcessor();
     processor->setDocument (ArtDocument());
@@ -981,7 +1028,7 @@ FREQART_TEST (processorEmptyDrawingIsSilent)
     CHECK (plan != nullptr && plan->silent);
 }
 
-FREQART_TEST (processorRebuildsThePlan)
+ARTFREQ_TEST (processorRebuildsThePlan)
 {
     auto processor = makeProcessor();
     const auto first = processor->getCurrentPlan();
@@ -1014,7 +1061,7 @@ FREQART_TEST (processorRebuildsThePlan)
     CHECK (processor->getCurrentPlan() == lowDensity);
 }
 
-FREQART_TEST (processorUndoRedoAndCoalescing)
+ARTFREQ_TEST (processorUndoRedoAndCoalescing)
 {
     auto processor = makeProcessor();
     processor->setDocument (ArtDocument());
@@ -1058,7 +1105,7 @@ FREQART_TEST (processorUndoRedoAndCoalescing)
     CHECK (! processor->canRedo());
 }
 
-FREQART_TEST (processorBypassIsSilentAndRecovers)
+ARTFREQ_TEST (processorBypassIsSilentAndRecovers)
 {
     auto processor = makeProcessor();
     processor->setDocument (textDocument ("BYPASS"));
@@ -1095,7 +1142,7 @@ FREQART_TEST (processorBypassIsSilentAndRecovers)
     CHECK_GREATER (rms (out, 4800), 0.005);
 }
 
-FREQART_TEST (processorFollowsTheHostTimeSignature)
+ARTFREQ_TEST (processorFollowsTheHostTimeSignature)
 {
     auto processor = makeProcessor();
     processor->setDocument (textDocument ("BARS", Band::mid));
@@ -1189,7 +1236,7 @@ FREQART_TEST (processorFollowsTheHostTimeSignature)
     }
 }
 
-FREQART_TEST (processorCanvasNumbersTheSongsBars)
+ARTFREQ_TEST (processorCanvasNumbersTheSongsBars)
 {
     // A single Transport pass sits at a bar of the song: the canvas labels that song's bars.
     const auto labelsOf = [] (const std::vector<ui::axes::TimeMark>& marks)
@@ -1221,9 +1268,9 @@ FREQART_TEST (processorCanvasNumbersTheSongsBars)
     CHECK (labelsOf (ui::axes::timeMarks (4, 4, 4, 600.0f)) == juce::StringArray ({ "1", "2", "3", "4" }));
 }
 
-FREQART_TEST (processorLargerBlocksThanAnnounced)
+ARTFREQ_TEST (processorLargerBlocksThanAnnounced)
 {
-    auto processor = std::make_unique<FreqArtProcessor>();
+    auto processor = std::make_unique<ArtFreqProcessor>();
     processor->setPlayConfigDetails (0, 2, sampleRate, 64);
     processor->prepareToPlay (sampleRate, 64);
     processor->setDocument (textDocument ("BIG"));

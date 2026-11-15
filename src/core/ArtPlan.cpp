@@ -6,7 +6,7 @@
 #include <cstring>
 #include <iterator>
 
-namespace freqart
+namespace artfreq
 {
 
 namespace
@@ -480,4 +480,4 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
     return plan;
 }
 
-} // namespace freqart
+} // namespace artfreq

@@ -2,7 +2,7 @@
 
 // How frequencies are laid out from the bottom to the top of a spectrogram.
 //
-// FreqArt draws on a canvas that is a picture of the user's spectrogram: x is time across the
+// ArtFreq draws on a canvas that is a picture of the user's spectrogram: x is time across the
 // drawing's length, y is frequency on the same scale as the analyser the art will be seen on
 // (MiniMeters and most analysers default to a logarithmic axis). Everything that converts
 // between a height on the canvas and a frequency in Hz goes through FrequencyScale, so the
@@ -12,7 +12,7 @@
 
 #include <vector>
 
-namespace freqart
+namespace artfreq
 {
 
 enum class ScaleType
@@ -78,4 +78,4 @@ juce::String formatHz (double hz);
     giving 5 - 10 lines. Mel: like log but thinned so labels do not crowd. */
 std::vector<double> gridFrequencies (const FrequencyScale& scale);
 
-} // namespace freqart
+} // namespace artfreq
