@@ -645,8 +645,14 @@ while visible.
 
 ### Header
 
-Wordmark "FreqArt" (Inter SemiBold 20; "FreqArt FX" in the effect, FX in accent2) and "by
-AnyMeans" (11 px dim). Segmented Canvas | Live (in the effect beside the wordmark, with Mode and
+The emblem (24 px, `ui/Emblem.h`, image in `docs/artfreq-emblem.png`): a capital A and F as
+one monogram (the A's right leg is the F's stem, its apex runs into the F's top arm, its
+crossbar carries on as the F's middle arm), solid white on the left and dissolving to the right
+into horizontal lines in the spectrogram's colours with growing gaps, as a drawing looks once it
+has become sound. Vector paths, no fonts; the number of lines follows the size in physical
+pixels (whole-pixel lines and gaps at header size, about 30 lines when large).
+`FreqArtEmblemLab <dir> [--docs file.png]` renders it to PNGs. Then the wordmark "FreqArt"
+(Inter SemiBold 20; "FreqArt FX" in the effect, FX in accent2) and "by AnyMeans" (11 px dim). Segmented Canvas | Live (in the effect beside the wordmark, with Mode and
 Depth after it: see [FreqArt FX](#freqart-fx)).
 Undo / Redo icon buttons (also Cmd+Z / Cmd+Shift+Z). "?" opens the help panel; gear opens
 settings. Icons are drawn with juce::Path (no image assets).

@@ -1,12 +1,13 @@
 #include "ShellHeader.h"
 
+#include "Emblem.h"
 #include "ShellControls.h"
 
 namespace freqart::ui::shell
 {
 namespace
 {
-    constexpr int logoSize = 20;
+    constexpr int logoSize = 24;
     constexpr int switchWidth = 168;
     constexpr int buttonGap = 4;
     constexpr int effectGap = 24;   // FreqArt FX: around Canvas | Live and the effect's controls
@@ -17,22 +18,10 @@ namespace
     juce::Font wordmarkFont()   { return fonts::ui (theme::wordmarkSize, fonts::UiWeight::semiBold); }
     juce::Font bylineFont()     { return fonts::ui (theme::labelSize, fonts::UiWeight::medium); }
 
-    /** The mark: five scan lines, coloured from the bottom of the spectrogram colour map to the
-        top, their lengths tracing a shape the way FreqArt's lines do in an analyser. */
+    /** The emblem (Emblem.h): the A and F monogram dissolving into spectral lines. */
     void drawLogo (juce::Graphics& g, juce::Rectangle<int> area)
     {
-        static constexpr float lengths[] = { 0.55f, 0.85f, 1.0f, 0.7f, 0.4f };   // top to bottom
-        static constexpr float levels[] = { 0.92f, 0.78f, 0.64f, 0.5f, 0.36f };
-
-        const auto x = static_cast<float> (area.getX());
-        const auto width = static_cast<float> (area.getWidth());
-
-        for (int i = 0; i < 5; ++i)
-        {
-            const auto y = static_cast<float> (area.getY() + 1 + i * 4);
-            g.setColour (theme::spectrum (levels[i]));
-            g.fillRoundedRectangle (x, y, std::round (width * lengths[i]), 2.0f, 1.0f);
-        }
+        drawEmblem (g, area.toFloat());
     }
 } // namespace
 

@@ -250,4 +250,21 @@ if(FREQART_BUILD_TOOLS)
             ${FREQART_JUCE_MODULES}
         PUBLIC
             FreqArtBuildFlags)
+
+    # The emblem lab: renders the emblem (src/ui/Emblem.h) and the header lockup to PNG files.
+    juce_add_console_app(FreqArtEmblemLab PRODUCT_NAME "FreqArtEmblemLab")
+    target_sources(FreqArtEmblemLab PRIVATE
+        tools/EmblemLab.cpp
+        src/ui/Emblem.cpp
+        src/core/Fonts.cpp)
+    target_include_directories(FreqArtEmblemLab PRIVATE src)
+    target_compile_definitions(FreqArtEmblemLab PRIVATE
+        ${FREQART_COMMON_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(FreqArtEmblemLab
+        PRIVATE
+            FreqArtAssets
+            juce::juce_gui_basics
+        PUBLIC
+            FreqArtBuildFlags)
 endif()
