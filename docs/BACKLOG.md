@@ -12,11 +12,37 @@ Collected with the customer; to be done together in one release.
 
 ## 2. License activation
 
-Spec pasted by the customer (from Meta's Muse AI), reviewed. Its outline is sound (hashed machine ID, works offline after
+**Decisions (customer):** our own server, on Vercel; 2 activations (computers) per key; the plug-ins must run offline
+after activation; the SAME licensing code, server and flow in all three AnyMeans plug-ins (ArtFreq + ArtFreq FX, Crème,
+Vocalyst; each product its own product ID; one shared AnyMeans app-data folder), so Crème and Vocalyst get changed too.
+
+**Consequences / still to settle:**
+- Vercel's free Hobby plan is for non-commercial personal use only; selling needs Pro (paid). The free alternative is
+  Cloudflare Workers, whose free plan allows commercial use (to double-check at the time).
+- Lemon Squeezy is being steered toward Stripe Managed Payments, which has no license keys. So the server issues keys
+  itself: the store's "order paid" webhook goes to the server, which makes the key, stores it and emails it. Changing store
+  later then breaks nothing.
+- A database for keys and activations (a free Postgres/Redis tier on the host).
+- The server's address must be our own domain (e.g. api.anymeansaudio.com), never *.vercel.app, because it is built
+  into shipped plug-ins.
+- The server signs each activation (Ed25519 over key, machine ID and product). The plug-ins check it with a built-in public
+  key, so activation works offline and cannot be faked by editing a file. Keep the private key secret, in the host's
+  environment variables, and backed up.
+- Offline activation for computers that are never online: the plug-in shows a request code, the user enters it on the
+  website from another device and pastes the reply back.
+- Lost or dead computer: a "free my activations" page on the website (key + purchase email) or support.
+- Refunds and chargebacks cannot be revoked on machines that stay offline. Accepted.
+- Which products a key unlocks (ArtFreq key = ArtFreq + ArtFreq FX), and whether there are bundles.
+- What 0.x testers get (free keys?).
+- A privacy policy and EULA.
+
+**Review of the pasted spec:**
+
+The spec the customer pasted (from Meta's Muse AI) has a sound outline is sound (hashed machine ID, works offline after
 activation, always lets the user retry, a Deactivate button, server URL and product ID as constants). Before building,
 fix these:
 
-- **Server.** It assumes our own server with `/api/activate` and `/api/deactivate`, which someone has to build and host.
+- **Server.** (Superseded: we now use our own server, see above.) It assumes `/api/activate` and `/api/deactivate`.
   We picked Lemon Squeezy: use its License API instead (`POST https://api.lemonsqueezy.com/v1/licenses/activate` with
   `license_key` + `instance_name`, returns an `instance_id`; `/deactivate` takes `license_key` + `instance_id`;
   `/validate`). Its responses are not `{"ok", "activationToken"}` and its error cases are not the spec's 409/403, so map
