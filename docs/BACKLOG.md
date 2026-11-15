@@ -12,7 +12,7 @@ Collected with the customer; to be done together in one release.
 
 ## 2. License activation
 
-**Decisions (customer):** our own server, on Vercel; 2 activations (computers) per key; the plug-ins must run offline
+**Decisions (customer):** our own server, on Cloudflare (free: Workers + D1; the website anymeansaudio.com moves there from Vercel too, keeping the support@ email's MX records); 2 activations (computers) per key; the plug-ins must run offline
 after activation; the SAME licensing code, server and flow in all three AnyMeans plug-ins (ArtFreq + ArtFreq FX, Crème,
 Vocalyst; each product its own product ID; one shared AnyMeans app-data folder), so Crème and Vocalyst get changed too.
 
