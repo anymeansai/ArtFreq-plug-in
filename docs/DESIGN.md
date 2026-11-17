@@ -882,8 +882,9 @@ and the brush settings; Stripes and back changing the plan and the canvas; hidde
 object's settings), and the footer's Trigger, Repeat, the start choice (its words, its menu,
 what each item does to the hint, the field and the canvas's bar numbers, in line at every
 window size), the start bar field (drag, type, Enter, Esc, clamping), the hint line, Preview
-stopping by itself without Repeat, and the layout. Last, for both plug-ins, with the window on
-the display and the keyboard in it: the space bar through the peer in every focus state (see
+stopping by itself without Repeat, and the layout. Last, for both plug-ins (on Linux, where the
+virtual display gives a window the keyboard), with the window on the display and the keyboard in
+it: the space bar through the peer in every focus state (see
 "Keys and the keyboard focus"), typing where text is typed, and the hand-back.
 
 `ArtFreqLab <dir> [--lows stripes|smooth]` (tools/LowsLab.cpp) is the bench the lows were chosen

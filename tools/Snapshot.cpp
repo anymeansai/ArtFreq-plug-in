@@ -77,7 +77,8 @@
 // window on the (virtual) desktop and the keyboard in it, it clicks its way through every place
 // the focus can be (through the window's peer, as the OS does), presses the space bar through
 // ComponentPeer::handleKeyUpOrDown and handleKeyPress each time, and checks that it comes back
-// unused, and that it is typed where text is being typed (see checkKeys). It writes
+// unused, and that it is typed where text is being typed (see checkKeys; on Linux only, where a
+// virtual display gives the window the keyboard). It writes
 //
 //   artfreq-keys-typing.png      the text box while it is typed in (focus ring, caret, the hint)
 //   artfreq-keys-add-text.png    just after Add text: the new object's text box has the focus
@@ -1804,6 +1805,15 @@ struct KeyRig
     juce::int64 time = juce::Time::currentTimeMillis() + 60000;   // of the last mouse event: only ever forwards
 };
 
+bool canDriveAWindow()
+{
+   #if JUCE_LINUX || JUCE_BSD
+    return true;
+   #else
+    return false;
+   #endif
+}
+
 /** The DAW's play key works while the plug-in's window has the focus: in every place the focus
     can be, the space bar comes back unused; where text is being typed it is typed, and Return or
     Esc hand the keyboard back. */
@@ -1811,12 +1821,22 @@ void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& ou
 {
     using namespace artfreq;
 
-    KeyRig rig (variant);
     const juce::String name (variant == ArtFreqProcessor::Variant::effect ? "ArtFreq FX" : "ArtFreq");
+
+    // This needs a display that gives a window the keyboard and moves the pointer when asked. A
+    // virtual display on Linux does; a build machine's macOS session does not reliably (and on a
+    // desk the pointer is the user's). The code that is checked is the same on both.
+    if (! canDriveAWindow())
+    {
+        std::cout << "(" << name << "'s keys are checked on Linux only, under a virtual display)" << std::endl;
+        return;
+    }
+
+    KeyRig rig (variant);
 
     if (rig.editor == nullptr || ! rig.hasKeyboard())
     {
-        std::cout << "(no desktop that gives a window the keyboard: " << name << "'s keys were not checked)" << std::endl;
+        std::cout << "(no display that gives a window the keyboard: " << name << "'s keys were not checked)" << std::endl;
         return;
     }
 
