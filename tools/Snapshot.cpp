@@ -73,6 +73,15 @@
 // mouse and the keyboard (and what they grey and show), the export's hint, Preview and a carve
 // through the processor.
 //
+// Last, for both plug-ins, it proves that the DAW's play key gets through: with the editor's
+// window on the (virtual) desktop and the keyboard in it, it clicks its way through every place
+// the focus can be (through the window's peer, as the OS does), presses the space bar through
+// ComponentPeer::handleKeyUpOrDown and handleKeyPress each time, and checks that it comes back
+// unused, and that it is typed where text is being typed (see checkKeys). It writes
+//
+//   artfreq-keys-typing.png      the text box while it is typed in (focus ring, caret, the hint)
+//   artfreq-keys-add-text.png    just after Add text: the new object's text box has the focus
+//
 // On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
 
 #include "Parameters.h"
@@ -1571,6 +1580,492 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     processor.releaseResources();
 }
 
+//==============================================================================
+// The keyboard, the way the OS delivers it: through the window's peer.
+//
+// A plug-in cannot start the DAW's transport: it can only leave the DAW's play key (the space
+// bar, mostly) alone. On macOS JUCE hands a key on to the host's window when nothing used it
+// (juce_NSViewComponentPeer_mac.mm: keyDown -> sendEventToInputContextOrComponent, else
+// [super keyDown:]). "Used" is: a text box that is being typed in took it (the peer's text input
+// target gets all typing), or ComponentPeer::handleKeyUpOrDown or handleKeyPress said so (the
+// focused component, its parents and their key listeners), or a component is modal (JUCE then
+// swallows every key). The same calls are made here, on an editor in a window that has the
+// keyboard, with the clicks sent through the peer as well, so that JUCE moves the focus as it
+// does in a host.
+struct KeyRig
+{
+    explicit KeyRig (artfreq::ArtFreqProcessor::Variant variant) : processor (variant)
+    {
+        using namespace artfreq;
+
+        processor.setRateAndBufferSizeDetails (48000.0, 512);
+        processor.prepareToPlay (48000.0, 512);
+
+        ArtDocument document;
+        auto text = ArtDocument::makeTextObject ("HELLO", 3500.0f, 16000.0f);
+        text.startTime = 0.04f;
+        text.endTime = 0.5f;
+        textId = text.id;
+        document.objects.push_back (text);
+        processor.setDocument (document);
+        processor.rebuildPlanIfNeeded();
+
+        editor.reset (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
+
+        if (editor == nullptr)
+            return;
+
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pump (150);
+
+        // As when the user clicks into the plug-in's window for the first time.
+        editor->grabKeyboardFocus();
+        pump (50);
+
+        // The display tells the window that it has the keyboard in a message, and JUCE then gives
+        // the focus to the editor. On X11 that message can lie unseen until something more
+        // arrives from the display, and would then take the focus from what was clicked first.
+        // So it is waited for: the focus is put on the canvas, and comes back to the editor when
+        // the message is dealt with (the pointer moving and the window repainting keep the
+        // display talking). If it was dealt with at once, the wait is in vain.
+        if (auto* canvasView = findComponentWithId (*editor, "canvas"))
+        {
+            canvasView->grabKeyboardFocus();
+
+            for (int rounds = 0; rounds < 24 && juce::Component::getCurrentlyFocusedComponent() == canvasView; ++rounds)
+            {
+                const auto corner = 6.0f + static_cast<float> (rounds % 2) * 6.0f;
+                juce::Desktop::getInstance().getMainMouseSource().setScreenPosition (editor->localPointToGlobal (juce::Point<float> (corner, corner)));
+                editor->repaint();
+                pump (15);
+            }
+
+            editor->grabKeyboardFocus();
+            pump (20);
+        }
+    }
+
+    ~KeyRig()
+    {
+        juce::PopupMenu::dismissAllActiveMenus();
+
+        if (editor != nullptr)
+            editor->removeFromDesktop();
+
+        pump (30);
+        editor.reset();
+        pump (30);
+        processor.releaseResources();
+    }
+
+    juce::ComponentPeer* peer() const   { return editor != nullptr ? editor->getPeer() : nullptr; }
+
+    /** The window is on a desktop and has the keyboard. */
+    bool hasKeyboard() const
+    {
+        return peer() != nullptr && peer()->isFocused() && juce::Component::getCurrentlyFocusedComponent() != nullptr;
+    }
+
+    juce::Component& get (const juce::String& id) const
+    {
+        auto* found = findComponentWithId (*editor, id);
+        check (found != nullptr, "component '" + id + "' exists");
+        return found != nullptr ? *found : *editor;
+    }
+
+    bool hasFocus (const juce::String& id) const
+    {
+        return juce::Component::getCurrentlyFocusedComponent() == findComponentWithId (*editor, id);
+    }
+
+    /** What has the focus, for the messages. */
+    juce::String focusName() const
+    {
+        const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        return focused == nullptr ? "nothing"
+             : focused == editor.get() ? "the editor"
+             : focused->getComponentID().isNotEmpty() ? focused->getComponentID()
+             : focused->getName().isNotEmpty() ? focused->getName() : "a component without a name";
+    }
+
+    // ---- the mouse, through the window ----------------------------------------------------------
+    void mouse (juce::Component& c, juce::Point<float> at, bool down)
+    {
+        const auto inWindow = editor->getLocalPoint (&c, at);
+        const auto buttons = down ? juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier) : juce::ModifierKeys();
+
+        // The display's pointer goes along: components ask it where the mouse is.
+        juce::Desktop::getInstance().getMainMouseSource().setScreenPosition (editor->localPointToGlobal (inWindow));
+        peer()->handleMouseEvent (juce::MouseInputSource::InputSourceType::mouse, inWindow, buttons,
+                                  juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation, time);
+    }
+
+    /** A click (clicks are a second apart: never a double-click by accident). */
+    void click (juce::Component& c, juce::Point<float> at)
+    {
+        time += 1000;
+        mouse (c, at, true);
+        time += 30;
+        mouse (c, at, false);
+        pump (40);
+    }
+
+    void click (const juce::String& id)   { click (get (id), get (id).getLocalBounds().toFloat().getCentre()); }
+
+    void doubleClick (juce::Component& c, juce::Point<float> at)
+    {
+        time += 1000;
+        mouse (c, at, true);
+        time += 30;
+        mouse (c, at, false);
+        time += 120;
+        mouse (c, at, true);
+        time += 30;
+        mouse (c, at, false);
+        pump (60);
+    }
+
+    void drag (juce::Component& c, juce::Point<float> from, juce::Point<float> to)
+    {
+        time += 1000;
+        mouse (c, from, true);
+
+        for (int i = 1; i <= 4; ++i)
+        {
+            time += 10;
+            mouse (c, from + (to - from) * (static_cast<float> (i) / 4.0f), true);
+        }
+
+        time += 10;
+        mouse (c, to, false);
+        pump (40);
+    }
+
+    // ---- the keyboard, through the window -------------------------------------------------------
+    /** Whether a text box is being typed in: macOS then sends the keys there, as text, before
+        anything else gets to see them. */
+    bool typing() const   { return peer()->findCurrentTextInputTarget() != nullptr; }
+
+    /** Presses a key and lets it go. Returns whether it was used, so that the DAW would not get
+        it. */
+    bool uses (const juce::KeyPress& key)
+    {
+        const auto wasTyping = typing();
+        auto used = peer()->handleKeyUpOrDown (true);
+        used = peer()->handleKeyPress (key) || used;
+        used = peer()->handleKeyUpOrDown (false) || used;
+        used = used || wasTyping || juce::Component::getCurrentlyModalComponent() != nullptr;
+
+        pump (30);   // (a text box acts on Return and Esc a moment later)
+        return used;
+    }
+
+    bool usesSpace()   { return uses (juce::KeyPress (juce::KeyPress::spaceKey, juce::ModifierKeys(), ' ')); }
+
+    /** Types into whatever has the focus, key by key. */
+    void type (const juce::String& text)
+    {
+        for (const auto character : text)
+        {
+            peer()->handleKeyUpOrDown (true);
+            peer()->handleKeyPress (juce::KeyPress (character == ' ' ? juce::KeyPress::spaceKey : static_cast<int> (character),
+                                                    juce::ModifierKeys(), character));
+            peer()->handleKeyUpOrDown (false);
+        }
+
+        pump (30);   // (a text box reports its changes a moment later)
+    }
+
+    juce::String text (const juce::Uuid& id) const
+    {
+        const auto* object = processor.getDocument().find (id);
+        return object != nullptr ? object->text : juce::String ("(gone)");
+    }
+
+    artfreq::ui::CanvasView& canvas() const   { return *dynamic_cast<artfreq::ui::CanvasView*> (findComponentWithId (*editor, "canvas")); }
+
+    /** A point on the text object, and one on empty canvas (bar 4, in the lows). */
+    juce::Point<float> onText() const
+    {
+        const auto a = canvas().getDrawingArea();
+        return { a.getX() + 0.25f * a.getWidth(), a.getY() + 0.12f * a.getHeight() };
+    }
+
+    juce::Point<float> onEmptyCanvas() const
+    {
+        const auto a = canvas().getDrawingArea();
+        return { a.getX() + 0.85f * a.getWidth(), a.getY() + 0.8f * a.getHeight() };
+    }
+
+    artfreq::ArtFreqProcessor processor;
+    std::unique_ptr<artfreq::ArtFreqEditor> editor;
+    juce::Uuid textId;
+    juce::int64 time = juce::Time::currentTimeMillis() + 60000;   // of the last mouse event: only ever forwards
+};
+
+/** The DAW's play key works while the plug-in's window has the focus: in every place the focus
+    can be, the space bar comes back unused; where text is being typed it is typed, and Return or
+    Esc hand the keyboard back. */
+void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& outputDir, float pixelScale)
+{
+    using namespace artfreq;
+
+    KeyRig rig (variant);
+    const juce::String name (variant == ArtFreqProcessor::Variant::effect ? "ArtFreq FX" : "ArtFreq");
+
+    if (rig.editor == nullptr || ! rig.hasKeyboard())
+    {
+        std::cout << "(no desktop that gives a window the keyboard: " << name << "'s keys were not checked)" << std::endl;
+        return;
+    }
+
+    auto& processor = rig.processor;
+    auto& editor = *rig.editor;
+    const auto returnKey = juce::KeyPress (juce::KeyPress::returnKey, juce::ModifierKeys(), '\r');
+    const auto escapeKey = juce::KeyPress (juce::KeyPress::escapeKey, juce::ModifierKeys(), 27);
+
+    const auto saveInspector = [&] (const juce::String& fileName)
+    {
+        auto& inspector = rig.get ("inspector");
+        const auto image = editor.createComponentSnapshot (editor.getLocalArea (&inspector, inspector.getLocalBounds()), true, pixelScale);
+        const auto file = outputDir.getChildFile (fileName);
+
+        if (writePng (image, file))
+            std::cout << file.getFullPathName() << std::endl;
+        else
+            check (false, "write " + file.getFullPathName());
+    };
+
+    /** In this state the space bar is the DAW's: nothing used it, nothing is typing or modal. */
+    const auto spaceIsTheDaws = [&] (const juce::String& state)
+    {
+        const auto typing = rig.typing();
+        const auto modal = juce::Component::getCurrentlyModalComponent() != nullptr;
+        const auto focus = rig.focusName();
+        const auto used = rig.usesSpace();
+
+        check (! used && ! typing && ! modal,
+               name + ": the space bar comes back unused " + state + " (the focus is on " + focus
+                   + (typing ? ", a text box is being typed in" : "") + (modal ? ", something is modal" : "") + ")");
+    };
+
+    // ---- every place the focus can be ---------------------------------------------------------------
+    spaceIsTheDaws ("as the window opens");
+
+    rig.click (rig.canvas(), rig.onEmptyCanvas());
+    check (rig.hasFocus ("canvas"), name + ": a click on the canvas gives it the focus");
+    spaceIsTheDaws ("after a click on the canvas");
+
+    // The layer list: a row clicked (the list handles Up, Down, Return, Delete and Esc itself).
+    if (auto* list = dynamic_cast<ui::LayerList*> (findComponentWithId (editor, "layer-list")); list != nullptr && list->isShowing())
+    {
+        rig.click (*list, list->getRowBounds (0).toFloat().getCentre().withX (60.0f));
+        check (rig.hasFocus ("layer-list"), name + ": a click on a row of the layer list gives the list the focus");
+        spaceIsTheDaws ("with the layer list focused");
+    }
+    else
+    {
+        check (false, name + ": the layer list is shown when nothing is selected");
+    }
+
+    // Buttons, chips, segmented controls and number fields that are only clicked: none keeps
+    // the focus (JUCE gives a clicked button the focus, and Space or Return would press it again).
+    const std::pair<const char*, const char*> clicked[] = {
+        { "tool-brush", "a tool button" }, { "tool-select", "a tool button" }, { "undo", "Undo" }, { "redo", "Redo (disabled)" },
+        { "view-switch", "Canvas | Live" }, { "trigger", "Trigger (a segmented control)" }, { "repeat", "Repeat (a chip)" },
+        { "tempo-source", "Tempo" }, { "bpm", "BPM (following the host: not editable)" }, { "preview", "Preview" },
+        { "lows", "Lows" }, { "toolbar", "the toolbar's background" }, { "header", "the header's background" },
+        { "footer", "the footer's background" }, { "inspector", "the inspector's background" } };
+
+    for (const auto& [id, what] : clicked)
+    {
+        auto& target = rig.get (id);
+        const auto at = juce::String (id) == "toolbar" ? juce::Point<float> (650.0f, 22.0f)
+                      : juce::String (id) == "header"  ? juce::Point<float> (330.0f, 20.0f)
+                      : juce::String (id) == "footer"  ? juce::Point<float> (6.0f, 6.0f)
+                      : juce::String (id) == "inspector" ? juce::Point<float> (140.0f, static_cast<float> (target.getHeight()) - 90.0f)
+                                                         : target.getLocalBounds().toFloat().getCentre();
+        rig.click (target, at);
+        spaceIsTheDaws (juce::String ("after a click on ") + what);
+
+        const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        check (focused != nullptr && dynamic_cast<const juce::Button*> (focused) == nullptr,
+               name + ": a click on " + what + " does not leave the focus on a button (it is on " + rig.focusName() + ")");
+
+        // Back to how it was: the canvas, Transport without Repeat, the DAW's tempo, no preview.
+        editor.showLiveView (false);
+        setParameter (processor, params::id::trigger, 0.0f);
+        setParameter (processor, params::id::repeat, 0.0f);
+        setParameter (processor, params::id::tempoSource, 0.0f);
+        processor.setPreview (false);
+        pump (40);
+    }
+
+    // Menus: the keys are the menu's while it is open; closed, nothing stays modal and the box
+    // that opened it has not kept the focus (the arrows and Return would be its own).
+    for (const auto* id : { "length", "start-choice" })
+    {
+        rig.click (id);
+        check (juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a click on " + juce::String (id) + " opens its menu");
+        juce::PopupMenu::dismissAllActiveMenus();
+        pump (80);
+        spaceIsTheDaws (juce::String ("after ") + id + "'s menu has closed");
+        check (! rig.uses (returnKey) && ! rig.uses (juce::KeyPress (juce::KeyPress::downKey)),
+               name + ": Return and Down are not kept by " + id + " after its menu");
+    }
+
+    // A knob turned, a number field dragged.
+    rig.drag (rig.get ("density"), { 38.0f, 40.0f }, { 38.0f, 20.0f });
+    spaceIsTheDaws ("after turning a knob");
+
+    setParameter (processor, params::id::tempoSource, 1.0f);
+    pump (60);
+    rig.drag (rig.get ("bpm"), { 30.0f, 14.0f }, { 30.0f, 2.0f });
+    spaceIsTheDaws ("after dragging a number field");
+    setParameter (processor, params::id::tempoSource, 0.0f);
+    pump (40);
+
+    // ArtFreq FX's own controls.
+    if (variant == ArtFreqProcessor::Variant::effect)
+    {
+        rig.click ("mode");
+        spaceIsTheDaws ("after a click on Mode");
+        rig.drag (rig.get ("depth"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
+        spaceIsTheDaws ("after dragging Depth");
+    }
+
+    // The panels: the keys are the panel's while it is open (Esc closes it), and it has no use
+    // for the space bar; closed, the canvas has the focus again.
+    for (const auto* button : { "help", "settings" })
+    {
+        const auto panel = juce::String (button) + "-panel";
+        rig.click (button);
+        check (rig.get (panel).isShowing() && rig.hasFocus (panel), name + ": the " + button + " panel has the focus while it is open");
+        spaceIsTheDaws (juce::String ("with the ") + button + " panel open");
+        check (rig.uses (escapeKey) && ! rig.get (panel).isVisible(), name + ": Esc closes the " + button + " panel");
+        check (rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's again");
+        spaceIsTheDaws (juce::String ("after the ") + button + " panel has closed");
+    }
+
+    // The live view: no canvas to hold the focus.
+    editor.showLiveView (true);
+    pump (60);
+    spaceIsTheDaws ("in the live view");
+    rig.click ("repeat");
+    spaceIsTheDaws ("in the live view, after a click");
+    setParameter (processor, params::id::repeat, 0.0f);
+    editor.showLiveView (false);
+    pump (60);
+
+    // ---- a text object: selected is not typing ------------------------------------------------------
+    auto& textBox = rig.get ("inspector-text");
+
+    rig.click (rig.canvas(), rig.onText());
+    check (editor.getSelectedObject() == rig.textId && textBox.isShowing() && ! textBox.hasKeyboardFocus (true)
+           && rig.hasFocus ("canvas"),
+           name + ": a click on a text object selects it, and the focus stays with the canvas, not in its text box");
+    spaceIsTheDaws ("with a text object selected");
+    check (rig.text (rig.textId) == "HELLO", name + ": ... and nothing was typed into the text");
+
+    // ---- typing: the one place where the space bar types ---------------------------------------------
+    rig.doubleClick (rig.canvas(), rig.onText());
+    check (textBox.hasKeyboardFocus (true) && rig.typing(), name + ": a double-click on the text puts the focus in its text box");
+    rig.type ("PLAY IT");
+    check (rig.text (rig.textId) == "PLAY IT", name + ": typed text goes into the text box, the space too (\"" + rig.text (rig.textId) + "\")");
+    check (rig.usesSpace() && rig.text (rig.textId) == "PLAY IT ", name + ": the space bar types a space while the text box is typed in");
+
+    if (variant == ArtFreqProcessor::Variant::instrument)
+        saveInspector ("artfreq-keys-typing.png");
+
+    check (rig.uses (returnKey) && ! rig.typing() && rig.hasFocus ("canvas"),
+           name + ": Return ends the typing and hands the focus back to the canvas");
+    check (rig.text (rig.textId) == "PLAY IT ", name + ": ... keeping what was typed");
+    spaceIsTheDaws ("after Return in the text box");
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    rig.type ("NOW");
+    check (rig.uses (escapeKey) && ! rig.typing() && rig.hasFocus ("canvas") && rig.text (rig.textId) == "NOW",
+           name + ": Esc ends the typing too");
+    spaceIsTheDaws ("after Esc in the text box");
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    check (textBox.hasKeyboardFocus (true), name + ": (typing again)");
+    rig.click ("density");
+    check (! textBox.hasKeyboardFocus (true) && ! rig.typing(), name + ": a click anywhere else ends the typing");
+    spaceIsTheDaws ("after clicking away from the text box");
+
+    // Add text: typing is what comes next, so the new text box has the focus, and shows it.
+    const auto objectsBefore = processor.getDocument().objects.size();
+    rig.click ("add-text");
+    pump (60);
+    const auto newId = editor.getSelectedObject();
+    check (processor.getDocument().objects.size() == objectsBefore + 1 && textBox.isShowing() && textBox.hasKeyboardFocus (true)
+           && rig.typing(), name + ": Add text puts the focus in the new object's text box");
+
+    if (variant == ArtFreqProcessor::Variant::instrument)
+        saveInspector ("artfreq-keys-add-text.png");
+
+    rig.type ("NEW ONE");
+    check (rig.text (newId) == "NEW ONE", name + ": ... where typing replaces its text (\"" + rig.text (newId) + "\")");
+    check (rig.uses (returnKey) && rig.hasFocus ("canvas"), name + ": ... and Return hands the focus back");
+    spaceIsTheDaws ("after Add text, typing and Return");
+
+    // ---- number fields ---------------------------------------------------------------------------
+    if (auto* footer = dynamic_cast<ui::shell::Footer*> (findComponentWithId (editor, "footer")))
+    {
+        footer->setStartAt (StartAt::bar);
+        pump (80);
+        spaceIsTheDaws ("with the start bar field shown, not edited");
+
+        rig.click ("start-bar");
+        check (rig.typing(), name + ": a click on the start bar field starts typing into it");
+        check (rig.usesSpace(), name + ": ... where the space bar is the field's");
+        rig.type ("12");
+        check (rig.uses (returnKey) && juce::roundToInt (processor.getParameters().getRawParameterValue (params::id::startBar)->load()) == 12,
+               name + ": Return sets the typed bar");
+        check (! rig.typing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
+        spaceIsTheDaws ("after typing a start bar");
+
+        rig.click ("start-bar");
+        rig.type ("40");
+        check (rig.uses (escapeKey) && juce::roundToInt (processor.getParameters().getRawParameterValue (params::id::startBar)->load()) == 12
+               && rig.hasFocus ("canvas"), name + ": Esc leaves the bar as it was and hands the focus back");
+        spaceIsTheDaws ("after Esc in the start bar field");
+
+        setParameter (processor, params::id::startBar, 1.0f);
+        footer->setStartAt (StartAt::play);
+        pump (60);
+    }
+
+    // A knob's value, typed (its label is modal while it is edited).
+    rig.doubleClick (rig.get ("level"), { 38.0f, 72.0f });
+    check (rig.typing() && juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a double-click on a knob's value types into it");
+    rig.type ("-12");
+    check (rig.uses (returnKey) && std::abs (processor.getParameters().getRawParameterValue (params::id::level)->load() + 12.0f) < 1.0e-3f,
+           name + ": Return sets the typed level");
+    check (juce::Component::getCurrentlyModalComponent() == nullptr && rig.hasFocus ("canvas"),
+           name + ": ... nothing stays modal, and the focus is the canvas's");
+    spaceIsTheDaws ("after typing a knob's value");
+
+    // ---- the keys the editor does use are still its own ------------------------------------------------
+    rig.click (rig.canvas(), rig.onEmptyCanvas());
+    check (rig.uses (juce::KeyPress ('b', juce::ModifierKeys(), 'b')) && rig.uses (juce::KeyPress ('v', juce::ModifierKeys(), 'v')),
+           name + ": B and V choose a tool");
+    check (! rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && ! rig.uses (juce::KeyPress (juce::KeyPress::leftKey))
+           && ! rig.uses (returnKey) && ! rig.uses (juce::KeyPress ('a', juce::ModifierKeys(), 'a'))
+           && ! rig.uses (juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys(), '\t')),
+           name + ": with nothing selected, Delete, the arrows, Return, Tab and other letters go on to the DAW too");
+    pump (60);
+
+    rig.click (rig.canvas(), rig.onText());
+    check (rig.uses (juce::KeyPress (juce::KeyPress::rightKey)), name + ": an arrow nudges the selection");
+    check (rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && rig.text (rig.textId) == "(gone)", name + ": Delete removes it");
+    check (rig.uses (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)) && rig.text (rig.textId) == "NOW",
+           name + ": Cmd+Z brings it back");
+    spaceIsTheDaws ("at the end");
+}
+
 int main (int argc, char* argv[])
 {
    #if JUCE_LINUX || JUCE_BSD
@@ -1947,6 +2442,11 @@ int main (int argc, char* argv[])
 
     // ---- ArtFreq FX: the same editor on the effect ----------------------------------------------
     checkEffect (outputDir, pixelScale);
+    pump (50);
+
+    // ---- the DAW's play key, in both plug-ins --------------------------------------------------------
+    checkKeys (ArtFreqProcessor::Variant::instrument, outputDir, pixelScale);
+    checkKeys (ArtFreqProcessor::Variant::effect, outputDir, pixelScale);
     pump (50);
 
     if (failed)
