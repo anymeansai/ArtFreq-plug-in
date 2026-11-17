@@ -3,8 +3,9 @@
 // bottom bar (the tools, + Text, + Image, Layers, what will happen in words, Length, Repeat).
 // What a mode or a tool has no use for is not there: Depth in Draw, the sines' settings outside
 // the Draw modes, the brush's settings without the brush. The inspector is a drawer over the
-// canvas; Trigger, Start and Tempo are in the settings; there is no Preview and no Export. And
-// the canvas shows what the analyser will show in each mode.
+// canvas; Trigger, Start and Tempo are in the settings; there is no Preview and no Export.
+// Nothing is greyed, not even in an object's right-click menu. And the canvas shows what the
+// analyser will show in each mode.
 //
 // These need JUCE's GUI classes, so on Linux run them under a virtual display (xvfb-run -a).
 
@@ -13,6 +14,7 @@
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
+#include "ui/Actions.h"
 #include "ui/CanvasPlanImage.h"
 #include "ui/Editor.h"
 #include "ui/EffectPreview.h"
@@ -296,6 +298,59 @@ ARTFREQ_TEST (uiEffectShowsOnlyWhatAppliesAndGreysNothing)
     pump (60);
     CHECK (! isShown (*editor, "undo") && isShown (*editor, "redo"));
     CHECK (nothingGreyed());
+}
+
+ARTFREQ_TEST (uiEffectObjectMenuGreysNothing)
+{
+    // The instrument's right-click menu greys Bring to front and Send to back where they would
+    // change nothing. ArtFreq FX greys nothing, there either: such an item is not in the menu.
+    const auto itemsOf = [] (ArtFreqProcessor& processor, const juce::Uuid& id)
+    {
+        const auto menu = ui::actions::objectMenu (processor, id);   // (the iterator only refers to it)
+        juce::StringArray names;
+
+        for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+            names.add (it.getItem().isSeparator ? juce::String ("-") : it.getItem().text + (it.getItem().isEnabled ? "" : " (off)"));
+
+        return names.joinIntoString (", ");
+    };
+
+    const auto drawing = [] (int count)
+    {
+        ArtDocument document;
+
+        for (int i = 0; i < count; ++i)
+            document.objects.push_back (ArtDocument::makeTextObject ("T" + juce::String (i), 300.0f, 3000.0f));
+
+        return document;
+    };
+
+    auto effect = makeProcessor (ArtFreqProcessor::Variant::effect);
+    auto instrument = makeProcessor (ArtFreqProcessor::Variant::instrument);
+
+    // One object (as a new ArtFreq FX has): nothing to reorder, so the menu is Hide and Delete.
+    effect->setDocument (drawing (1));
+    instrument->setDocument (effect->getDocument());
+    const auto only = effect->getDocument().objects.front().id;
+    CHECK_MSG (itemsOf (*effect, only) == "Hide, Delete", itemsOf (*effect, only).toStdString());
+    CHECK_MSG (itemsOf (*instrument, only) == "Bring to front (off), Send to back (off), -, Hide, Delete",
+               itemsOf (*instrument, only).toStdString());
+
+    // Three: the one at the back can only come forward, the one in front only go back, the one
+    // between them both.
+    effect->setDocument (drawing (3));
+    const auto& objects = effect->getDocument().objects;
+    CHECK_MSG (itemsOf (*effect, objects[0].id) == "Bring to front, -, Hide, Delete", itemsOf (*effect, objects[0].id).toStdString());
+    CHECK_MSG (itemsOf (*effect, objects[1].id) == "Bring to front, Send to back, -, Hide, Delete",
+               itemsOf (*effect, objects[1].id).toStdString());
+    CHECK_MSG (itemsOf (*effect, objects[2].id) == "Send to back, -, Hide, Delete", itemsOf (*effect, objects[2].id).toStdString());
+
+    // What is there does what it says.
+    ui::EditorState state;
+    const auto back = objects[0].id;
+    ui::actions::performObjectMenuItem (*effect, state, back, ui::actions::menuItems::bringToFront);
+    CHECK (effect->getDocument().objects.back().id == back);
+    CHECK_MSG (itemsOf (*effect, back) == "Send to back, -, Hide, Delete", itemsOf (*effect, back).toStdString());
 }
 
 ARTFREQ_TEST (uiEffectBottomBarSaysWhatWillHappen)

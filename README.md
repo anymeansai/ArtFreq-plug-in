@@ -167,7 +167,7 @@ Two bars and the canvas; everything else comes when it has something to act on a
 | | **Live** | Lit: a scrolling spectrogram of what comes out of ArtFreq FX takes the canvas's place (and the tools, which have nothing to act on there, make way). Click it again for the canvas. |
 | | **?** and **Gear** | The how-to, and Settings. |
 | Sound strip, under the top bar (Carve + Draw and Draw) | **Level**, **Density**, **Contrast**, **Lows** | The settings of the drawing's sines, with the ranges and defaults of the Footer and Layers tables above. Level is the sines' level: the song keeps its own. Drag a number, or click it to type. |
-| Bottom bar | **Select**, **Brush**, **Erase** | The tools, as above (V, B and E). |
+| Bottom bar | **Select**, **Brush**, **Erase** | The tools, as above (V, B and E). An object's right-click menu lists **Bring to front** and **Send to back** only where they would change something. |
 | | **+ Text**, **+ Image** | Add a text box or a picture; its settings open in the drawer. Pictures can also be dropped onto the canvas. |
 | | **Layers** | Opens the layer list in the drawer, and closes it again. Lit while the list is open. |
 | | The line of words | What will happen when you press play, or when a note arrives: "Carves once when you press play", "Carves once from bar 9", "Repeats every 4 bars", "Each note carves it once", "Loops while a note is held" (with the mode's own verb: draws, stencils). In the playing colour while it happens. |

@@ -410,10 +410,9 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
 - **One code base.** `ArtFreqProcessor` takes a `Variant` (instrument | effect); the editor is the
   same class and asks the processor which it is: it puts the instrument's shell or the effect's
   own (see "The editor" below) around the same canvas, live view, inspector and panels. Each
-  CMake target (`artfreq_add_plugin`) adds
-  only its own `createPluginFilter` (`src/plugin/`). The effect has stereo or mono in and out (as
-  many out as in), takes MIDI (hosts that send effects MIDI can trigger it), and reports one
-  carver frame of latency.
+  CMake target (`artfreq_add_plugin`) adds only its own `createPluginFilter` (`src/plugin/`).
+  The effect has stereo or mono in and out (as many out as in), takes MIDI (hosts that send
+  effects MIDI can trigger it), and reports one carver frame of latency.
 - **Parameters.** Every instrument parameter, plus **Mode** (Carve, Carve + Draw, Stencil, Draw;
   default Carve) and **Depth** (-120..0 dB, default -80), both automatable and both acting on
   the audio thread at once: the exact and the halo masks are built together (`MaskPlanSet`) and
@@ -500,7 +499,10 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
   1440 x 880: the same 75 to 200 %, fixed aspect ratio, corner resizer and Settings choice as
   the instrument), two bars with the canvas between them, and one rule: **nothing is greyed;
   what does not apply is not shown.** (The snapshot tool walks the window's component tree in
-  every state and fails on a visible component that is disabled.)
+  every state and fails on a visible component that is disabled. The rule reaches the one
+  menu with items that can have nothing to do: an object's right-click menu lists Bring to
+  front and Send to back only where they would change something, so with one object it is
+  Hide and Delete.)
 
   ```
   +--------------------------------------------------------------------------------+
@@ -609,11 +611,11 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     the new size is saved once the window is resized.
   - **Every control says what it is**: a caption or its own words, and a tooltip. Controls are
     28 px tall in the bars (as in the instrument), 26 in the drawer and 24 in the strips, with
-    the instrument's text sizes, so at 75 % nothing is smaller than the instrument's own
-    smallest. The layout is one design scaled as a whole, so what holds at one size holds at
-    all; the snapshot tool still checks, in every state and at 75, 100, 150 and 200 %, that
-    the bars, strips and canvas tile the window, that nothing inside a bar, a strip or the
-    drawer overlaps or leaves it, and that the bottom bar's line fits.
+    13 px control text (12 in the strips' fields) and 11 px captions, as in the instrument.
+    The layout is one design scaled as a whole, so what holds at one size holds at all; the
+    snapshot tool still checks, in every state and at 75, 100, 150 and 200 %, that the bars,
+    strips and canvas tile the window, that nothing inside a bar, a strip or the drawer
+    overlaps or leaves it, and that the bottom bar's line fits.
 
 ## Interface
 
@@ -690,7 +692,8 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   Alt/Option-click, or clicking again on the same spot without moving the mouse in between,
   picks the next object down under the mouse (round to the front again; on release, so a press
   and drag still moves the selection). Right-click on an object selects it and opens its menu:
-  Bring to front, Send to back (greyed where they would change nothing), Hide (Show for a hidden
+  Bring to front, Send to back (greyed where they would change nothing; left out there in
+  ArtFreq FX, which greys nothing), Hide (Show for a hidden
   one), Delete. Selecting on the canvas shows the object's settings in the inspector.
   Delete/Backspace removes the selected object. Arrow keys nudge (Shift = 10x); a held
   arrow is one undo step, which ends when the keys are let go, on a click, on another object or

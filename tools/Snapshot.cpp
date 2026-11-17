@@ -1787,6 +1787,25 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         check (editor->isLayerListShown(), "\"Layers\" in the settings goes back to the list");
     }
 
+    // An object's right-click menu greys nothing either: an item that would change nothing (the
+    // front-most object brought to the front) is not in it.
+    {
+        const auto itemsOf = [&] (const juce::Uuid& id)
+        {
+            const auto menu = ui::actions::objectMenu (processor, id);   // (the iterator only refers to it)
+            juce::StringArray names;
+
+            for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+                if (! it.getItem().isSeparator)
+                    names.add (it.getItem().text + (it.getItem().isEnabled ? "" : " (greyed)"));
+
+            return names.joinIntoString (", ");
+        };
+
+        check (itemsOf (imageId) == "Send to back, Hide, Delete" && itemsOf (textId) == "Bring to front, Hide, Delete",
+               "an object's menu lists only what would change something (" + itemsOf (imageId) + " / " + itemsOf (textId) + ")");
+    }
+
     layers->onClick();
     pump (40);
     check (! editor->isDrawerOpen() && ! layers->getToggleState(), "the Layers button closes the list again");

@@ -588,7 +588,8 @@ namespace
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
             { "1", { "Put ArtFreq FX on a track, a bus or the master,", "before the final limiter." } },
             { "2", { "Open a spectrogram after it", "(MiniMeters) and match it in Settings, the gear." } },
-            { "3", { "Draw:", "add text or a picture, or paint. The canvas shows it on a stand-in for your song." } },
+            { "3", { "Draw:", "add text or a picture, or paint. Click one to change it. The canvas shows it on a "
+                              "stand-in for your song." } },
             { "4", { "Choose a Mode.", "Depth is how far carved frequencies drop: -80 dB looks black." } },
             { "5", { "Press play in your DAW.", "It runs once from wherever you start. Repeat loops it." } },
             { "6", { "To keep it, bounce the track in your DAW.", "Carving needs the song, so there is no "
