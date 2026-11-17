@@ -16,6 +16,9 @@ Collected with the customer; to be done together in one release.
 after activation; the SAME licensing code, server and flow in all three AnyMeans plug-ins (ArtFreq + ArtFreq FX, Crème,
 Vocalyst; each product its own product ID; one shared AnyMeans app-data folder), so Crème and Vocalyst get changed too.
 
+**Selling (customer):** ArtFreq FX is never sold by itself: it only comes bundled with ArtFreq. One purchase, one key,
+both plug-ins; no separate FX product ID in the store.
+
 **Consequences / still to settle:**
 - Vercel's free Hobby plan is for non-commercial personal use only; selling needs Pro (paid). The free alternative is
   Cloudflare Workers, whose free plan allows commercial use (to double-check at the time).
