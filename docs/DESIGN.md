@@ -979,11 +979,11 @@ sines bright, nothing drawn leaving the stand-in) and following Level.
 
 `ArtFreqSnapshot <dir>` renders the editor in its main states to PNG (ArtFreq FX's as
 `artfreq-fx-*.png`: a new window, each mode, a shallow Depth typed in, the Mode tooltip, a
-text's settings in the drawer on the right and a picture's on the left, the layer list, the
-brush, Draw while painting with the list open (both strips and the drawer: the least room
-there is), Repeat, the settings with On play and with At bar and a typed tempo, the live view
-of a stand-in song carved by the real processor, the help, an empty drawing, 75 / 100 / 150 /
-200 %, with checks in each state that the bars, strips and canvas share the window, that
+text's settings in the drawer on the right, its right-click menu, a picture's settings on the
+left, the layer list, the brush, Draw while painting with the list open (both strips and the
+drawer: the least room there is), Repeat, the settings with On play and with At bar and a
+typed tempo, the live view of a stand-in song carved by the real processor, the help, an empty
+drawing, 75 / 100 / 150 / 200 %, with checks in each state that the bars, strips and canvas share the window, that
 nothing overlaps, leaves its bar or is greyed, and that the bottom bar's line fits; Mode, Depth,
 the Sound strip, the drawer, the list, the brush and the settings driven with the mouse; a
 size saved with the old large window; and the instrument's: the default "Plays once when you press

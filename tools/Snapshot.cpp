@@ -44,22 +44,34 @@
 //   artfreq-150.png              window at 150 %, one image pixel per logical pixel
 //   artfreq-200.png              window at 200 %, one image pixel per logical pixel
 //
-// and for ArtFreq FX (the effect variant: the same editor with Mode and Depth in the header)
+// and for ArtFreq FX (the effect variant: a small window of its own, 720 x 440)
 //
-//   artfreq-fx-default.png       a fresh ArtFreq FX (Carve: the default drawing dark in the song)
-//   artfreq-fx-carve.png         the rich drawing in Carve: dark shapes on the stand-in song, the
-//                                export saying "Bounce the track in your DAW"
-//   artfreq-fx-carve-draw.png    Carve + Draw: the sines bright in a hole a little wider than them
-//   artfreq-fx-stencil.png       Stencil: the drawing filled with the song, the rest dark
-//   artfreq-fx-draw.png          Draw: the sines on top of the song, Depth greyed, Bounce WAV back
-//   artfreq-fx-shallow.png       Carve at a Depth of -24 dB, typed into the field
-//   artfreq-fx-live.png          the live view: a stand-in song carved by the real processor
-//   artfreq-fx-help.png          ArtFreq FX's help panel
-//   artfreq-fx-tooltip.png       the Mode control's tooltip
-//   artfreq-fx-75.png, -100.png, -200.png   window sizes, one image pixel per logical pixel
+//   artfreq-fx-default.png        a fresh ArtFreq FX (Carve: the default drawing dark in the song)
+//   artfreq-fx-carve.png          the rich drawing in Carve: dark shapes on the stand-in song
+//   artfreq-fx-carve-draw.png     Carve + Draw: the sines bright in a hole a little wider than
+//                                 them; the Sound strip under the top bar
+//   artfreq-fx-stencil.png        Stencil: the drawing filled with the song, the rest dark
+//   artfreq-fx-draw.png           Draw: the sines on top of the song; no Depth, the Sound strip
+//   artfreq-fx-shallow.png        Carve at a Depth of -24 dB, typed into the field
+//   artfreq-fx-tooltip.png        the Mode control's tooltip
+//   artfreq-fx-text-selected.png  a text selected: its settings in the drawer, on the right
+//   artfreq-fx-menu.png           its right-click menu (only what would change something)
+//   artfreq-fx-image-selected.png a picture on the right selected: the drawer on the left
+//   artfreq-fx-layers.png         the Layers button: the layer list in the drawer
+//   artfreq-fx-brush.png          the Brush tool: its settings in a strip over the bottom bar
+//   artfreq-fx-draw-brush.png     Draw, the eraser and the layer list: both strips and the drawer
+//   artfreq-fx-repeat.png         Repeat on ("Repeats every 4 bars")
+//   artfreq-fx-length-menu.png    the Length menu, open over the bottom bar
+//   artfreq-fx-settings.png       the settings: the analyser match, the window, Trigger, Start, Tempo
+//   artfreq-fx-settings-timing.png  the same with At bar 9 and a typed tempo
+//   artfreq-fx-live.png           the live view: a stand-in song carved by the real processor
+//   artfreq-fx-help.png           ArtFreq FX's help panel
+//   artfreq-fx-empty.png          nothing drawn: the stand-in song and the canvas's hint
+//   artfreq-fx-75.png, -100.png, -150.png, -200.png   window sizes (Carve + Draw, a text's
+//                                 settings), one image pixel per logical pixel
 //
-// All but the last two are rendered at <pixel-scale> image pixels per logical pixel (default 2, as
-// on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
+// All but the window sizes are rendered at <pixel-scale> image pixels per logical pixel (default
+// 2, as on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
 // WAV file of the right length, named on the chip, which says "Updating..." after a change until
 // a new file takes its place), that the window size is remembered, and drives the editor with
 // synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar,
@@ -69,9 +81,12 @@
 // the (virtual) desktop to check the live view's own timer: the analyser on while shown,
 // scrolling, off when hidden.
 //
-// For ArtFreq FX it checks the header's layout at every size, Mode and Depth driven with the
-// mouse and the keyboard (and what they grey and show), the export's hint, Preview and a carve
-// through the processor.
+// For ArtFreq FX it checks, in every state and at every size, that the bars, the strips and the
+// canvas share the window, that nothing overlaps or is cut off and that nothing shown is greyed;
+// and, driven with the mouse, Mode and Depth and what each mode shows, the Sound strip, the
+// drawer (an object's settings, the layer list, the side it opens on, closing it), the brush,
+// the bottom bar's line, the timing in the settings, a size saved with the old large window,
+// and a carve through the processor.
 //
 // Last, for both plug-ins, it proves that the DAW's play key gets through: with the editor's
 // window on the (virtual) desktop and the keyboard in it, it clicks its way through every place
@@ -82,6 +97,8 @@
 //
 //   artfreq-keys-typing.png      the text box while it is typed in (focus ring, caret, the hint)
 //   artfreq-keys-add-text.png    just after Add text: the new object's text box has the focus
+//   artfreq-fx-drawer-left.png   ArtFreq FX: a text on the right clicked, its settings on the left
+//   artfreq-fx-typing.png        ArtFreq FX: the drawer's text box while it is typed in
 //
 // On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
 
@@ -1731,6 +1748,18 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
     check (undo->isVisible() || redo->isVisible(), "after an edit, undo or redo is there");
 
+    // Its right-click menu opens inside the small window. (Drawn at once: off screen, an open
+    // menu closes itself at its first timer tick.)
+    {
+        const auto at = objectAt (textId).getCentre();
+        canvas->mouseDown (mouseEventAt (*canvas, at, at, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier)));
+        save ("menu", pixelScale, false);
+        canvas->mouseUp (mouseEventAt (*canvas, at, at, {}));
+        check (juce::PopupMenu::dismissAllActiveMenus() && editor->getSelectedObject() == textId,
+               "a right-click on the text opens its menu, and it stays selected");
+        pump (40);
+    }
+
     // The picture is on the right: its settings would cover it there, so they open on the left.
     clickOn (*canvas, objectAt (imageId).getCentre());
     pump (60);
@@ -1875,6 +1904,12 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
     if (auto* length = find<juce::ComboBox> (*editor, "length"))
     {
+        // Its menu opens upwards, inside the small window. (Drawn at once, as the object's menu.)
+        length->showPopup();
+        save ("length-menu", pixelScale, false);
+        check (juce::PopupMenu::dismissAllActiveMenus(), "a click on Length opens its menu");
+        pump (60);
+
         length->setSelectedId (6, juce::sendNotificationSync);   // 8 bars
         pump (60);
         check (choice (params::id::length) == 5, "the Length box sets the length");
