@@ -1543,10 +1543,11 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     auto* live = find<juce::Button> (*editor, "live");
     auto* layers = find<juce::Button> (*editor, "layers");
     auto* repeat = find<juce::Button> (*editor, "repeat");
+    auto* content = findComponentWithId (*editor, "content");
 
     if (mode == nullptr || depth == nullptr || top == nullptr || bottom == nullptr || sound == nullptr || brush == nullptr
         || drawer == nullptr || canvas == nullptr || list == nullptr || undo == nullptr || redo == nullptr || live == nullptr
-        || layers == nullptr || repeat == nullptr)
+        || layers == nullptr || repeat == nullptr || content == nullptr)
         return;
 
     // (Shown: visible, and so is everything it is in. The editor itself is on no screen here.)
@@ -1672,8 +1673,13 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         if (auto* client = dynamic_cast<juce::TooltipClient*> (mode))
         {
             check (client->getTooltip().contains ("Stencil"), "the Mode control's tooltip explains the modes");
+
+            // Drawn at once: the tip window's own timer puts away a tip that no mouse is on, and
+            // would do so while the picture waits for the window to settle.
             tips->displayTip (mode->localPointToGlobal (juce::Point<int> (mode->getWidth() / 2, mode->getHeight())), client->getTooltip());
-            save ("tooltip", pixelScale);
+            check (tips->isVisible() && content->getLocalBounds().contains (tips->getBounds()),
+                   "... and it opens inside the window");
+            save ("tooltip", pixelScale, false);
             tips->hideTip();
         }
     }
@@ -1862,9 +1868,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     pump (80);
 
     auto* settings = findComponentWithId (*editor, "settings-panel");
-    auto* content = findComponentWithId (*editor, "content");
 
-    if (settings != nullptr && content != nullptr)
+    if (settings != nullptr)
     {
         check (shown ("settings-panel") && content->getLocalBounds().reduced (8).contains (settings->getBounds()),
                "the settings fit in the window with room around them");
@@ -1966,7 +1971,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     editor->showHelp (true);
     pump (40);
 
-    if (auto* help = findComponentWithId (*editor, "help-panel"); help != nullptr && content != nullptr)
+    if (auto* help = findComponentWithId (*editor, "help-panel"))
         check (shown ("help-panel") && content->getLocalBounds().reduced (12).contains (help->getBounds()),
                "the help fits in the window with room around it");
 
