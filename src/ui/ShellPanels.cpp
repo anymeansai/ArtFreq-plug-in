@@ -438,11 +438,11 @@ namespace
     const std::vector<Paragraph>& triggerModes()
     {
         static const std::vector<Paragraph> modes {
-            { "Transport.", "Plays once when you press play, wherever the playhead is. Under Trigger you can "
-                            "start it at a bar of the song instead. With Repeat it loops every Length." },
+            { "Transport.", "Plays once when you press play, or from a bar you set under Trigger. With Repeat "
+                            "it loops every Length." },
             { "MIDI note.", "Each note plays the drawing once from the start. With Repeat it loops while a "
                             "note is held." },
-            { "Nothing plays by itself.", "Stop the DAW and it stops; Preview plays it without the DAW." },
+            { "Stop the DAW and it stops.", "Preview plays it without the DAW." },
         };
         return modes;
     }
@@ -466,7 +466,7 @@ namespace
             { "V|B|E", "Select, Brush, Erase" },
             { shortcutText ("Cmd+Z") + "|" + shortcutText ("Cmd+Shift+Z"), "Undo, redo" },
             { "Delete", "Remove the selected text or picture" },
-            { "Space", "Plays your DAW, also from this window (typing in a text box, it is a space)" },
+            { "Space", "Plays your DAW (a space while you type)" },
             { "Shift-drag", "Fine adjustment of knobs and fields" },
             { "Double-click", "Reset a knob; on a value, type one" },
         };

@@ -68,6 +68,7 @@ const juce::KeyPress tabKey (juce::KeyPress::tabKey, juce::ModifierKeys(), '\t')
     the keyboard. */
 struct Rig
 {
+
     explicit Rig (ArtFreqProcessor::Variant variant = ArtFreqProcessor::Variant::instrument)
         : processor (std::make_unique<ArtFreqProcessor> (variant))
     {
@@ -96,6 +97,29 @@ struct Rig
         // As when the user clicks into the plug-in's window for the first time.
         editor->grabKeyboardFocus();
         pump (50);
+
+        // The display tells the window that it has the keyboard in a message, and JUCE then
+        // gives the focus to the editor. On X11 that message can be read early (with the answer
+        // to "has it the keyboard?") and then lie unseen until something more arrives from the
+        // display: it would turn up after the test's first click, and take the focus from what
+        // was clicked. So it is waited for here: the focus is put on the canvas, and comes back
+        // to the editor when the message is dealt with (the pointer moving and the window
+        // repainting keep the display talking). If it was dealt with at once, the wait is in vain.
+        if (auto* canvasView = findComponent (*editor, "canvas"))
+        {
+            canvasView->grabKeyboardFocus();
+
+            for (int rounds = 0; rounds < 24 && juce::Component::getCurrentlyFocusedComponent() == canvasView; ++rounds)
+            {
+                const auto corner = 6.0f + static_cast<float> (rounds % 2) * 6.0f;
+                juce::Desktop::getInstance().getMainMouseSource().setScreenPosition (editor->localPointToGlobal (juce::Point<float> (corner, corner)));
+                editor->repaint();
+                pump (15);
+            }
+
+            editor->grabKeyboardFocus();
+            pump (20);
+        }
     }
 
     ~Rig()
