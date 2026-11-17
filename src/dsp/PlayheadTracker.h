@@ -138,6 +138,10 @@ public:
               preview ending does not start it again.
             . With nothing usable from the host (no ppq, no time) it begins at the first playing
               block and runs on at the tempo, once; relocations cannot be seen.
+            . What it cannot see: a host that stops calling process() while it is stopped, without
+              a reset(), and starts again exactly where it stopped. That is playback that never
+              stopped, as far as the positions go, and a pass that was over stays over. No clock
+              is asked: a slow offline bounce looks the same, and would draw the picture twice.
 
             StartAt::bar ("At bar"): from the start of bar `startBar`. VST3 gives no bar
             numbers, so:

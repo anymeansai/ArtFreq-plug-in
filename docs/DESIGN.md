@@ -68,6 +68,7 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | length | Length | 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars, 16 bars, 32 bars | 4 bars | yes |
 | trigger | Trigger | Transport, MIDI note | Transport | yes |
 | repeat | Repeat | Off, On | Off | yes |
+| startAt | Start at | On play, At bar | On play (see below for states from before it) | no |
 | startBar | Start bar | 1..999 | 1 | yes |
 | tempoSource | Tempo | Host, Manual | Host | yes |
 | bpm | BPM | 20..300 | 120 | yes |
@@ -95,6 +96,15 @@ the only look there was, and loads with Stripes rather than the default Smooth, 
 looks and sounds as it did (`prepareLoadedParameters`, before the defaults for other missing
 parameters are filled in).
 
+Start at was added after 0.4 (version hint 5). Until then a single Transport pass always
+started at its start bar, and bar 1 was the default: press play anywhere later in the song and
+nothing sounded. A saved tree without it loads by its start bar: bar 1, the default nobody
+chose, as On play; any other bar was chosen, and loads as At bar, so that project plays where it
+did (`prepareLoadedParameters`, with the Lows rule, before the defaults for other missing
+parameters are filled in; a tree with neither parameter, 0.1's, is On play). It is how the
+plug-in is used, not something to perform, and switching it while the DAW plays begins a pass:
+not an automation target.
+
 State = APVTS tree + document tree + editor size, saved as XML in binary (`copyXmlToBinary`).
 Neither the drawing nor the editor size is a parameter, so edits, undo/redo and resizes tell the
 host the project changed (`updateHostDisplay` with `nonParameterStateChanged`); loading state
@@ -105,12 +115,55 @@ the loaded tree as the state to save, so saving after an edit or a load encodes 
 ## Trigger
 
 When the drawing plays is the Trigger (Transport | MIDI note) and Repeat (off by default). The
-producer's rule: nothing plays by itself, and loops only while something is playing.
+producer's rule: nothing plays by itself, and loops only while something is playing. And, after
+0.4: press play and it plays. The defaults (Transport, Repeat off, On play) make sound, or carve,
+from the moment the DAW starts, wherever the playhead is.
 
 | | Repeat off | Repeat on |
 | --- | --- | --- |
-| **Transport** | Once: from the start of bar *Start bar* to *Length* later, following the DAW's timeline. Start the DAW inside it and it plays from there; before and after it is silent; a DAW loop over it plays it each time round. | Loops every *Length*, on the host's bar lines (bar 1, 1 + Length, ...), while the DAW plays. |
+| **Transport** | Once, from where the pass starts to *Length* later, following the DAW's timeline. **On play** (the default): it starts where the DAW starts playing. **At bar**: it starts at the start of bar *Start bar*; start the DAW inside it and it plays from there, before and after it is silent. Either way a DAW loop over it plays it each time round. | Loops every *Length*, on the host's bar lines (bar 1, 1 + Length, ...), while the DAW plays. |
 | **MIDI note** | Each note-on plays it once from the start (a new one restarts it); note-offs are ignored. | A note-on starts it (a new one restarts it) and it loops while any key is down; letting go of the last fades it out. |
+
+**On play** (`StartAt::play`; the rules are in `PlayheadTracker.h`, the tests in
+`trackerOnPlay...`):
+
+- A pass begins at the first sample of the block in which the DAW starts playing, wherever the
+  song is. Also in the first block the plug-in sees while the DAW is already playing: put on the
+  track during playback, after `reset()` (which is how a host that suspends a plug-in says so:
+  JUCE calls it from VST3's `setProcessing (false)`), coming out of bypass, and when Repeat, At
+  bar or the MIDI trigger is switched back to it while the DAW plays (switching to it counts as a
+  start). It lasts Length in the time signature of that block.
+- From there it follows the song exactly as the pass at a start bar does: the host's ppq at the
+  host's tempo (changes and ramps bend it, they do not move it); with a typed-in tempo it starts
+  at the DAW's place and plays at the typed tempo, counted on; without a ppq it is counted from
+  the host's time. It plays once, with the same gate fades, and then it is silent.
+- The DAW moving while it plays (a relocation, or its loop wrapping round: a position that does
+  not follow on from the last block) to a place **inside** the pass carries on at that place in
+  the same pass, so a DAW loop over it draws the same picture every round. A place **before its
+  start** (by more than the jump tolerance, 5 ms: hosts round) or **from its gate's close on**
+  (where it can no longer sound: its end) begins a new pass right there. So a DAW loop shorter
+  than the pass draws the same first part every round (the first round starts where play was
+  pressed, the wrap begins a pass at the loop start, and every later wrap lands on that start);
+  a longer one draws the whole drawing and then silence, every round.
+- The DAW stopping forgets the pass: every start is a new pass, also from the same place.
+- It never begins before the song does. At a negative position (a count-in before bar 1) it
+  begins at 0 and the count-in is silent. A pre-roll inside the song cannot be told from
+  playback (VST3 has no flag for it): the pass begins where the DAW starts playing. So does an
+  offline bounce, at its first block.
+- A time-signature change while it plays moves and stretches nothing (it lines up with no bars).
+  A new Length changes its length at once, its start staying put: the position jumps (with the
+  jump fade), or the pass is over.
+- Under the preview the song is still followed, unheard, so the pass keeps its place and the
+  preview ending does not start it again.
+- A host that gives neither ppq nor time: it begins at the first playing block and runs on at the
+  tempo, once; relocations cannot be seen (stopping still forgets it).
+- What it cannot know: a host that stops calling the plug-in while it is stopped, without telling
+  it (`setProcessing`, `setActive`), and starts again exactly where it stopped looks like playback
+  that never stopped: a pass that was over stays over. No clock is consulted to guess (a slow
+  offline bounce would look the same, and would draw the picture twice).
+- The canvas numbers the drawing's own bars, 1 to N, as with Repeat.
+
+**At bar** (`StartAt::bar`): what 0.2 to 0.4 always did.
 
 - Bar N is the DAW's bar N, on the host's ppq, also with a typed-in tempo (which then only sets
   how fast the pass plays from where the DAW reaches its start bar); the pass lasts Length in the
@@ -125,6 +178,11 @@ producer's rule: nothing plays by itself, and loops only while something is play
   (also after moving back into bars already counted). Only starting the DAW between a signature
   change and the start bar, without having played through the change, places it by the
   assumption.
+- Its place belongs to the song, so `reset()` and stopping keep it; the canvas numbers the song's
+  bars.
+
+Both:
+
 - The edges of a single pass fade like a gate: the 5 ms fade-in starts at the pass's first
   sample, and the gate closes 5 ms (and a sample) before its end so the fade-out ends with the
   drawing, as a bounce and a MIDI one-shot do. A relocation into the middle fades the old sound
@@ -136,9 +194,11 @@ producer's rule: nothing plays by itself, and loops only while something is play
   on a loop until pressed again, without it once, after which the button turns itself off (the
   audio thread clears the press it played, never a newer one).
 - **Bounce WAV** always renders one pass.
-- Changing Trigger, Repeat or the start bar while playing moves to wherever the new setting puts
-  the position, with a jump fade when it does not follow on (turning Repeat off inside the single
-  pass, at the same place as the loop, carries on seamlessly).
+- Changing Trigger, Repeat, Start at or the start bar while playing moves to wherever the new
+  setting puts the position, with a jump fade when it does not follow on: nothing clicks (turning
+  Repeat off with At bar inside the single pass, at the same place as the loop, carries on
+  seamlessly; with On play it begins a pass, from the drawing's start).
+- ArtFreq FX uses the same tracker: Carve starts on play too.
 
 ## Smooth lows
 
@@ -242,7 +302,7 @@ its frequencies in the incoming audio, so it shows as dark shapes in the song's 
   (`MaskPlanExchange`: `PlanExchange` is now one template for both).
 - **The engine interface** (`dsp/SpectralCarver.h`): prepare (rate, block, channels), a constant
   latency, and an in-place process that takes the tracker's PlaySegments, so a carve follows
-  Length, Trigger, Repeat, start bar and tempo exactly as the sines do; the gate fades over
+  Length, Trigger, Repeat, where the pass starts and tempo exactly as the sines do; the gate fades over
   5 ms, a jump moves the mask at once (the audio jumped too). Outside the pass and with
   nothing drawn the audio passes unchanged apart from the latency (also in Stencil). Depth
   -120..0 dB; gain = 10 ^ (depth x amount / 20), amount = gate x mask (Carve) or gate x
@@ -359,8 +419,9 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
   cells, so it takes 75 - 80 dB to reach a spectrogram's floor near -95 dB (the judge's sweep:
   visibility 58 / 60 at FFT 4096 / 8192 against 46 at -60; the cost, frequency edges 2.3 display
   rows wider and a little more kick smear).
-- **What it does per block.** The tracker makes the segments (Length, Trigger, Repeat, start bar,
-  tempo, MIDI, Preview: exactly the instrument's), the carver (engine 1) carves the block in
+- **What it does per block.** The tracker makes the segments (Length, Trigger, Repeat, On play or
+  At bar, tempo, MIDI, Preview: exactly the instrument's; so with the defaults a carve starts when
+  the DAW starts playing), the carver (engine 1) carves the block in
   place with them, and in Carve + Draw and Draw the sine engine renders the same segments, at
   Level (and through the safety clipper: the sines only, never the song), into a delay of the
   carver's latency, so the sines come out with the audio they were played against (Draw adds
@@ -520,9 +581,10 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   Faint frequency grid lines (from `gridFrequencies`) and bar/beat lines.
 - Hz labels on the left axis; bar/beat labels along the bottom (e.g. "1", "2", "3", "4" for
   4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
-  bar in 3/4, six eighths in 6/8). When the drawing plays once at a bar of the song (Transport,
-  Repeat off) they are the song's bars: "9", "10", "11", "12" for 4 bars from bar 9 (under a bar,
-  the beats of that bar: "9", "9.2").
+  bar in 3/4, six eighths in 6/8). They count the drawing's own bars (On play, Repeat, MIDI: the
+  drawing is not at one place in the song). Only when it plays once at a bar of the song
+  (Transport, Repeat off, At bar) are they the song's bars: "9", "10", "11", "12" for 4 bars from
+  bar 9 (under a bar, the beats of that bar: "9", "9.2").
 - Playhead: a 2 px accent2 vertical line at the play position while sounding.
 - **Select tool**: click an object to select it (the selected object if the point is inside it,
   so it can be moved even where another lies over it; else the front-most shown object whose
@@ -614,12 +676,20 @@ while visible.
   (Host | Manual) with a BPM field (editable when Manual; shows the host tempo greyed when Host).
   Columns at 100 %: Length 96, Trigger 124 + 6 + Repeat 78, Tempo 108 + 8 + BPM 56, 16 apart,
   ending 24 before the Preview column.
-- The hint line under each column says what it does: "8 s per pass"; under Trigger "Plays once
-  from bar [1]", "Repeats every 4 bars from bar 1", "Each note plays it once" or "Loops while a
-  note is held"; "From the DAW" / "Typed in". In "Plays once from bar [1]" the number is the
-  start bar field (shown only for Transport without Repeat): the BPM field's look at 20 px tall
-  with 12 px mono figures, as the knobs' values in the same line; drag up/down (Shift = fine),
-  click to type, Enter commits, Esc cancels, out-of-range values clamp to 1..999.
+- The hint line under each column says what it does, in plain words: "8 s per pass"; under
+  Trigger "Plays once when you press play", "Plays once from bar [9]", "Repeats every 4 bars",
+  "Each note plays it once" or "Loops while a note is held"; "From the DAW" / "Typed in".
+- For a single Transport pass the words after "Plays once" are the **start choice**
+  (`StartChoice`): "when you press play" or "from bar", in the hint's font on the hint's
+  baseline, a shade brighter than "Plays once" and followed by a small chevron, so the pair reads
+  as one sentence with a part that can be changed (raised on hover, pointing-hand cursor, a
+  tooltip). A click opens a menu inside the window with the two, the current one ticked: "When
+  you press play", "From a bar of the song". With "from bar" the **start bar field** follows the
+  words 3 px on: the BPM field's look at 20 px tall with 12 px mono figures, as the knobs' values
+  in the same line; drag up/down (Shift = fine), click to type, Enter commits, Esc cancels,
+  out-of-range values clamp to 1..999. The bar is kept while On play is chosen. Both end inside
+  the Trigger column's width at every window size (the snapshot tool checks 75, 100, 150 and
+  200 %). With Repeat or MIDI there is nothing to choose, and neither is shown.
 - Preview: a round play/stop button (accent2 when on). Plays the drawing from its start, on a
   loop with Repeat, else once (then it turns itself off).
 - Export: "Bounce WAV" renders one pass in the background ("Rendering..." on the button); then a
@@ -649,6 +719,54 @@ while visible.
     deleted when an editor opens. Closing the window stops running renders (the render checks once
     per block) instead of waiting for them.
 
+### Keys and the keyboard focus
+
+A plug-in cannot press the DAW's play button; it can only leave the key alone. On macOS JUCE
+passes a key on to the host's window only if nothing in the plug-in used it
+(`juce_NSViewComponentPeer_mac.mm`: `keyDown` -> `sendEventToInputContextOrComponent`, else
+`[super keyDown:]`). "Used" means: a text box that is being typed in took it (the peer's text
+input target gets all typing first); or `ComponentPeer::handleKeyUpOrDown` / `handleKeyPress`
+said so (the focused component, then its parents and their key listeners; an unused Tab moves
+the focus and counts as used); or a component is modal (JUCE then swallows every key). So
+(`ui/KeyFocus.h`, the editor's `Content`):
+
+- **The editor's own keys**, and nothing else, are used: V / B / E (tools), Cmd+Z and
+  Shift+Cmd+Z (Ctrl+Y elsewhere), Delete / Backspace and the arrows with a selection, Esc with a
+  panel open or a selection, and in the layer list Up / Down, Return, Delete, Esc. Everything
+  else comes back unused in every focus state, also Delete, the arrows and Return when there is
+  nothing for them to do: the space bar plays the DAW, and the DAW's other shortcuts work.
+- **Where the focus rests**: the canvas; the layer list while a row was clicked; a panel while
+  it is open (then the canvas again). A click on anything else (a button, a chip, a segmented
+  control, a knob, a combo box, a background) is followed by handing the focus back to the
+  canvas (a mouse listener on the content, after the clicked component has dealt with the
+  click): JUCE gives a clicked button the focus, where Return would press it again. Combo boxes
+  take no focus at all (JUCE focuses a box when its menu closes, and the arrows would be its own).
+- **Text entry is the one place where space types**: the object's text box, a number field
+  being edited, a knob's or bar's value being typed. A text box has the focus only while it is
+  typed in. Return commits and Esc cancels a number or a value (the object's text is in the
+  drawing as it is typed: both keep it, and undo takes the typing back), Tab commits; each hands
+  the focus back to the canvas (to the panel, for a field in the settings). So does a press
+  anywhere outside it. In the object's text box Shift+Return (or
+  Alt+Return) is a new line, and while it has the focus it shows it: the accent outline, the
+  caret, and "Return: done  Shift+Return: new line" beside its caption.
+- **Selecting is not typing**: a click on a text object, or opening its settings from the layer
+  list, leaves the focus with the canvas. A double-click on it, and Add text, go to typing (on
+  the mouse's release, with the text selected so that typing replaces it).
+- **Nothing stays modal or a text target**: a value being typed into a label (modal while it is
+  edited) is set when the window loses the keyboard or its control is hidden; when a text box
+  goes while it has the focus (its object deleted, a value set), the focus goes to the canvas
+  rather than to the first control JUCE finds. Menus are modal only while open.
+- **Tab** is the DAW's as well: for the moment of the key press the focus is let go (so JUCE has
+  nothing to move it from), and taken up again right after.
+- What is not in the plug-in's hands, and cannot be tested on the Linux build machine: real
+  DAWs on macOS. A host decides what it does with a key that comes back to it (the usual thing
+  is to act as if its own window had the keyboard), and a host that keeps the keyboard to itself,
+  or eats the space bar before the plug-in's window sees it, never asks.
+
+`KeyFocusTests.cpp` and the snapshot tool drive this through the real path: the editor in a
+window on a (virtual) display, clicks through `ComponentPeer::handleMouseEvent`, keys through
+`handleKeyUpOrDown` and `handleKeyPress`, in every focus state and for both plug-ins.
+
 ### Header
 
 The emblem (24 px, `ui/Emblem.h`, image in `docs/artfreq-emblem.png`): a capital A and F as
@@ -673,12 +791,14 @@ Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawin
 
 Short numbered steps: put ArtFreq on an instrument track; open a spectrogram (MiniMeters) on the
 output; match scale/range in Settings; add text/image/paint; choose a band and density; press
-play in the DAW (or Preview, once or on a loop); Trigger modes and Repeat explained (nothing
-plays by itself); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
+play in the DAW (it plays once from wherever you start; Preview plays it with the DAW stopped);
+Trigger modes and Repeat explained (once on play or from a bar, loops with Repeat; stop the DAW
+and it stops); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
 overlapping objects (Alt-click or click again, the right-click menu). Plus tips: highs show the
 sharpest detail; the lowest octaves are coarse in every analyser; Lows (Smooth fills shapes
 below about 2 kHz, Stripes plays separate lines there); raise Density for solid shapes, lower for
-a scan-line look.
+a scan-line look. Shortcuts, with "Space: plays your DAW (a space while you type)". Both panels
+must fit the window with room around them (a test).
 
 ## Tests
 
@@ -691,8 +811,13 @@ at low ends of 10, 20 and 30 Hz, a long-FFT analyser seeing the band filled, its
 the drawn band, leakage, determinism, crossfades, speed, the canvas drawing the band filled and as
 bright as the lines); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
-speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass from a
-start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
+speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass on
+play: starting anywhere in the song at any block sizes, in the first block the tracker sees and
+after reset, stop and start, a DAW loop longer and shorter than the pass and one beginning
+inside it, relocations inside, before and after it, tempo changes and ramps, a typed tempo, no
+ppq and no time, a count-in and a pre-roll, Length and the meter changing while it plays,
+switching Repeat, Start at and the trigger while it plays, the preview over it; the single pass
+from a start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
 a host loop over it, the host's meter and tempo, time-signature changes before, at, inside and
 after it and odd bars, a typed-in tempo starting on the DAW's bar, its fades through the engine;
 MIDI one-shots and their end, hold-to-loop with overlapping notes and releases, all-offs and stop;
@@ -701,7 +826,10 @@ correlate with the canvas, and at FFT 8192 and 16384 Smooth must fill a block an
 where Stripes leaves gaps, correlate better with the drawing, and keep the band's level steady (no
 regular pulse); processor (state round trip, defaults, Lows on Smooth for new instances and on
 Stripes for states from before it, switching Lows back and forth while playing without a click,
-states from before Repeat and the Free-loop migration, a single pass and a held MIDI loop through the processor, a single pass
+states from before Repeat and the Free-loop migration, states from before Start at (bar 1 as On
+play, any other bar as At bar) and its round trip, sound within 10 ms of the DAW starting in bar
+33 with nothing touched (any block size, also first prepared while the DAW plays), once, and
+again after stop and start, a DAW loop and coming out of bypass, a single pass and a held MIDI loop through the processor, a single pass
 through time-signature changes and at a typed tempo, preview following Repeat, process with MIDI,
 panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (cancelling it, its
 progress, bounce file names);
@@ -710,7 +838,11 @@ after each change a new file that matches a render of the new plan, the chip's "
 stopped renders, saving the current file; undo steps of wheel and arrow gestures,
 clicking and placing objects, the layer list: selecting, the keyboard, hiding, reordering,
 deleting, the paint row; clicking again, Alt-click and the right-click menu on the canvas; the
-live view's span, unreadable pictures; under a virtual display on Linux). Hidden layers: the
+live view's span, unreadable pictures; under a virtual display on Linux); the keyboard focus
+(`KeyFocusTests.cpp`, the editor in a real window, Linux only: the space bar unused after a
+click on anything, in both plug-ins; selecting text not typing; the text box, number fields and
+typed values giving the focus back on Return, Esc, Tab and a click elsewhere; Tab; the panels;
+the live view). Hidden layers: the
 document round trip (order, visibility, file names, old documents shown) and the compositor
 leaving them out. Carving: the mask plan (rows to Hz, columns, band averages, clipping, the
 halo), mask plans through the exchange, and the baseline engine (bit-exact with nothing to
@@ -730,7 +862,8 @@ a drawn band at -80 and -40 dB, Carve + Draw's wider hole, its sines and Level, 
 exactly the instrument's output one latency late, bypass keeping the latency (and no clicks into
 and out of it), every mode switch and Depth jumps without clicks, states between the two
 variants, mono and stereo, 44.1 and 96 kHz, block sizes from 1 to 4096 (the carve exact, the
-sines as the instrument's), MIDI and Preview with the DAW stopped. Its editor
+sines as the instrument's), MIDI and Preview with the DAW stopped, and, as it comes, carving
+from where the DAW starts playing (bar 33) for one pass. Its editor
 (`EffectUiTests.cpp`): Mode and Depth in the header and not overlapping, automation moving
 them, what each mode greys, the export's hint, both help panels fitting the window, and the
 canvas in each mode (black where Carve carves at -80 dB, Stencil the other way round, Carve +
@@ -740,13 +873,18 @@ Draw's halo dark and its sines bright, nothing drawn leaving the stand-in).
 `artfreq-fx-*.png`: each mode, a shallow Depth typed in, the Mode tooltip, the live view of a
 stand-in song carved by the real processor, the help, 75 / 100 / 200 %, with checks of the
 header's layout, Mode and Depth driven with the mouse, what they grey, the export's hint, Preview
-carving the audio coming in; and the instrument's: Repeat, MIDI with Repeat,
-a start bar and typing one among them, "layers": five objects, one hidden, one selected from the
+carving the audio coming in; and the instrument's: the default "Plays once when you press
+play", the start choice's menu, Repeat, MIDI with Repeat, a start bar and typing one, the footer's
+timing columns alone for On play and At bar at 75, 100, 150 and 200 % among them, "layers": five objects, one hidden, one selected from the
 list, and the window at 75, 100, 150 and 200 %), and checks the editor's controls by driving
 them: the canvas interactions, the layer list, Lows (at the foot of the list, clear of the keys
 and the brush settings; Stripes and back changing the plan and the canvas; hidden with an
-object's settings), and the footer's Trigger, Repeat, the start bar field (drag, type, Enter,
-Esc, clamping), the hint line, Preview stopping by itself without Repeat, and the layout.
+object's settings), and the footer's Trigger, Repeat, the start choice (its words, its menu,
+what each item does to the hint, the field and the canvas's bar numbers, in line at every
+window size), the start bar field (drag, type, Enter, Esc, clamping), the hint line, Preview
+stopping by itself without Repeat, and the layout. Last, for both plug-ins, with the window on
+the display and the keyboard in it: the space bar through the peer in every focus state (see
+"Keys and the keyboard focus"), typing where text is typed, and the hand-back.
 
 `ArtFreqLab <dir> [--lows stripes|smooth]` (tools/LowsLab.cpp) is the bench the lows were chosen
 on: it renders four drawings through the real plan and engine, analyses them like a spectrogram
