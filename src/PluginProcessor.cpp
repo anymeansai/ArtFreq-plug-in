@@ -91,6 +91,7 @@ ArtFreqProcessor::ArtFreqProcessor (Variant variantToUse)
     lengthParam      = parameters.getRawParameterValue (params::id::length);
     triggerParam     = parameters.getRawParameterValue (params::id::trigger);
     repeatParam      = parameters.getRawParameterValue (params::id::repeat);
+    startAtParam     = parameters.getRawParameterValue (params::id::startAt);
     startBarParam    = parameters.getRawParameterValue (params::id::startBar);
     tempoSourceParam = parameters.getRawParameterValue (params::id::tempoSource);
     bpmParam         = parameters.getRawParameterValue (params::id::bpm);
@@ -103,7 +104,8 @@ ArtFreqProcessor::ArtFreqProcessor (Variant variantToUse)
     slopeParam       = parameters.getRawParameterValue (params::id::slope);
 
     jassert (levelParam != nullptr && lengthParam != nullptr && triggerParam != nullptr
-             && repeatParam != nullptr && startBarParam != nullptr && tempoSourceParam != nullptr
+             && repeatParam != nullptr && startAtParam != nullptr && startBarParam != nullptr
+             && tempoSourceParam != nullptr
              && bpmParam != nullptr && densityParam != nullptr && contrastParam != nullptr
              && lowEndParam != nullptr && scaleParam != nullptr && rangeLowParam != nullptr
              && rangeHighParam != nullptr && slopeParam != nullptr);
@@ -278,6 +280,7 @@ TrackerSettings ArtFreqProcessor::currentTrackerSettings() const noexcept
     TrackerSettings settings;
     settings.mode = params::triggerForIndex (juce::roundToInt (triggerParam->load()));
     settings.repeat = repeatParam->load() >= 0.5f;
+    settings.startAt = params::startAtForIndex (juce::roundToInt (startAtParam->load()));
     settings.startBar = juce::roundToInt (startBarParam->load());
     settings.useHostTempo = juce::roundToInt (tempoSourceParam->load()) == 0;
     settings.manualBpm = static_cast<double> (bpmParam->load());
@@ -477,7 +480,7 @@ void ArtFreqProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
     // The audio comes in, the carver carves it in place (one frame late, the latency the host
     // was told), and in the modes that play the drawing its sines are added, as late as the
     // audio they belong to. The tracker's segments drive both, so a carve follows Length,
-    // Trigger, Repeat, start bar and tempo exactly as the sines do. In bypass (and in Draw) the
+    // Trigger, Repeat, where the pass starts and tempo exactly as the sines do. In bypass (and in Draw) the
     // carver changes nothing: the audio comes out as late, bit for bit, so a host's bypass never
     // moves it; what was being carved or played fades out first.
     const auto numSamples = buffer.getNumSamples();
@@ -768,7 +771,8 @@ int ArtFreqProcessor::getSinglePassStartBar() const noexcept
 {
     const auto transport = params::triggerForIndex (juce::roundToInt (triggerParam->load())) == TriggerMode::transport;
 
-    if (! transport || repeatParam->load() >= 0.5f)
+    if (! transport || repeatParam->load() >= 0.5f
+        || params::startAtForIndex (juce::roundToInt (startAtParam->load())) != StartAt::bar)
         return 0;
 
     return juce::jlimit (params::firstStartBar, params::lastStartBar, juce::roundToInt (startBarParam->load()));
@@ -1114,6 +1118,25 @@ void ArtFreqProcessor::prepareLoadedParameters (juce::ValueTree& loadedParameter
         }
 
         lowEnd.setProperty (valueProperty, params::stripesLowEndIndex, nullptr);
+    }
+
+    // Start at came after 0.4: until then a single Transport pass always started at its start
+    // bar. Bar 1 was the default (a drawing nobody placed): it loads as On play, so pressing play
+    // anywhere now plays it. Any other bar was chosen: it loads as At bar and plays where it did.
+    if (auto startAt = child (params::id::startAt); ! (startAt.isValid() && startAt.hasProperty (valueProperty)))
+    {
+        if (! startAt.isValid())
+        {
+            startAt = juce::ValueTree (paramType);
+            startAt.setProperty (idProperty, params::id::startAt, nullptr);
+            loadedParameters.appendChild (startAt, nullptr);
+        }
+
+        const auto startBar = child (params::id::startBar);
+        const auto placed = startBar.isValid() && startBar.hasProperty (valueProperty)
+                         && juce::roundToInt (static_cast<double> (startBar.getProperty (valueProperty))) != params::firstStartBar;
+
+        startAt.setProperty (valueProperty, placed ? params::atBarStartIndex : params::onPlayStartIndex, nullptr);
     }
 
     // Parameters this variant does not have (the effect's Mode and Depth, in a state the effect

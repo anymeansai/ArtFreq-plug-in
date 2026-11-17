@@ -43,7 +43,9 @@ namespace id
     inline constexpr const char* length      = "length";       // choice, see lengthNames(), default "4 bars"
     inline constexpr const char* trigger     = "trigger";      // choice: Transport, MIDI note
     inline constexpr const char* repeat      = "repeat";       // bool, default off: loop rather than play once
-    inline constexpr const char* startBar    = "startBar";     // int 1..999, default 1: where a single Transport pass starts
+    inline constexpr const char* startAt     = "startAt";      // choice: On play, At bar (not automatable): where a single
+                                                               // Transport pass starts
+    inline constexpr const char* startBar    = "startBar";     // int 1..999, default 1: the bar, with At bar
     inline constexpr const char* tempoSource = "tempoSource";  // choice: Host, Manual
     inline constexpr const char* bpm         = "bpm";          // 20..300, default 120
 
@@ -64,6 +66,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect
 // Choices, in parameter order.
 juce::StringArray lengthNames();       // "1 beat", "2 beats", "1 bar", "2 bars", "4 bars", "8 bars", "16 bars", "32 bars"
 juce::StringArray triggerNames();      // "Transport", "MIDI note"
+juce::StringArray startAtNames();      // "On play", "At bar"
 juce::StringArray tempoSourceNames();  // "Host", "Manual"
 juce::StringArray scaleNames();        // "Log", "Linear", "Mel"
 juce::StringArray slopeNames();        // "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct"
@@ -78,6 +81,12 @@ constexpr float minDepthDb = -120.0f;
 constexpr float defaultDepthDb = -80.0f;
 constexpr int firstStartBar = 1;
 constexpr int lastStartBar = 999;
+
+/** Start at: On play for new instances (press play anywhere in the song and the drawing plays).
+    States saved before the parameter existed (0.1 to 0.4) played from their start bar: bar 1,
+    the default nobody chose, loads as On play; any other bar was chosen, and loads as At bar. */
+constexpr int onPlayStartIndex = 0;
+constexpr int atBarStartIndex = 1;
 
 /** Lows: Smooth for new instances; Stripes, ArtFreq 0.1 and 0.2's only look, for states saved
     before the parameter existed, so projects made with them do not change. */
@@ -96,6 +105,7 @@ double lengthInQuarterNotes (int lengthIndex, double quarterNotesPerBar = 4.0) n
 float slopeForIndex (int slopeIndex) noexcept;      // dB per octave
 ScaleType scaleForIndex (int scaleIndex) noexcept;
 TriggerMode triggerForIndex (int triggerIndex) noexcept;
+StartAt startAtForIndex (int startAtIndex) noexcept;
 LowEnd lowEndForIndex (int lowEndIndex) noexcept;
 EffectMode effectModeForIndex (int modeIndex) noexcept;
 

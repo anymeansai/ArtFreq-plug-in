@@ -63,6 +63,7 @@ ARTFREQ_TEST (processorParameterDefaults)
     CHECK_NEAR (getParameter (*processor, params::id::length), static_cast<float> (params::defaultLengthIndex), 1.0e-4);
     CHECK_NEAR (getParameter (*processor, params::id::trigger), 0.0f, 1.0e-4);
     CHECK_NEAR (getParameter (*processor, params::id::repeat), 0.0f, 1.0e-4);
+    CHECK_NEAR (getParameter (*processor, params::id::startAt), static_cast<float> (params::onPlayStartIndex), 1.0e-4);
     CHECK_NEAR (getParameter (*processor, params::id::startBar), 1.0f, 1.0e-4);
     CHECK_NEAR (getParameter (*processor, params::id::tempoSource), 0.0f, 1.0e-4);
     CHECK_NEAR (getParameter (*processor, params::id::bpm), 120.0f, 1.0e-3);
@@ -90,7 +91,11 @@ ARTFREQ_TEST (processorParameterDefaults)
     CHECK (processor->getParameters().getParameter (params::id::repeat)->isAutomatable());
     CHECK (processor->getParameters().getParameter (params::id::startBar)->isAutomatable());
 
-    // Two triggers (nothing plays by itself), Repeat off, a single pass from bar 1.
+    // Where the single pass starts is how the plug-in is used, not something to perform.
+    CHECK (! processor->getParameters().getParameter (params::id::startAt)->isAutomatable());
+
+    // Two triggers (nothing plays by itself), Repeat off, a single pass from where the DAW starts
+    // playing (so the canvas numbers its bars from 1, not as bars of the song); At bar, from bar 1.
     auto* trigger = processor->getParameters().getParameter (params::id::trigger);
     auto* repeat = processor->getParameters().getParameter (params::id::repeat);
     auto* startBar = processor->getParameters().getParameter (params::id::startBar);
@@ -100,6 +105,13 @@ ARTFREQ_TEST (processorParameterDefaults)
     CHECK (startBar->getCurrentValueAsText() == "Bar 1");
     CHECK_NEAR (startBar->convertFrom0to1 (startBar->getValueForText ("Bar 12")), 12.0f, 1.0e-3);
     CHECK_NEAR (startBar->convertFrom0to1 (1.0f), 999.0f, 1.0e-3);
+
+    auto* startAt = processor->getParameters().getParameter (params::id::startAt);
+    CHECK (startAt->getNumSteps() == 2);
+    CHECK (startAt->getCurrentValueAsText() == "On play");
+    CHECK (processor->getSinglePassStartBar() == 0);
+    setParameter (*processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
+    CHECK (startAt->getCurrentValueAsText() == "At bar");
     CHECK (processor->getSinglePassStartBar() == 1);
 
     // Density's skew puts ~200 lines in the middle of the knob.
@@ -151,6 +163,7 @@ ARTFREQ_TEST (processorStateRoundTrip)
     setParameter (*source, params::id::slope, 2.0f);
     setParameter (*source, params::id::trigger, 1.0f);
     setParameter (*source, params::id::repeat, 1.0f);
+    setParameter (*source, params::id::startAt, static_cast<float> (params::atBarStartIndex));
     setParameter (*source, params::id::startBar, 17.0f);
     source->setEditorSize (900, 579);
 
@@ -177,6 +190,7 @@ ARTFREQ_TEST (processorStateRoundTrip)
     CHECK_NEAR (getParameter (*restored, params::id::slope), 2.0f, 1.0e-4);
     CHECK_NEAR (getParameter (*restored, params::id::trigger), 1.0f, 1.0e-4);
     CHECK_NEAR (getParameter (*restored, params::id::repeat), 1.0f, 1.0e-4);
+    CHECK_NEAR (getParameter (*restored, params::id::startAt), static_cast<float> (params::atBarStartIndex), 1.0e-4);
     CHECK_NEAR (getParameter (*restored, params::id::startBar), 17.0f, 1.0e-4);
     CHECK (restored->getEditorWidth() == 900);
     CHECK (restored->getEditorHeight() == 579);
@@ -253,8 +267,9 @@ ARTFREQ_TEST (processorLoadsStatesSavedAsFreqArt)
 
 ARTFREQ_TEST (processorLoadsStatesFromBeforeRepeat)
 {
-    // A state as ArtFreq 0.1 saved it: no Repeat, no start bar, no Lows, and a trigger of 0, 1
-    // or 2 ("Free loop", saved as its index or, by some hosts' presets, as its name).
+    // A state as ArtFreq 0.1 saved it: no Repeat, no start bar (nor where the pass starts), no
+    // Lows, and a trigger of 0, 1 or 2 ("Free loop", saved as its index or, by some hosts'
+    // presets, as its name).
     const auto oldState = [] (const juce::String& triggerValue)
     {
         auto processor = makeProcessor();
@@ -267,7 +282,7 @@ ARTFREQ_TEST (processorLoadsStatesFromBeforeRepeat)
 
         if (parametersXml != nullptr)
         {
-            for (auto* id : { params::id::repeat, params::id::startBar, params::id::lowEnd })
+            for (auto* id : { params::id::repeat, params::id::startAt, params::id::startBar, params::id::lowEnd })
                 if (auto* param = parametersXml->getChildByAttribute ("id", id))
                     parametersXml->removeChildElement (param, true);
 
@@ -288,6 +303,7 @@ ARTFREQ_TEST (processorLoadsStatesFromBeforeRepeat)
     {
         auto processor = makeProcessor();
         setParameter (*processor, params::id::repeat, 1.0f);
+        setParameter (*processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
         setParameter (*processor, params::id::startBar, 9.0f);
         setParameter (*processor, params::id::trigger, 1.0f);
         processor->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
@@ -302,6 +318,7 @@ ARTFREQ_TEST (processorLoadsStatesFromBeforeRepeat)
         CHECK_NEAR (getParameter (*processor, params::id::trigger), trigger, 1.0e-4);
         CHECK_NEAR (getParameter (*processor, params::id::repeat), repeat, 1.0e-4);
         CHECK_NEAR (getParameter (*processor, params::id::startBar), 1.0f, 1.0e-4);
+        CHECK_NEAR (getParameter (*processor, params::id::startAt), static_cast<float> (params::onPlayStartIndex), 1.0e-4);
         CHECK_NEAR (getParameter (*processor, params::id::lowEnd), static_cast<float> (params::stripesLowEndIndex), 1.0e-4);
     }
 
@@ -312,6 +329,77 @@ ARTFREQ_TEST (processorLoadsStatesFromBeforeRepeat)
     const auto reloaded = load (resaved);
     CHECK_NEAR (getParameter (*reloaded, params::id::trigger), 0.0f, 1.0e-4);
     CHECK_NEAR (getParameter (*reloaded, params::id::repeat), 1.0f, 1.0e-4);
+}
+
+ARTFREQ_TEST (processorLoadsStatesFromBeforeStartAt)
+{
+    // A state as 0.2 to 0.4 saved it: a start bar, and nothing saying where the single pass
+    // starts (it always started at that bar). Bar 1, the default nobody chose, loads as On play;
+    // any other bar was chosen, and loads as At bar, so that project plays where it did.
+    const auto oldState = [] (int startBar)
+    {
+        auto processor = makeProcessor();
+        setParameter (*processor, params::id::startBar, static_cast<float> (startBar));
+        juce::MemoryBlock state;
+        processor->getStateInformation (state);
+
+        auto xml = juce::AudioProcessor::getXmlFromBinary (state.getData(), static_cast<int> (state.getSize()));
+        auto* parametersXml = xml != nullptr ? xml->getChildByName ("ArtFreqParameters") : nullptr;
+        CHECK (parametersXml != nullptr && parametersXml->getChildByAttribute ("id", params::id::startAt) != nullptr);
+
+        if (parametersXml != nullptr)
+            parametersXml->removeChildElement (parametersXml->getChildByAttribute ("id", params::id::startAt), true);
+
+        juce::MemoryBlock old;
+
+        if (xml != nullptr)
+            juce::AudioProcessor::copyXmlToBinary (*xml, old);
+
+        return old;
+    };
+
+    // Loaded into an instance set the other way, so "left as it was" would show.
+    const auto load = [] (const juce::MemoryBlock& state, int startAtBefore)
+    {
+        auto processor = makeProcessor();
+        setParameter (*processor, params::id::startAt, static_cast<float> (startAtBefore));
+        processor->setStateInformation (state.getData(), static_cast<int> (state.getSize()));
+        return processor;
+    };
+
+    const auto fromBarOne = load (oldState (1), params::atBarStartIndex);
+    CHECK_NEAR (getParameter (*fromBarOne, params::id::startAt), static_cast<float> (params::onPlayStartIndex), 1.0e-4);
+    CHECK_NEAR (getParameter (*fromBarOne, params::id::startBar), 1.0f, 1.0e-4);
+    CHECK (fromBarOne->getSinglePassStartBar() == 0);
+
+    for (const auto bar : { 2, 17, 999 })
+    {
+        const auto placed = load (oldState (bar), params::onPlayStartIndex);
+        CHECK_NEAR (getParameter (*placed, params::id::startAt), static_cast<float> (params::atBarStartIndex), 1.0e-4);
+        CHECK_NEAR (getParameter (*placed, params::id::startBar), static_cast<float> (bar), 1.0e-4);
+        CHECK (placed->getSinglePassStartBar() == bar);
+
+        // Saved again it is an ordinary At bar state.
+        juce::MemoryBlock resaved;
+        placed->getStateInformation (resaved);
+        const auto again = load (resaved, params::onPlayStartIndex);
+        CHECK_NEAR (getParameter (*again, params::id::startAt), static_cast<float> (params::atBarStartIndex), 1.0e-4);
+    }
+
+    // A state of this version keeps what it says, whatever its bar: On play with a bar typed in
+    // earlier, and At bar 1.
+    for (const auto& [startAt, bar] : { std::pair (params::onPlayStartIndex, 9), std::pair (params::atBarStartIndex, 1) })
+    {
+        auto source = makeProcessor();
+        setParameter (*source, params::id::startAt, static_cast<float> (startAt));
+        setParameter (*source, params::id::startBar, static_cast<float> (bar));
+        juce::MemoryBlock state;
+        source->getStateInformation (state);
+
+        const auto restored = load (state, startAt == params::onPlayStartIndex ? params::atBarStartIndex : params::onPlayStartIndex);
+        CHECK_NEAR (getParameter (*restored, params::id::startAt), static_cast<float> (startAt), 1.0e-4);
+        CHECK_NEAR (getParameter (*restored, params::id::startBar), static_cast<float> (bar), 1.0e-4);
+    }
 }
 
 ARTFREQ_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
@@ -608,12 +696,13 @@ ARTFREQ_TEST (processorTransportPlayingFollowsTheTimeline)
 {
     auto processor = makeProcessor();
     processor->setDocument (textDocument ("FULL", Band::mid));
+    setParameter (*processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
     processor->rebuildPlanIfNeeded();
 
     FakePlayHead playHead;
     processor->setPlayHead (&playHead);
 
-    // Play from bar 3 (ppq 8) at 120 BPM: the 4-bar drawing is half way through.
+    // At bar 1. Play from bar 3 (ppq 8) at 120 BPM: the 4-bar drawing is half way through.
     const auto out = render (*processor, 48000, blockSize, [&] (int start, int, juce::MidiBuffer&)
     {
         const auto seconds = 4.0 + static_cast<double> (start) / sampleRate;
@@ -632,16 +721,121 @@ ARTFREQ_TEST (processorTransportPlayingFollowsTheTimeline)
     processor->setPlayHead (nullptr);
 }
 
+ARTFREQ_TEST (processorPlaysAtOnceWhereverTheDawStarts)
+{
+    // A fresh instance, nothing touched (Transport, Repeat off, On play), a painted "1 bar"
+    // drawing. The DAW starts playing in the middle of bar 33: sound within 10 ms, the drawing
+    // from its start, once (2 s at 120 BPM), then silence. Stop and play again: once more.
+    auto processor = makeProcessor();
+    ArtDocument painted;
+    std::fill (painted.paint.begin(), painted.paint.end(), static_cast<uint8_t> (255));
+    processor->setDocument (painted);
+    setParameter (*processor, params::id::length, 2.0f);   // 1 bar
+    processor->rebuildPlanIfNeeded();
+
+    FakePlayHead playHead;
+    processor->setPlayHead (&playHead);
+
+    const auto playFrom = [&] (double ppq, int numSamples, int block = blockSize)
+    {
+        return render (*processor, numSamples, block, [&] (int start, int, juce::MidiBuffer&)
+        {
+            const auto seconds = ppq * 0.5 + static_cast<double> (start) / sampleRate;
+            playHead.set (true, 120.0, seconds * 2.0, seconds);
+        });
+    };
+
+    auto out = playFrom (129.37, 3 * 48000);
+    CHECK_GREATER (peak (out, 0, 480), 1.0e-4);
+    CHECK_GREATER (rms (out, 4800, 96000 - 4800), 0.005);
+    CHECK_GREATER (peak (out, 96000 - 720, 96000), 1.0e-4);
+    CHECK_LESS (peak (out, 96000), 1.0e-6);
+    CHECK (! processor->isSounding());
+
+    // The playhead on the canvas: half way through after a second.
+    playHead.set (false, 120.0, 135.37, 67.685);
+    render (*processor, 4800);
+    out = playFrom (200.0, 48000);
+    CHECK_GREATER (rms (out, 4800), 0.005);
+    CHECK_NEAR (processor->getPlayPosition(), 0.5, 0.01);
+    CHECK (processor->isSounding());
+
+    // Stopped: silent within a few milliseconds.
+    playHead.set (false, 120.0, 202.0, 101.0);
+    CHECK_LESS (peak (render (*processor, 4800), 960), 1.0e-6);
+
+    // The same for any block size, and for an instance first prepared while the DAW plays.
+    for (const auto block : { 32, 480, 2048 })
+    {
+        processor->releaseResources();
+        processor->prepareToPlay (sampleRate, block);
+        out = playFrom (1000.5, 2 * 48000 + 4800, block);
+        CHECK_GREATER (peak (out, 0, 480), 1.0e-4);
+        CHECK_GREATER (rms (out, 4800, 96000 - 4800), 0.005);
+        CHECK_LESS (peak (out, 96000), 1.0e-6);
+    }
+
+    processor->setPlayHead (nullptr);
+}
+
+ARTFREQ_TEST (processorOnPlayUnderADawLoopAndOutOfBypass)
+{
+    auto processor = makeProcessor();
+    ArtDocument painted;
+    std::fill (painted.paint.begin(), painted.paint.end(), static_cast<uint8_t> (255));
+    processor->setDocument (painted);
+    setParameter (*processor, params::id::length, 2.0f);   // 1 bar: 96000 samples at 120 BPM
+    processor->rebuildPlanIfNeeded();
+
+    FakePlayHead playHead;
+    processor->setPlayHead (&playHead);
+
+    // The DAW loops over two bars from bar 9 (ppq 32 to 40): every round the drawing sounds over
+    // the first bar and is silent over the second.
+    const auto out = render (*processor, 3 * 192000, 480, [&] (int start, int, juce::MidiBuffer&)
+    {
+        const auto ppq = 32.0 + static_cast<double> (start % 192000) / 24000.0;
+        playHead.set (true, 120.0, ppq, ppq * 0.5);
+    });
+
+    for (size_t round = 0; round < 3; ++round)
+    {
+        const auto from = round * 192000;
+        CHECK_GREATER (peak (out, from, from + 960), 1.0e-4);
+        CHECK_GREATER (rms (out, from + 4800, from + 96000 - 4800), 0.005);
+        CHECK_LESS (peak (out, from + 96000 + 480, from + 192000), 1.0e-6);
+    }
+
+    // Bypassed while the DAW plays on, then back: a new pass begins where it comes back.
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+
+    for (int i = 0; i < 4; ++i)
+        processor->processBlockBypassed (buffer, midi);
+
+    const auto back = render (*processor, 2 * 96000 + 4800, blockSize, [&] (int start, int, juce::MidiBuffer&)
+    {
+        const auto ppq = 500.0 + static_cast<double> (start) / 24000.0;
+        playHead.set (true, 120.0, ppq, ppq * 0.5);
+    });
+
+    CHECK_GREATER (peak (back, 0, 480), 1.0e-4);
+    CHECK_GREATER (rms (back, 4800, 96000 - 4800), 0.005);
+    CHECK_LESS (peak (back, 96000), 1.0e-6);
+    processor->setPlayHead (nullptr);
+}
+
 ARTFREQ_TEST (processorTransportPlaysOnceFromTheStartBar)
 {
-    // Repeat off (the default), "1 bar" from bar 2: at 120 BPM the drawing sounds from 2 s to
-    // 4 s of the song and nowhere else. Then Repeat on: it loops every bar from bar 1.
+    // Repeat off (the default), At bar, "1 bar" from bar 2: at 120 BPM the drawing sounds from
+    // 2 s to 4 s of the song and nowhere else. Then Repeat on: it loops every bar from bar 1.
     // Paint across the whole drawing, so there is sound right up to its edges.
     auto processor = makeProcessor();
     ArtDocument painted;
     std::fill (painted.paint.begin(), painted.paint.end(), static_cast<uint8_t> (255));
     processor->setDocument (painted);
     setParameter (*processor, params::id::length, 2.0f);   // 1 bar
+    setParameter (*processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
     setParameter (*processor, params::id::startBar, 2.0f);
     processor->rebuildPlanIfNeeded();
     CHECK (processor->getSinglePassStartBar() == 2);
@@ -679,9 +873,9 @@ ARTFREQ_TEST (processorTransportPlaysOnceFromTheStartBar)
 
 ARTFREQ_TEST (processorSinglePassFollowsTheSongsBars)
 {
-    // A painted drawing played once (Repeat off) through songs whose time signature changes, from
-    // the song start, the host reporting each block's signature and bar start. Returns which
-    // quarter notes of the song sound (at 120 BPM: 24000 samples each).
+    // A painted drawing played once at a start bar (Repeat off, At bar) through songs whose time
+    // signature changes, from the song start, the host reporting each block's signature and bar
+    // start. Returns which quarter notes of the song sound (at 120 BPM: 24000 samples each).
     struct Run { double from; int numerator; };
 
     const auto soundingQuarters = [] (std::vector<Run> runs, int lengthIndex, int startBar, int quarters)
@@ -691,6 +885,7 @@ ARTFREQ_TEST (processorSinglePassFollowsTheSongsBars)
         std::fill (painted.paint.begin(), painted.paint.end(), static_cast<uint8_t> (255));
         processor->setDocument (painted);
         setParameter (*processor, params::id::length, static_cast<float> (lengthIndex));
+        setParameter (*processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
         setParameter (*processor, params::id::startBar, static_cast<float> (startBar));
         processor->rebuildPlanIfNeeded();
 
@@ -764,6 +959,7 @@ ARTFREQ_TEST (processorSinglePassAtATypedTempoStartsOnTheDawsBar)
     std::fill (painted.paint.begin(), painted.paint.end(), static_cast<uint8_t> (255));
     processor->setDocument (painted);
     setParameter (*processor, params::id::length, 2.0f);
+    setParameter (*processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
     setParameter (*processor, params::id::startBar, 9.0f);
     setParameter (*processor, params::id::tempoSource, 1.0f);
     setParameter (*processor, params::id::bpm, 120.0f);

@@ -1,5 +1,6 @@
 #include "ShellControls.h"
 
+#include "KeyFocus.h"
 #include "LookAndFeel.h"
 
 #include <cmath>
@@ -154,6 +155,26 @@ void ValueLabel::mouseDoubleClick (const juce::MouseEvent& e)
 {
     if (isEditable() && isEnabled() && ! e.mods.isPopupMenu())
         showEditor();
+}
+
+void ValueLabel::textEditorReturnKeyPressed (juce::TextEditor& textEditor)
+{
+    // The value is set (or, with Esc, left) and the typing is over: the focus goes back to the
+    // canvas rather than to whichever control JUCE finds next.
+    const juce::Component::SafePointer<juce::Component> safe (this);
+    juce::Label::textEditorReturnKeyPressed (textEditor);
+
+    if (safe != nullptr)
+        handKeyFocusBack (*this);
+}
+
+void ValueLabel::textEditorEscapeKeyPressed (juce::TextEditor& textEditor)
+{
+    const juce::Component::SafePointer<juce::Component> safe (this);
+    juce::Label::textEditorEscapeKeyPressed (textEditor);
+
+    if (safe != nullptr)
+        handKeyFocusBack (*this);
 }
 
 juce::TextEditor* ValueLabel::createEditorComponent()
@@ -455,6 +476,11 @@ void NumberField::closeEditor (bool commit)
     auto outgoing = std::move (editor);
     outgoing->removeListener (this);
 
+    // Closed while typing (Return, Esc): the typing is over, and the focus goes back to the
+    // canvas rather than to whichever control JUCE finds next. (Closed because the focus went
+    // elsewhere, it stays where it went.)
+    const auto wasTyping = outgoing->hasKeyboardFocus (true);
+
     if (commit)
     {
         const auto range = parameter.getNormalisableRange();
@@ -470,6 +496,9 @@ void NumberField::closeEditor (bool commit)
     removeChildComponent (outgoing.get());
     outgoing.reset();
     repaint();
+
+    if (wasTyping)
+        handKeyFocusBack (*this);
 }
 
 void NumberField::textEditorReturnKeyPressed (juce::TextEditor&)   { closeEditor (true); }

@@ -31,7 +31,10 @@
 //   artfreq-lows-brush.png       Lows (Smooth) at the foot of the panel, under the brush settings
 //   artfreq-lows-stripes.png     the rich drawing with Lows on Stripes (the layers PNGs are Smooth)
 //   artfreq-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
-//   artfreq-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
+//   artfreq-repeat.png           Transport with Repeat on ("Repeats every 4 bars")
+//   artfreq-on-play.png          the default: "Plays once when you press play", bars 1 to 4 on the axis
+//   artfreq-start-menu.png       the start choice's menu (When you press play / From a bar of the song)
+//   artfreq-footer-*.png         the footer alone, On play and At bar, at 75, 100, 150 and 200 %
 //   artfreq-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
 //   artfreq-start-bar.png        a single pass from bar 9: the start bar field, bars 9 to 12 on
 //                                the canvas
@@ -651,9 +654,23 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
     pump (30);
 }
 
-/** The footer's timing controls, as a person would use them: Trigger, Repeat, the start bar
-    field (drag, type, Enter, Esc) and what the hint line under them says; Preview following
-    Repeat; the canvas numbering the song's bars. Puts the settings back as they were. */
+/** The canvas's bar labels for the default length, as the processor's settings number them. */
+juce::String canvasBarLabels (const artfreq::ArtFreqProcessor& processor)
+{
+    using namespace artfreq;
+    juce::StringArray labels;
+
+    for (const auto& mark : ui::axes::timeMarks (params::defaultLengthIndex, 4, 4, 600.0f, processor.getSinglePassStartBar()))
+        if (mark.label.isNotEmpty())
+            labels.add (mark.label);
+
+    return labels.joinIntoString (" ");
+}
+
+/** The footer's timing controls, as a person would use them: Trigger, Repeat, where a single
+    pass starts (the choice in the hint line, its menu, and the start bar field: drag, type,
+    Enter, Esc) and what the hint line under them says; Preview following Repeat; the canvas
+    numbering the drawing's own bars, or the song's. Puts the settings back as they were. */
 void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor,
                   const std::function<void (const juce::String&, bool)>& save)
 {
@@ -662,10 +679,13 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     auto* footer = find<ui::shell::Footer> (editor, "footer");
     auto* trigger = find<ui::SegmentedControl> (editor, "trigger");
     auto* repeat = find<juce::Button> (editor, "repeat");
+    auto* startChoice = find<ui::shell::StartChoice> (editor, "start-choice");
     auto* startBar = find<ui::shell::NumberField> (editor, "start-bar");
     auto* preview = find<juce::Button> (editor, "preview");
+    auto* tempo = findComponentWithId (editor, "tempo-source");
 
-    if (footer == nullptr || trigger == nullptr || repeat == nullptr || startBar == nullptr || preview == nullptr)
+    if (footer == nullptr || trigger == nullptr || repeat == nullptr || startChoice == nullptr || startBar == nullptr
+        || preview == nullptr || tempo == nullptr)
         return;
 
     const auto value = [&] (const char* id) { return processor.getParameters().getRawParameterValue (id)->load(); };
@@ -674,10 +694,68 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
                                                                                                static_cast<float> (c.getHeight()) * 0.5f); };
     settle();
 
-    // ---- the defaults: a single pass from bar 1 ----------------------------------------------
+    // ---- the defaults: a single pass from where the DAW starts playing ---------------------------
+    const auto onPlay = [&] { return juce::roundToInt (value (params::id::startAt)) == params::onPlayStartIndex; };
+
     check (trigger->getOptions() == juce::StringArray { "Transport", "MIDI" }, "Trigger offers Transport and MIDI (no Loop)");
-    check (! repeat->getToggleState() && startBar->isVisible() && footer->getTriggerHint() == "Plays once from bar 1",
-           "by default the drawing plays once from bar 1, and the footer says so, with the bar as a field");
+    check (! repeat->getToggleState() && onPlay() && footer->getTriggerHint() == "Plays once when you press play"
+           && startChoice->isVisible() && startChoice->getWords() == "when you press play" && ! startBar->isVisible(),
+           "by default the drawing plays once when the DAW starts playing, and the footer says so (no bar to set)");
+    check (processor.getSinglePassStartBar() == 0 && canvasBarLabels (processor) == "1 2 3 4",
+           "... and the canvas numbers the drawing's own bars, 1 to 4 (" + canvasBarLabels (processor) + ")");
+    save ("on-play", true);
+
+    // The words of the choice carry on from the hint's, on its line, and end before Tempo's hint.
+    const auto inHintLine = [&] (juce::Component& c)
+    {
+        return c.getY() > trigger->getBottom() + 6 && c.getBottom() < footer->getHeight() - 8
+            && c.getX() > trigger->getX() + 40 && c.getRight() <= repeat->getRight() + 8 && c.getRight() < tempo->getX();
+    };
+
+    check (inHintLine (*startChoice), "the start choice sits in the hint line under Trigger, after \"Plays once\" ("
+                                      + startChoice->getBounds().toString() + ", Repeat ends at " + juce::String (repeat->getRight()) + ")");
+
+    // ---- the start choice: a menu of the two, the current one ticked -------------------------------
+    {
+        const auto ticked = [&]
+        {
+            juce::StringArray items;
+            const auto menu = footer->startMenu();
+
+            for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+                items.add ((it.getItem().isTicked ? "+" : "-") + it.getItem().text);
+
+            return items.joinIntoString (" | ");
+        };
+
+        check (ticked() == "+When you press play | -From a bar of the song", "the start choice offers the two, On play ticked: " + ticked());
+
+        // Drawn at once (off screen, an open menu closes itself at its first timer tick).
+        clickOn (*startChoice, middleOf (*startChoice, 0.5f));
+        save ("start-menu", false);
+
+        auto menuShown = false;
+
+        if (auto* content = findComponentWithId (editor, "content"))
+            for (auto* child : content->getChildren())
+                menuShown = menuShown || (child->getName() == "menu" && child->isVisible());
+
+        check (menuShown, "a click on the start choice opens its menu");
+        juce::PopupMenu::dismissAllActiveMenus();
+        pump (30);
+
+        // What its second item does.
+        footer->setStartAt (StartAt::bar);
+        settle();
+        check (! onPlay() && footer->getTriggerHint() == "Plays once from bar 1" && startChoice->getWords() == "from bar"
+               && startBar->isVisible() && processor.getSinglePassStartBar() == 1,
+               "From a bar of the song: once from bar 1, with the bar as a field");
+        check (ticked() == "-When you press play | +From a bar of the song", "... and the menu ticks it: " + ticked());
+        check (inHintLine (*startChoice) && inHintLine (*startBar) && startBar->getX() >= startChoice->getRight()
+               && startBar->getX() <= startChoice->getRight() + 6
+               && startBar->getY() == startChoice->getY() && startBar->getHeight() == startChoice->getHeight(),
+               "the start bar field follows the choice's words, on the same line");
+    }
 
     // ---- the layout: in line, inside the footer, nothing overlapping ------------------------------
     {
@@ -717,17 +795,8 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
            "... and the hint says where it now plays");
     save ("start-bar", true);
 
-    {
-        const auto marks = ui::axes::timeMarks (params::defaultLengthIndex, 4, 4, 600.0f, processor.getSinglePassStartBar());
-        juce::StringArray labels;
-
-        for (const auto& mark : marks)
-            if (mark.label.isNotEmpty())
-                labels.add (mark.label);
-
-        check (labels == juce::StringArray { "9", "10", "11", "12" }, "the canvas numbers the song's bars: 9 to 12 ("
-                                                                       + labels.joinIntoString (" ") + ")");
-    }
+    check (canvasBarLabels (processor) == "9 10 11 12", "the canvas numbers the song's bars: 9 to 12 ("
+                                                         + canvasBarLabels (processor) + ")");
 
     const auto typeInto = [&] (const juce::String& text, const juce::KeyPress& key, const juce::String& snapshot)
     {
@@ -764,33 +833,55 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     // ---- Repeat and Trigger ----------------------------------------------------------------------
     clickOn (*repeat, middleOf (*repeat, 0.5f));
     settle();
-    check (value (params::id::repeat) > 0.5f && repeat->getToggleState() && ! startBar->isVisible()
-           && footer->getTriggerHint() == "Repeats every 4 bars from bar 1" && processor.getSinglePassStartBar() == 0,
-           "Repeat loops the drawing every Length from bar 1 (no start bar to set then)");
+    check (value (params::id::repeat) > 0.5f && repeat->getToggleState() && ! startBar->isVisible() && ! startChoice->isVisible()
+           && footer->getTriggerHint() == "Repeats every 4 bars" && processor.getSinglePassStartBar() == 0,
+           "Repeat loops the drawing every Length (nothing to choose about its start then)");
     save ("repeat", true);
 
     clickOn (*trigger, middleOf (*trigger, 0.85f));
     settle();
     check (juce::approximatelyEqual (value (params::id::trigger), 1.0f) && footer->getTriggerHint() == "Loops while a note is held"
-           && ! startBar->isVisible(), "MIDI with Repeat loops while a note is held");
+           && ! startBar->isVisible() && ! startChoice->isVisible(), "MIDI with Repeat loops while a note is held");
     save ("midi-repeat", true);
 
     clickOn (*repeat, middleOf (*repeat, 0.5f));
     settle();
-    check (value (params::id::repeat) < 0.5f && footer->getTriggerHint() == "Each note plays it once" && ! startBar->isVisible(),
-           "MIDI without Repeat plays it once per note");
+    check (value (params::id::repeat) < 0.5f && footer->getTriggerHint() == "Each note plays it once" && ! startBar->isVisible()
+           && ! startChoice->isVisible(), "MIDI without Repeat plays it once per note");
 
     clickOn (*trigger, middleOf (*trigger, 0.2f));
     settle();
-    check (juce::approximatelyEqual (value (params::id::trigger), 0.0f) && startBar->isVisible()
-           && footer->getTriggerHint() == "Plays once from bar 1", "back to Transport: once from bar 1, the field back");
+    check (juce::approximatelyEqual (value (params::id::trigger), 0.0f) && startBar->isVisible() && startChoice->isVisible()
+           && footer->getTriggerHint() == "Plays once from bar 1", "back to Transport: once from bar 1, the choice and the field back");
+
+    // Back to On play: the bar is kept for next time, but no longer shown or used.
+    setParameter (processor, params::id::startBar, 9.0f);
+    footer->setStartAt (StartAt::play);
+    settle();
+    check (onPlay() && footer->getTriggerHint() == "Plays once when you press play" && ! startBar->isVisible()
+           && processor.getSinglePassStartBar() == 0 && canvasBarLabels (processor) == "1 2 3 4",
+           "When you press play: the field goes, and the canvas numbers its own bars again");
+    footer->setStartAt (StartAt::bar);
+    settle();
+    check (footer->getTriggerHint() == "Plays once from bar 9", "... and At bar finds the bar it had");
+    setParameter (processor, params::id::startBar, 1.0f);
+    footer->setStartAt (StartAt::play);
+    settle();
 
     // Automation (or the host) changing Repeat moves the switch too.
     setParameter (processor, params::id::repeat, 1.0f);
     settle();
-    check (repeat->getToggleState() && ! startBar->isVisible(), "the Repeat switch follows the parameter");
+    check (repeat->getToggleState() && ! startChoice->isVisible(), "the Repeat switch follows the parameter");
     setParameter (processor, params::id::repeat, 0.0f);
     settle();
+
+    // ... and the host changing where the pass starts moves the choice and the field.
+    setParameter (processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
+    settle();
+    check (startChoice->getWords() == "from bar" && startBar->isVisible(), "the start choice follows the parameter");
+    setParameter (processor, params::id::startAt, static_cast<float> (params::onPlayStartIndex));
+    settle();
+    check (startChoice->getWords() == "when you press play" && ! startBar->isVisible(), "... both ways");
 
     // ---- Preview follows Repeat: once, then the button turns itself off; or on a loop ------------
     setParameter (processor, params::id::length, 2.0f);   // 1 bar: 2 s
@@ -1540,6 +1631,49 @@ int main (int argc, char* argv[])
         if (content == nullptr)
             return 1;
 
+        // The footer's timing columns alone (Length to BPM, with their hint line), as a display of
+        // twice the window's pixels shows them: On play and At bar 9, at the window's current size.
+        const auto saveFooterStates = [&] (const juce::String& size)
+        {
+            auto* footer = dynamic_cast<ui::shell::Footer*> (findComponentWithId (*editor, "footer"));
+            auto* length = findComponentWithId (*editor, "length");
+            auto* bpm = findComponentWithId (*editor, "bpm");
+            auto* startChoice = findComponentWithId (*editor, "start-choice");
+            auto* startBar = findComponentWithId (*editor, "start-bar");
+
+            if (footer == nullptr || length == nullptr || bpm == nullptr || startChoice == nullptr || startBar == nullptr)
+                return;
+
+            const auto columns = juce::Rectangle<int> (length->getX() - 24, 0, bpm->getRight() + 24 - (length->getX() - 24),
+                                                       footer->getHeight());
+
+            for (const auto atBar : { false, true })
+            {
+                setParameter (processor, params::id::startBar, atBar ? 9.0f : 1.0f);
+                footer->setStartAt (atBar ? StartAt::bar : StartAt::play);
+                pump (60);
+
+                // In line at every size: the choice (and the field) on the hint's line, inside the
+                // Trigger column's width, clear of Tempo's hint.
+                check (startChoice->isVisible() && startBar->isVisible() == atBar
+                       && (atBar ? startBar : startChoice)->getRight() <= findComponentWithId (*editor, "repeat")->getRight() + 8,
+                       juce::String (atBar ? "At bar" : "On play") + ": the hint line fits under Trigger at " + size + " %");
+
+                const auto area = editor->getLocalArea (footer, columns).getIntersection (editor->getLocalBounds());
+                const auto image = editor->createComponentSnapshot (area, true, 2.0f);
+                const auto file = outputDir.getChildFile ("artfreq-footer-" + juce::String (atBar ? "at-bar-" : "on-play-") + size + ".png");
+
+                if (writePng (image, file))
+                    std::cout << file.getFullPathName() << std::endl;
+                else
+                    check (false, "write " + file.getFullPathName());
+            }
+
+            setParameter (processor, params::id::startBar, 1.0f);
+            footer->setStartAt (StartAt::play);
+            pump (30);
+        };
+
         // Let attachments, the first plan and any async updates settle.
         pump (150);
         save ("default", pixelScale);
@@ -1737,19 +1871,23 @@ int main (int argc, char* argv[])
 
         // ---- window sizes -------------------------------------------------------------------------
         save ("100", 1.0f);
+        saveFooterStates ("100");
 
         setWindowScale (*editor, 2.0f);
         pump (60);
         save ("200", 1.0f);
+        saveFooterStates ("200");
 
         setWindowScale (*editor, 1.5f);
         pump (60);
         check (processor.getEditorWidth() == 1680 && processor.getEditorHeight() == 1080, "the window size is remembered");
         save ("150", 1.0f);
+        saveFooterStates ("150");
 
         setWindowScale (*editor, 0.75f);
         pump (60);
         save ("75", 1.0f);
+        saveFooterStates ("75");
 
         setWindowScale (*editor, 1.25f);
         pump (30);

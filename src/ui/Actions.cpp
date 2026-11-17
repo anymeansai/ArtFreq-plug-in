@@ -440,6 +440,10 @@ void showObjectMenu (ArtFreqProcessor& processor, EditorState& state, const juce
     if (auto* parent = ArtFreqLookAndFeel::findPopupParent (target))
         options = options.withParentComponent (parent);
 
+    // The window's look, from the start: a menu looks its look-and-feel up before it joins its
+    // parent, and would otherwise be opaque, with square corners left unpainted.
+    menu.setLookAndFeel (&target.getLookAndFeel());
+
     // The processor and editor state outlive the target; if it has gone, so has the editor.
     juce::Component::SafePointer<juce::Component> safeTarget (&target);
 

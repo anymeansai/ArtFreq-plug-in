@@ -57,6 +57,7 @@ juce::StringArray lengthNames()
 }
 
 juce::StringArray triggerNames()     { return { "Transport", "MIDI note" }; }
+juce::StringArray startAtNames()     { return { "On play", "At bar" }; }
 juce::StringArray tempoSourceNames() { return { "Host", "Manual" }; }
 juce::StringArray scaleNames()       { return { "Log", "Linear", "Mel" }; }
 juce::StringArray slopeNames()       { return { "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct" }; }
@@ -102,6 +103,11 @@ ScaleType scaleForIndex (int scaleIndex) noexcept
 TriggerMode triggerForIndex (int triggerIndex) noexcept
 {
     return triggerIndex == 1 ? TriggerMode::midiNote : TriggerMode::transport;
+}
+
+StartAt startAtForIndex (int startAtIndex) noexcept
+{
+    return startAtIndex == atBarStartIndex ? StartAt::bar : StartAt::play;
 }
 
 LowEnd lowEndForIndex (int lowEndIndex) noexcept
@@ -180,6 +186,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { id::repeat, 2 }, "Repeat", false,
         juce::AudioParameterBoolAttributes().withStringFromValueFunction ([] (bool on, int) { return on ? "On" : "Off"; })));
+
+    // Where a single Transport pass starts: where the DAW starts playing (press play and it
+    // plays), or at a bar of the song. Added after 0.4 (version hint 5): setStateInformation
+    // loads states without it by their start bar (bar 1 as On play, any other as At bar). It is
+    // how the plug-in is used rather than something to perform, and switching it while the DAW
+    // plays begins a pass, so it is not an automation target.
+    layout.add (std::make_unique<Choice> (
+        juce::ParameterID { id::startAt, 5 }, "Start at", startAtNames(), onPlayStartIndex,
+        ChoiceAttributes().withAutomatable (false)));
 
     layout.add (std::make_unique<juce::AudioParameterInt> (
         juce::ParameterID { id::startBar, 2 }, "Start bar", firstStartBar, lastStartBar, firstStartBar,

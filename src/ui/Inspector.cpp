@@ -2,6 +2,7 @@
 
 #include "Actions.h"
 #include "CanvasPlanImage.h"
+#include "KeyFocus.h"
 #include "LayerList.h"
 #include "Parameters.h"
 #include "ShellControls.h"
@@ -47,7 +48,10 @@ namespace
     }
 
     /** A text field whose focus sessions are the undo steps of typing, and which leaves undo and
-        redo to the document's history (its own would undo behind the document's back). */
+        redo to the document's history (its own would undo behind the document's back). It has
+        the keyboard focus only while it is typed in: Return (and Esc, and a click anywhere
+        else) ends the typing and hands the focus back, so the next space bar is the DAW's
+        again; Shift+Return (or Alt+Return) starts a new line. */
     class InspectorTextField final : public juce::TextEditor
     {
     public:
@@ -60,6 +64,16 @@ namespace
 
             if (mods.isCommandDown() && (code == 'z' || code == 'Z' || code == 'y' || code == 'Y'))
                 return false;  // up to the editor: the document's undo
+
+            if (key.isKeyCode (juce::KeyPress::returnKey) && ! mods.isCommandDown() && ! mods.isCtrlDown())
+            {
+                if (mods.isShiftDown() || mods.isAltDown())
+                    insertTextAtCaret ("\n");
+                else
+                    handKeyFocusBack (*this);   // what was typed is in the drawing already
+
+                return true;
+            }
 
             return juce::TextEditor::keyPressed (key);
         }
@@ -224,15 +238,23 @@ struct Inspector::Impl
 
         // ---- text ----
         textField.setMultiLine (true, true);
-        textField.setReturnKeyStartsNewLine (true);
         textField.setScrollbarsShown (true);
         textField.setFont (fonts::ui (theme::controlSize));
         textField.setIndents (8, 6);
         textField.setTitle ("Text");
+        textField.setDescription ("Return when done, Shift+Return for a new line.");
         textField.onTextChange = [this] { textTyped(); };
-        textField.onFocusGained = [this] { ++typingSession; };
-        textField.onFocusLost = [this] { processor.endCoalescing(); };
-        textField.onEscapeKey = [this] { textField.giveAwayKeyboardFocus(); };
+        textField.onFocusGained = [this]
+        {
+            ++typingSession;
+            owner.repaint (typingHintArea);
+        };
+        textField.onFocusLost = [this]
+        {
+            processor.endCoalescing();
+            owner.repaint (typingHintArea);
+        };
+        textField.onEscapeKey = [this] { handKeyFocusBack (textField); };
 
         for (int i = 0; i < fonts::numArtFonts(); ++i)
             fontBox.addItem (fonts::artFontName (i), i + 1);
@@ -427,6 +449,13 @@ struct Inspector::Impl
                 lastWrittenText = shownObject != nullptr ? shownObject->text : juce::String();
             }
 
+            // What has the keyboard focus in here may be about to go: the list, when an object's
+            // settings open; the text box, when its object does.
+            const juce::Component::SafePointer<juce::Component> focused (owner.hasKeyboardFocus (true)
+                                                                             ? juce::Component::getCurrentlyFocusedComponent()
+                                                                             : nullptr);
+            const auto hadFocus = focused != nullptr;
+
             mode = newMode;
             shownId = newId;
             shownTool = tool;
@@ -435,6 +464,12 @@ struct Inspector::Impl
             updateVisibility();
             layout();
             owner.repaint();
+
+            // JUCE passes the focus of a hidden component to the first control it finds (a
+            // button, a menu, the text box): it goes back to the canvas instead, so that opening
+            // a text object's settings never leaves the keyboard in its text box.
+            if (hadFocus && (focused == nullptr || ! focused->isShowing()))
+                handKeyFocusBack (owner);
         }
 
         const juce::ScopedValueSetter<bool> guard (updating, true);
@@ -452,6 +487,12 @@ struct Inspector::Impl
         const auto layers = mode == Mode::layers;
         const auto text = mode == Mode::text;
         const auto image = mode == Mode::image;
+
+        // A value being typed into a bar is let go of: its label is modal while it is edited,
+        // and a modal component that is hidden would go on swallowing every key.
+        for (auto* bar : { &sizeSlider, &softnessSlider, &strengthSlider,
+                           static_cast<juce::Slider*> (&intensitySlider), static_cast<juce::Slider*> (&cleanupSlider) })
+            bar->hideTextBox (true);
 
         layerList.setVisible (layers);
         lowsControl.setVisible (layers);
@@ -668,6 +709,7 @@ struct Inspector::Impl
         thumbnailArea = {};
         timeReadoutArea = {};
         modeCaptionArea = {};
+        typingHintArea = {};
         hintArea = {};
         lowsRow = {};
 
@@ -736,6 +778,7 @@ struct Inspector::Impl
         if (mode == Mode::text)
         {
             textField.setBounds (section ("Text", textFieldHeight));
+            typingHintArea = captions.back().area;
             fontBox.setBounds (section ("Font", controlHeight));
             styleControl.setBounds (section ("Style", controlHeight));
         }
@@ -862,6 +905,14 @@ struct Inspector::Impl
             g.drawText (shownModeHint, modeCaptionArea.withTrimmedBottom (4), juce::Justification::bottomRight, false);
         }
 
+        if (! typingHintArea.isEmpty() && textField.hasKeyboardFocus (true))
+        {
+            // While the text box has the keyboard: how to give it back, and how to get a new line.
+            g.setColour (theme::textFaint);
+            g.setFont (fonts::ui (11.0f));
+            g.drawText (typingHint, typingHintArea.withTrimmedBottom (4), juce::Justification::bottomRight, false);
+        }
+
         if (! thumbnailArea.isEmpty())
             paintThumbnail (g);
     }
@@ -975,6 +1026,10 @@ struct Inspector::Impl
     float thumbnailContrast = -1.0f;
     juce::String autoHint, shownModeHint;
     juce::Rectangle<int> modeCaptionArea;
+
+    // Beside the Text caption while the text box is typed in.
+    static constexpr const char* typingHint = "Return: done   Shift+Return: new line";
+    juce::Rectangle<int> typingHintArea;
 
     // Controls
     LayerList layerList;

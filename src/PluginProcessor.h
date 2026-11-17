@@ -140,9 +140,9 @@ public:
     double getEffectiveTempo() const noexcept;
     double getLengthSeconds() const noexcept;
 
-    /** The bar a single pass on the DAW's timeline starts on (Transport without Repeat; 1 is the
-        song start), or 0 when the drawing does not play at one place in the song (Repeat, MIDI).
-        The canvas numbers its bars from it. */
+    /** The bar a single pass on the DAW's timeline starts on (Transport without Repeat, At bar;
+        1 is the song start), or 0 when the drawing does not play at one place in the song (On
+        play, Repeat, MIDI). The canvas numbers its bars from it. */
     int getSinglePassStartBar() const noexcept;
 
     /** The host's time signature as the audio thread last saw it (4/4 until a host gives one):
@@ -272,6 +272,7 @@ private:
     std::atomic<float>* lengthParam = nullptr;
     std::atomic<float>* triggerParam = nullptr;
     std::atomic<float>* repeatParam = nullptr;
+    std::atomic<float>* startAtParam = nullptr;
     std::atomic<float>* startBarParam = nullptr;
     std::atomic<float>* tempoSourceParam = nullptr;
     std::atomic<float>* bpmParam = nullptr;

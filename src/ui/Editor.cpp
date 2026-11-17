@@ -5,6 +5,7 @@
 #include "EditorState.h"
 #include "EffectControls.h"
 #include "Inspector.h"
+#include "KeyFocus.h"
 #include "LiveView.h"
 #include "LookAndFeel.h"
 #include "ShellFooter.h"
@@ -97,7 +98,9 @@ namespace
     //==============================================================================
     /** The whole interface at its design size (1120 x 720). The editor scales it to the window. */
     class Content final : public juce::Component,
+                          public ui::KeyFocusHome,
                           private juce::ChangeListener,
+                          private juce::FocusChangeListener,
                           private juce::Timer
     {
     public:
@@ -184,6 +187,10 @@ namespace
             tooltips = std::make_unique<juce::TooltipWindow> (this, 700);
             tooltips->setComponentID ("tooltips");
 
+            // The keyboard focus: see "The keyboard focus" below.
+            addMouseListener (&clickWatcher, true);
+            juce::Desktop::getInstance().addFocusChangeListener (this);
+
             processor.addChangeListener (this);
             state.addChangeListener (this);
             updateFromProcessor();
@@ -193,6 +200,8 @@ namespace
         ~Content() override
         {
             stopTimer();
+            juce::Desktop::getInstance().removeFocusChangeListener (this);
+            removeMouseListener (&clickWatcher);
             state.removeChangeListener (this);
             processor.removeChangeListener (this);
             state.focusTextField = nullptr;
@@ -245,20 +254,28 @@ namespace
         }
 
         /** The editor's shortcuts. Keys arrive here only when the focused control had no use
-            for them (a text field keeps its own typing, undo and Delete). */
+            for them (a text field keeps its own typing, undo and Delete). Whatever comes back
+            unused from here goes on to the DAW: its play key (the space bar, mostly) and all its
+            other shortcuts work while this window has the focus. */
         bool handleKey (const juce::KeyPress& key)
         {
             const auto mods = key.getModifiers();
             const auto code = key.getKeyCode();
             const auto letter = juce::CharacterFunctions::toUpperCase (static_cast<juce::juce_wchar> (code));
 
+            if (key.isKeyCode (juce::KeyPress::tabKey))
+                return handleTab();
+
             if (key.isKeyCode (juce::KeyPress::escapeKey))
             {
-                if (! isPanelOpen())
-                    return false;
+                if (isPanelOpen())
+                {
+                    closePanels();
+                    return true;
+                }
 
-                closePanels();
-                return true;
+                // Esc lets go of the selection, wherever the focus is in the window.
+                return canvas.isVisible() && canvas.keyPressed (key);
             }
 
             if (mods.isCommandDown())
@@ -325,6 +342,51 @@ namespace
         }
 
         //==============================================================================
+        // The keyboard focus (see ui/KeyFocus.h). The DAW only gets a key that nothing here used,
+        // so the focus rests where the editor's own few keys are handled, and with a text box
+        // only while it is being typed in.
+
+        void takeKeyFocusBack() override
+        {
+            if (! windowHasKeyboard())
+                return;
+
+            auto& home = settings.isVisible() ? static_cast<juce::Component&> (settings)
+                       : help.isVisible()     ? static_cast<juce::Component&> (help)
+                       : canvas.isVisible()   ? static_cast<juce::Component&> (canvas)
+                                              : static_cast<juce::Component&> (*this);
+            home.grabKeyboardFocus();
+        }
+
+        /** After a press (or a release) anywhere in the interface, once the component under the
+            mouse has dealt with it. JUCE gives a clicked button, menu or chip the focus, and
+            leaves it in a text box when the click was on something that takes none: neither
+            may keep it. */
+        void tidyKeyFocusAfterClick (const juce::MouseEvent& e, bool pressed)
+        {
+            auto* focused = juce::Component::getCurrentlyFocusedComponent();
+
+            // (A menu that is open, or a value being typed into a label, is modal and deals
+            // with clicks itself.)
+            if (focused == nullptr || ! isParentOf (focused) || juce::Component::getCurrentlyModalComponent() != nullptr)
+                return;
+
+            if (ui::isTextBox (focused))
+            {
+                // A press anywhere but in the text box ends the typing. Not a release: that is
+                // when a click gives a text box the focus (Add text, a number field, a
+                // double-click on text).
+                if (pressed && e.eventComponent != focused && ! focused->isParentOf (e.eventComponent))
+                    takeKeyFocusBack();
+
+                return;
+            }
+
+            if (! mayKeepKeyFocus (*focused))
+                takeKeyFocusBack();
+        }
+
+        //==============================================================================
         void setLiveView (bool live)
         {
             header.viewSwitch.setSelectedIndex (live ? 1 : 0, juce::dontSendNotification);
@@ -360,8 +422,11 @@ namespace
             header.settingsButton.setToggleState (open, juce::dontSendNotification);
             updateScrim();
 
+            // The panel has the keys while it is open (Esc closes it); then the canvas again.
             if (open && isShowing())
                 settings.grabKeyboardFocus();
+            else
+                takeKeyFocusBack();
         }
 
         void setHelpOpen (bool open)
@@ -378,6 +443,8 @@ namespace
 
             if (open && isShowing())
                 help.grabKeyboardFocus();
+            else
+                takeKeyFocusBack();
         }
 
         bool isPanelOpen() const noexcept   { return settings.isVisible() || help.isVisible(); }
@@ -386,9 +453,7 @@ namespace
         {
             setSettingsOpen (false);
             setHelpOpen (false);
-
-            if (isShowing())
-                grabKeyboardFocus();
+            takeKeyFocusBack();
         }
 
         void selectObject (const juce::Uuid& id)
@@ -412,6 +477,120 @@ namespace
         std::function<float()> getWindowScale;
 
     private:
+        /** Clicks anywhere in the interface, after the component clicked has dealt with them. */
+        struct ClickWatcher final : public juce::MouseListener
+        {
+            explicit ClickWatcher (Content& c) : content (c) {}
+
+            void mouseDown (const juce::MouseEvent& e) override   { content.tidyKeyFocusAfterClick (e, true); }
+            void mouseUp (const juce::MouseEvent& e) override     { content.tidyKeyFocusAfterClick (e, false); }
+
+            Content& content;
+        };
+
+        /** Whether this window has the keyboard: only then is the focus taken (or taken back),
+            never from another window. */
+        bool windowHasKeyboard() const
+        {
+            if (! isShowing())
+                return false;
+
+            const auto* peer = getPeer();
+            return peer != nullptr && peer->isFocused();
+        }
+
+        bool isInThisWindow (const juce::Component* component) const
+        {
+            return component != nullptr && (component == this || isParentOf (component) || component->isParentOf (this));
+        }
+
+        /** Where the focus may rest: with something that handles keys of its own, or in a text box. */
+        bool mayKeepKeyFocus (const juce::Component& component) const
+        {
+            return &component == this || ui::keepsKeyFocus (component) || ui::isTextBox (&component);
+        }
+
+        /** Ends the typing in a text box: what was typed stays (a value typed into a label is
+            set, and the label stops being modal), and the focus goes back to the canvas. */
+        void finishTyping (juce::Component& textBox)
+        {
+            if (auto* label = dynamic_cast<juce::Label*> (textBox.getParentComponent()))
+                label->hideEditor (false);
+
+            takeKeyFocusBack();
+        }
+
+        /** Tab is no key of ours, but JUCE takes it wherever a component has the focus: it
+            moves the focus to the next control and calls the key used, so the DAW never sees
+            it (and the focus would sit on a button nobody clicked, where Return presses it). */
+        bool handleTab()
+        {
+            auto* focused = juce::Component::getCurrentlyFocusedComponent();
+
+            // In a text box, Tab ends the typing as Return does.
+            if (ui::isTextBox (focused) && isInThisWindow (focused))
+            {
+                finishTyping (*focused);
+                return true;
+            }
+
+            // (An open menu has the keys.)
+            if (focused == nullptr || ! isInThisWindow (focused) || juce::Component::getCurrentlyModalComponent() != nullptr)
+                return false;
+
+            // So the focus is let go of for the moment of the key press, which then comes back
+            // unused, and taken up again right after, if the window still has the keyboard (the
+            // DAW may have done something with its Tab).
+            juce::Component::SafePointer<juce::Component> previous (focused);
+            juce::Component::unfocusAllComponents();
+
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<Content> (this), previous]
+            {
+                if (safe == nullptr || juce::Component::getCurrentlyFocusedComponent() != nullptr || ! safe->windowHasKeyboard())
+                    return;
+
+                if (previous != nullptr && previous->isShowing())
+                    previous->grabKeyboardFocus();
+                else
+                    safe->takeKeyFocusBack();
+            });
+
+            return false;
+        }
+
+        /** The focus has moved (JUCE reports it a moment later). Two things a click does not
+            cover are put right here, both about a text box that is done with. */
+        void globalFocusChanged (juce::Component* focused) override
+        {
+            const auto wasTyping = typing;
+            const auto textBox = typingBox;
+
+            typing = ui::isTextBox (focused) && isInThisWindow (focused);
+            typingBox = typing ? focused : nullptr;
+
+            if (! wasTyping || typing)
+                return;
+
+            if (textBox != nullptr && textBox->isShowing())
+            {
+                // The text box is still there and the focus went nowhere: the window lost the
+                // keyboard (the user clicked in the DAW). A value being typed into a label is
+                // set: the label is modal while it is edited, and a modal component left behind
+                // would swallow every key once the window has the keyboard again.
+                if (focused == nullptr)
+                    if (auto* label = dynamic_cast<juce::Label*> (textBox->getParentComponent()))
+                        label->hideEditor (false);
+
+                return;
+            }
+
+            // The text box has gone (a value typed into a bar was set, the object it belonged to
+            // was deleted): JUCE gives the focus to the first control it finds, a button or a
+            // menu, where it must not stay.
+            if (focused == nullptr || (isParentOf (focused) && ! mayKeepKeyFocus (*focused)))
+                takeKeyFocusBack();
+        }
+
         juce::Rectangle<int> getMainArea() const
         {
             return { 0, layout::mainTop, getWidth(), getHeight() - layout::mainTop - layout::footerHeight };
@@ -489,6 +668,11 @@ namespace
         ui::shell::HelpPanel help;
         std::unique_ptr<ui::shell::EffectControls> effectControls;   // ArtFreq FX only
         std::unique_ptr<juce::TooltipWindow> tooltips;
+
+        // The keyboard focus: the text box that had it when it last moved (see globalFocusChanged).
+        ClickWatcher clickWatcher { *this };
+        bool typing = false;
+        juce::Component::SafePointer<juce::Component> typingBox;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Content)
     };

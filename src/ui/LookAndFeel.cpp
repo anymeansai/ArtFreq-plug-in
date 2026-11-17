@@ -468,6 +468,11 @@ juce::PopupMenu::Options ArtFreqLookAndFeel::getOptionsForComboBoxPopupMenu (juc
     if (auto* parent = findPopupParent (box))
         options = options.withParentComponent (parent);
 
+    // When its menu closes, JUCE gives a combo box the keyboard focus, and the arrow keys and
+    // Return would then be the box's instead of going on to the DAW. A box here is only ever
+    // clicked, so it takes no focus (see ui/KeyFocus.h).
+    box.setWantsKeyboardFocus (false);
+
     return options;
 }
 

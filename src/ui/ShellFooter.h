@@ -1,7 +1,7 @@
 #pragma once
 
 // The footer: the sound (Density, Contrast, Level), the timing (Length, Trigger with Repeat and
-// the start bar, Tempo, BPM), Preview and Export. See docs/DESIGN.md, "Footer".
+// where a single pass starts, Tempo, BPM), Preview and Export. See docs/DESIGN.md, "Footer".
 
 #include "PluginProcessor.h"
 #include "ShellControls.h"
@@ -21,6 +21,25 @@ class PreviewButton final : public juce::Button
 public:
     PreviewButton();
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+};
+
+/** The words in the Trigger hint that say where a single pass starts ("when you press play" or
+    "from bar"), as a quiet button with a small chevron: a click offers the two. */
+class StartChoice final : public juce::Button
+{
+public:
+    StartChoice();
+
+    void setWords (const juce::String& words);
+    const juce::String& getWords() const noexcept { return words; }
+
+    /** The width its words and chevron need. */
+    int getIdealWidth() const;
+
+    void paintButton (juce::Graphics&, bool highlighted, bool down) override;
+
+private:
+    juce::String words;
 };
 
 class Footer final : public juce::Component
@@ -44,21 +63,35 @@ public:
     juce::ComboBox length;
     SegmentedControl trigger { { "Transport", "MIDI" } };
     ToggleChip repeat { "Repeat", shellIcons::repeat() };
-    std::unique_ptr<NumberField> startBar;   // in the hint line: "Plays once from bar [N]"
+    StartChoice startChoice;                 // in the hint line: "Plays once [when you press play v]"
+    std::unique_ptr<NumberField> startBar;   // ... or "Plays once [from bar v] [N]"
     SegmentedControl tempoSource { { "Host", "Manual" } };
     std::unique_ptr<NumberField> bpm;
     PreviewButton preview;
     ExportPanel exporter;
 
-    /** What the trigger will do, in words, as the line under it says ("Plays once from bar 1",
-        "Repeats every 4 bars from bar 1", "Each note plays it once", "Loops while a note is
-        held"). With Transport and no Repeat the bar number is the start bar field. */
+    /** What the trigger will do, in words, as the line under it says: "Plays once when you press
+        play", "Plays once from bar 9", "Repeats every 4 bars", "Each note plays it once", "Loops
+        while a note is held". With Transport and no Repeat the words after "Plays once" are the
+        start choice, and the bar number is the start bar field. */
     juce::String getTriggerHint() const;
+
+    /** Where a single Transport pass starts: when the DAW starts playing, or at the start bar.
+        What the start choice's menu does. */
+    void setStartAt (StartAt startAt);
+
+    /** The start choice's menu ("When you press play", "From a bar of the song", the current one
+        ticked): its item ids are the StartAt values plus one. */
+    juce::PopupMenu startMenu() const;
 
 private:
     juce::String lengthHint() const;
     juce::String tempoHint() const;
+    bool showsStartChoice() const;
     bool showsStartBar() const;
+    bool startsOnPlay() const;
+    void layoutStart();
+    void showStartMenu();
 
     ArtFreqProcessor& processor;
     const int inspectorLeft;

@@ -70,7 +70,8 @@ std::unique_ptr<ArtFreqProcessor> makeProcessor (Variant variant, const ArtDocum
     return processor;
 }
 
-/** Mode, Repeat and so on, by index. */
+/** Mode, Repeat and so on, by index. A single pass (Repeat off) is at its start bar here (At
+    bar): these tests place it in the song; effectCarvesFromWherePlayStarts covers On play. */
 std::function<void (ArtFreqProcessor&)> settingsOf (EffectMode mode, bool repeat = true, float depth = params::defaultDepthDb,
                                                     int lengthIndex = 2, int startBar = 1)
 {
@@ -84,6 +85,7 @@ std::function<void (ArtFreqProcessor&)> settingsOf (EffectMode mode, bool repeat
 
         setParameter (p, params::id::repeat, repeat ? 1.0f : 0.0f);
         setParameter (p, params::id::length, static_cast<float> (lengthIndex));   // 2: one bar, 2 s at 120 BPM
+        setParameter (p, params::id::startAt, static_cast<float> (params::atBarStartIndex));
         setParameter (p, params::id::startBar, static_cast<float> (startBar));
     };
 }
@@ -93,13 +95,14 @@ struct Run
     std::vector<int> blocks { 512 };
     bool playing = true;
     double bpm = 120.0;
+    double from = 0.0;   // where in the song the DAW starts playing, in quarter notes
     std::function<void (int start, int length, juce::MidiBuffer&)> midi;
     std::function<bool (int start)> bypassed;
     std::function<void (ArtFreqProcessor&, int start)> beforeBlock;
 };
 
 /** Plays `input` through the processor as a host would, block by block, with the DAW's
-    transport at the song's start (or stopped). Returns what comes out. */
+    transport playing from the song's start (or from run.from, or stopped). Returns what comes out. */
 Stereo process (ArtFreqProcessor& processor, const Stereo& input, const Run& run = {})
 {
     FakePlayHead head;
@@ -120,7 +123,7 @@ Stereo process (ArtFreqProcessor& processor, const Stereo& input, const Run& run
         for (int channel = 0; channel < channels; ++channel)
             buffer.copyFrom (channel, 0, input[static_cast<size_t> (channel)].data() + start, length);
 
-        const auto seconds = start / rate;
+        const auto seconds = run.from * 60.0 / run.bpm + start / rate;
         head.set (run.playing, run.bpm, seconds * run.bpm / 60.0, seconds);
 
         juce::MidiBuffer midi;
@@ -327,6 +330,46 @@ ARTFREQ_TEST (effectLatencyIsConstant)
     }
 
     CHECK (makeProcessor (Variant::effect, ArtDocument())->getLatencySamples() == 4096);
+}
+
+ARTFREQ_TEST (effectCarvesFromWherePlayStarts)
+{
+    // ArtFreq FX as it comes (Carve, Repeat off, On play), a band drawn over 800 - 1250 Hz, "1
+    // bar". The DAW starts playing in bar 33: the band is carved from there for a bar (2 s at 120
+    // BPM), and after it the output is the input one latency later, bit for bit.
+    const auto document = bandDocument ({ { 800.0, 1250.0 } });
+    const auto input = noise (5 * 48000, 5);
+
+    auto effect = makeProcessor (Variant::effect, document, [] (ArtFreqProcessor& p)
+    {
+        setParameter (p, params::id::length, 2.0f);
+    });
+
+    CHECK (effect->getEffectMode() == EffectMode::carve);
+    CHECK_NEAR (getParameter (*effect, params::id::repeat), 0.0f, 1.0e-4);
+    CHECK_NEAR (getParameter (*effect, params::id::startAt), static_cast<float> (params::onPlayStartIndex), 1.0e-4);
+
+    const auto latency = effect->getLatencySamples();
+    Run run;
+    run.from = 129.37;
+    run.blocks = { 480, 512, 64 };
+    const auto out = process (*effect, input, run);
+
+    const auto carved = bandDb (out, 900.0, 1100.0, latency + 4800, 2 * 48000 + latency - 4800)
+                      - bandDb (input, 900.0, 1100.0, 4800, 2 * 48000 - 4800);
+    CHECK_LESS (carved, -40.0);
+    CHECK_NEAR (differenceFromDelayed (input, out, latency, 2 * 48000 + latency + 480), 0.0, 0.0);
+
+    // Already carving in the first tenth of a second after play.
+    const auto atOnce = bandDb (out, 900.0, 1100.0, latency + 1200, latency + 6000)
+                      - bandDb (input, 900.0, 1100.0, 1200, 6000);
+    CHECK_LESS (atOnce, -20.0);
+
+    // The DAW stopped: untouched.
+    Run stopped;
+    stopped.playing = false;
+    const auto idle = process (*effect, input, stopped);
+    CHECK_NEAR (differenceFromDelayed (input, idle, latency, 2 * latency), 0.0, 0.0);
 }
 
 ARTFREQ_TEST (effectLeavesTheAudioAloneOutsideThePass)

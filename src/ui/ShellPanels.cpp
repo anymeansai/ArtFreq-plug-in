@@ -1,5 +1,6 @@
 #include "ShellPanels.h"
 
+#include "KeyFocus.h"
 #include "Parameters.h"
 #include "ShellHeader.h"
 
@@ -104,6 +105,7 @@ SettingsPanel::SettingsPanel (ArtFreqProcessor& processor)
 {
     setComponentID ("settings-panel");
     setWantsKeyboardFocus (true);
+    setKeepsKeyFocus (*this);   // while it is open: Esc closes it, and the canvas gets no keys
 
     closeButton.setFlat (true);
     closeButton.setTooltip ("Close (Esc)");
@@ -362,8 +364,8 @@ namespace
                               "analyser will show." } },
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
                                                        "in the panel on the right. Density sets how many lines draw it." } },
-            { "6", { "Press play in your DAW.", "Or press Preview to hear the drawing while the DAW is stopped "
-                                                "(once, or on a loop with Repeat)." } },
+            { "6", { "Press play in your DAW.", "The drawing plays once from wherever you start. Preview plays it "
+                                                "while the DAW is stopped." } },
             { "7", { "Bounce to WAV.", "Export renders one pass, and a new file after each change. Drag it into "
                                        "your DAW, or save it." } },
         };
@@ -383,8 +385,8 @@ namespace
                               "your song." } },
             { "5", { "Choose a mode and the depth", "at the top. Depth is how far the drawing's frequencies drop "
                                                     "(-80 dB looks black)." } },
-            { "6", { "Press play in your DAW.", "It carves from the bar set under Trigger. Preview runs the pass on "
-                                                "the audio coming in." } },
+            { "6", { "Press play in your DAW.", "It carves once from wherever you start (or from a bar: under "
+                                                "Trigger). Preview runs the pass on the audio coming in." } },
             { "7", { "Bounce the track in your DAW.", "Carving needs the song. In the Draw modes, Export still "
                                                       "bounces the sines." } },
         };
@@ -436,8 +438,8 @@ namespace
     const std::vector<Paragraph>& triggerModes()
     {
         static const std::vector<Paragraph> modes {
-            { "Transport.", "Plays once with the DAW, from the bar set under Trigger. With Repeat it loops "
-                            "every Length." },
+            { "Transport.", "Plays once when you press play, wherever the playhead is. Under Trigger you can "
+                            "start it at a bar of the song instead. With Repeat it loops every Length." },
             { "MIDI note.", "Each note plays the drawing once from the start. With Repeat it loops while a "
                             "note is held." },
             { "Nothing plays by itself.", "Stop the DAW and it stops; Preview plays it without the DAW." },
@@ -464,6 +466,7 @@ namespace
             { "V|B|E", "Select, Brush, Erase" },
             { shortcutText ("Cmd+Z") + "|" + shortcutText ("Cmd+Shift+Z"), "Undo, redo" },
             { "Delete", "Remove the selected text or picture" },
+            { "Space", "Plays your DAW, also from this window (typing in a text box, it is a space)" },
             { "Shift-drag", "Fine adjustment of knobs and fields" },
             { "Double-click", "Reset a knob; on a value, type one" },
         };
@@ -487,6 +490,7 @@ HelpPanel::HelpPanel (bool forEffect)
 {
     setComponentID ("help-panel");
     setWantsKeyboardFocus (true);
+    setKeepsKeyFocus (*this);   // as the settings panel
 
     closeButton.setFlat (true);
     closeButton.setTooltip ("Close (Esc)");

@@ -66,7 +66,8 @@ juce::String formatNumber (double value, int maxDecimals);  // "120", "93.75", "
 double parseNumber (const juce::String& text, double fallback);
 
 //==============================================================================
-/** The value under a knob: double-click to type a value (a single click does nothing). */
+/** The value under a knob: double-click to type a value (a single click does nothing). Return
+    sets it and Esc leaves it, and both hand the keyboard focus back (see ui/KeyFocus.h). */
 class ValueLabel final : public juce::Label
 {
 public:
@@ -77,6 +78,8 @@ public:
 
 protected:
     juce::TextEditor* createEditorComponent() override;
+    void textEditorReturnKeyPressed (juce::TextEditor&) override;
+    void textEditorEscapeKeyPressed (juce::TextEditor&) override;
 
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ValueLabel)
