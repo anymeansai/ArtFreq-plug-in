@@ -604,7 +604,7 @@ namespace
             { "Carve + Draw", "plays it in a hole it carves." },
             { "Stencil", "lets only the drawing through." },
             { "Draw", "plays it on top of the song." },
-            { "Sound", "(the Draw modes): how loud, how dense and how contrasty the drawing plays." },
+            { "Sound", "(the Draw modes) sets the drawing's level, density, contrast and lows." },
         };
         return modes;
     }

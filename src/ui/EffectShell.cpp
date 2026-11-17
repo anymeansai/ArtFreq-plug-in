@@ -344,9 +344,13 @@ juce::String EffectBottomBar::getShownHint() const
 
 void EffectBottomBar::refresh()
 {
-    if (const auto hint = getShownHint(); hint != shownHint)
+    const auto hint = getShownHint();
+    const auto sounding = processor.isSounding();
+
+    if (hint != shownHint || sounding != shownSounding)
     {
         shownHint = hint;
+        shownSounding = sounding;
         repaint (hintArea);
     }
 }
@@ -367,8 +371,9 @@ void EffectBottomBar::paint (juce::Graphics& g)
         g.drawRoundedRectangle (group.reduced (0.5f), corner, 1.0f);
     }
 
+    // In the playing colour while the pass runs: it is happening now.
     g.setFont (hintFont());
-    g.setColour (theme::textDim);
+    g.setColour (shownSounding ? theme::accent2 : theme::textDim);
     g.drawText (getShownHint(), hintArea, juce::Justification::centredRight, false);
 }
 

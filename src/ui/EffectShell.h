@@ -125,6 +125,7 @@ private:
     juce::Rectangle<int> toolGroup, hintArea;
     bool toolsShown = true;
     juce::String shownHint;
+    bool shownSounding = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EffectBottomBar)
 };

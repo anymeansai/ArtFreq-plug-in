@@ -2305,11 +2305,11 @@ bool canDriveAWindow()
 /** The DAW's play key works while the plug-in's window has the focus: in every place the focus
     can be, the space bar comes back unused; where text is being typed it is typed, and Return or
     Esc hand the keyboard back. */
-void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& outputDir, float pixelScale)
+void checkKeys (const juce::File& outputDir, float pixelScale)
 {
     using namespace artfreq;
 
-    const juce::String name (variant == ArtFreqProcessor::Variant::effect ? "ArtFreq FX" : "ArtFreq");
+    const juce::String name ("ArtFreq");
 
     // This needs a display that gives a window the keyboard and moves the pointer when asked. A
     // virtual display on Linux does; a build machine's macOS session does not reliably (and on a
@@ -2320,7 +2320,7 @@ void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& ou
         return;
     }
 
-    KeyRig rig (variant);
+    KeyRig rig (ArtFreqProcessor::Variant::instrument);
 
     if (rig.editor == nullptr || ! rig.hasKeyboard())
     {
@@ -2434,15 +2434,6 @@ void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& ou
     setParameter (processor, params::id::tempoSource, 0.0f);
     pump (40);
 
-    // ArtFreq FX's own controls.
-    if (variant == ArtFreqProcessor::Variant::effect)
-    {
-        rig.click ("mode");
-        spaceIsTheDaws ("after a click on Mode");
-        rig.drag (rig.get ("depth"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
-        spaceIsTheDaws ("after dragging Depth");
-    }
-
     // The panels: the keys are the panel's while it is open (Esc closes it), and it has no use
     // for the space bar; closed, the canvas has the focus again.
     for (const auto* button : { "help", "settings" })
@@ -2483,8 +2474,7 @@ void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& ou
     check (rig.text (rig.textId) == "PLAY IT", name + ": typed text goes into the text box, the space too (\"" + rig.text (rig.textId) + "\")");
     check (rig.usesSpace() && rig.text (rig.textId) == "PLAY IT ", name + ": the space bar types a space while the text box is typed in");
 
-    if (variant == ArtFreqProcessor::Variant::instrument)
-        saveInspector ("artfreq-keys-typing.png");
+    saveInspector ("artfreq-keys-typing.png");
 
     check (rig.uses (returnKey) && ! rig.typing() && rig.hasFocus ("canvas"),
            name + ": Return ends the typing and hands the focus back to the canvas");
@@ -2511,8 +2501,7 @@ void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& ou
     check (processor.getDocument().objects.size() == objectsBefore + 1 && textBox.isShowing() && textBox.hasKeyboardFocus (true)
            && rig.typing(), name + ": Add text puts the focus in the new object's text box");
 
-    if (variant == ArtFreqProcessor::Variant::instrument)
-        saveInspector ("artfreq-keys-add-text.png");
+    saveInspector ("artfreq-keys-add-text.png");
 
     rig.type ("NEW ONE");
     check (rig.text (newId) == "NEW ONE", name + ": ... where typing replaces its text (\"" + rig.text (newId) + "\")");
@@ -2569,6 +2558,375 @@ void checkKeys (artfreq::ArtFreqProcessor::Variant variant, const juce::File& ou
     rig.click (rig.canvas(), rig.onText());
     check (rig.uses (juce::KeyPress (juce::KeyPress::rightKey)), name + ": an arrow nudges the selection");
     check (rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && rig.text (rig.textId) == "(gone)", name + ": Delete removes it");
+    check (rig.uses (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)) && rig.text (rig.textId) == "NOW",
+           name + ": Cmd+Z brings it back");
+    spaceIsTheDaws ("at the end");
+}
+
+/** The same for ArtFreq FX's own window: its bars, its strips, its drawer and its settings. And,
+    with clicks that arrive as the OS sends them, what the drawer does around the mouse: it opens
+    away from the click (so a double-click's second click still lands on the text), its close
+    button keeps the selection, and a click on the selected object brings it back. */
+void checkEffectKeys (const juce::File& outputDir, float pixelScale)
+{
+    using namespace artfreq;
+
+    const juce::String name ("ArtFreq FX");
+
+    if (! canDriveAWindow())
+    {
+        std::cout << "(" << name << "'s keys are checked on Linux only, under a virtual display)" << std::endl;
+        return;
+    }
+
+    KeyRig rig (ArtFreqProcessor::Variant::effect);
+
+    if (rig.editor == nullptr || ! rig.hasKeyboard())
+    {
+        std::cout << "(no display that gives a window the keyboard: " << name << "'s keys were not checked)" << std::endl;
+        return;
+    }
+
+    auto& processor = rig.processor;
+    auto& editor = *rig.editor;
+    const auto returnKey = juce::KeyPress (juce::KeyPress::returnKey, juce::ModifierKeys(), '\r');
+    const auto escapeKey = juce::KeyPress (juce::KeyPress::escapeKey, juce::ModifierKeys(), 27);
+    const auto parameterValue = [&] (const char* id) { return processor.getParameters().getRawParameterValue (id)->load(); };
+
+    /** In this state the space bar is the DAW's: nothing used it, nothing is typing or modal. */
+    const auto spaceIsTheDaws = [&] (const juce::String& state)
+    {
+        const auto typing = rig.typing();
+        const auto modal = juce::Component::getCurrentlyModalComponent() != nullptr;
+        const auto focus = rig.focusName();
+        const auto used = rig.usesSpace();
+
+        check (! used && ! typing && ! modal,
+               name + ": the space bar comes back unused " + state + " (the focus is on " + focus
+                   + (typing ? ", a text box is being typed in" : "") + (modal ? ", something is modal" : "") + ")");
+    };
+
+    const auto notOnAButton = [&] (const juce::String& what)
+    {
+        const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        check (focused != nullptr && dynamic_cast<const juce::Button*> (focused) == nullptr,
+               name + ": a click on " + what + " does not leave the focus on a button (it is on " + rig.focusName() + ")");
+    };
+
+    const auto saveWindow = [&] (const juce::String& fileName)
+    {
+        const auto image = editor.createComponentSnapshot (editor.getLocalBounds(), true, pixelScale);
+        const auto file = outputDir.getChildFile (fileName);
+
+        if (writePng (image, file))
+            std::cout << file.getFullPathName() << std::endl;
+        else
+            check (false, "write " + file.getFullPathName());
+    };
+
+    // A second text, on the right of the canvas (the rig's "HELLO" is on the left).
+    juce::Uuid rightId;
+    processor.editDocument ([&rightId] (ArtDocument& document)
+    {
+        auto text = ArtDocument::makeTextObject ("RIGHT", 300.0f, 1500.0f);
+        text.startTime = 0.62f;
+        text.endTime = 0.96f;
+        rightId = text.id;
+        document.objects.push_back (text);
+    }, {});
+    processor.rebuildPlanIfNeeded();
+    pump (80);
+
+    const auto onRightText = [&]
+    {
+        const auto r = onCanvas (rig.canvas(), *processor.getDocument().find (rightId), processor.getScale());
+        return juce::Point<float> (r.getX() + 0.8f * r.getWidth(), r.getCentreY());
+    };
+
+    // ---- every place the focus can be ---------------------------------------------------------------
+    spaceIsTheDaws ("as the window opens");
+
+    rig.click (rig.canvas(), rig.onEmptyCanvas());
+    check (rig.hasFocus ("canvas"), name + ": a click on the canvas gives it the focus");
+    spaceIsTheDaws ("after a click on the canvas");
+
+    // The bars: buttons, chips, the segmented Mode and their backgrounds, each only clicked.
+    const std::pair<const char*, const char*> clicked[] = {
+        { "tool-brush", "a tool button" }, { "brush-strip", "the brush strip's background" }, { "tool-select", "a tool button" },
+        { "live", "Live" }, { "repeat", "Repeat (a chip)" }, { "mode", "Mode (a segmented control)" },
+        { "header", "the top bar's background" }, { "footer", "the bottom bar's background" },
+        { "layers", "Layers" }, { "inspector", "the drawer's background" }, { "inspector-close", "the drawer's close button" } };
+
+    for (const auto& [id, what] : clicked)
+    {
+        auto& target = rig.get (id);
+        const auto at = juce::String (id) == "brush-strip" ? juce::Point<float> (680.0f, 16.0f)
+                      : juce::String (id) == "header"      ? juce::Point<float> (565.0f, 38.0f)
+                      : juce::String (id) == "footer"      ? juce::Point<float> (400.0f, 4.0f)
+                      : juce::String (id) == "inspector"   ? juce::Point<float> (120.0f, static_cast<float> (target.getHeight()) - 30.0f)
+                                                           : target.getLocalBounds().toFloat().getCentre();
+        rig.click (target, at);
+        spaceIsTheDaws (juce::String ("after a click on ") + what);
+        notOnAButton (what);
+
+        // Back to how it was, except the brush (its strip is clicked next) and the drawer (so are
+        // its background and its close button).
+        editor.showLiveView (false);
+        setParameter (processor, params::id::repeat, 0.0f);
+        setParameter (processor, params::id::mode, 0.0f);
+        pump (40);
+    }
+
+    check (! editor.isDrawerOpen(), name + ": the drawer's close button closed it");
+
+    // Undo and redo are there only while they have something to do.
+    check (! rig.get ("undo").isVisible() || ! rig.get ("redo").isVisible(), name + ": (undo and redo are not both there)");
+    rig.click (rig.canvas(), rig.onText());
+    check (rig.uses (juce::KeyPress (juce::KeyPress::rightKey)), name + ": an arrow nudges the selection");
+    pump (1200);   // (a held arrow's undo step ends after a pause)
+    check (rig.get ("undo").isVisible(), name + ": after an edit, Undo is there");
+    rig.click ("undo");
+    spaceIsTheDaws ("after a click on Undo (which then has nothing more to undo, and goes)");
+    notOnAButton ("Undo");
+    check (rig.get ("redo").isVisible(), name + ": ... and Redo is there");
+    rig.click ("redo");
+    spaceIsTheDaws ("after a click on Redo");
+    notOnAButton ("Redo");
+    rig.uses (escapeKey);
+    pump (40);
+    check (editor.getSelectedObject().isNull() && ! editor.isDrawerOpen(), name + ": Esc deselects, and the drawer goes");
+    check (! rig.uses (escapeKey), name + ": with nothing selected and no drawer, Esc goes on to the DAW");
+
+    // The Length menu: the keys are the menu's while it is open; closed, nothing stays modal.
+    rig.click ("length");
+    check (juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a click on Length opens its menu");
+    juce::PopupMenu::dismissAllActiveMenus();
+    pump (80);
+    spaceIsTheDaws ("after Length's menu has closed");
+    check (! rig.uses (returnKey) && ! rig.uses (juce::KeyPress (juce::KeyPress::downKey)),
+           name + ": Return and Down are not kept by Length after its menu");
+
+    // Depth, dragged; the Sound strip (Draw): Lows clicked, Level dragged and typed.
+    rig.drag (rig.get ("depth"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
+    spaceIsTheDaws ("after dragging Depth");
+
+    setParameter (processor, params::id::mode, 3.0f);
+    pump (80);
+    rig.click ("lows");
+    spaceIsTheDaws ("after a click on Lows");
+    rig.click (rig.get ("sound-strip"), { 700.0f, 16.0f });
+    spaceIsTheDaws ("after a click on the Sound strip's background");
+    rig.drag (rig.get ("level"), { 30.0f, 12.0f }, { 30.0f, 4.0f });
+    spaceIsTheDaws ("after dragging Level");
+
+    rig.click ("level");
+    check (rig.typing(), name + ": a click on Level starts typing into it");
+    rig.type ("-12");
+    check (rig.uses (returnKey) && std::abs (parameterValue (params::id::level) + 12.0f) < 1.0e-3f, name + ": Return sets the typed level");
+    check (! rig.typing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
+    spaceIsTheDaws ("after typing a level");
+
+    // A value being typed when its strip goes (automation changes the mode): nothing keeps the keys.
+    rig.click ("density");
+    check (rig.typing(), name + ": (typing a density)");
+    setParameter (processor, params::id::mode, 0.0f);
+    pump (120);
+    check (! rig.get ("sound-strip").isVisible() && ! rig.typing(), name + ": the Sound strip goes with the mode, and the typing with it");
+    spaceIsTheDaws ("after the Sound strip went while a value was typed");
+    setParameter (processor, params::id::lowEnd, 0.0f);
+    setParameter (processor, params::id::level, -6.0f);
+
+    // The panels: the keys are the panel's while it is open (Esc closes it), and it has no use
+    // for the space bar; closed, the canvas has the focus again.
+    for (const auto* button : { "help", "settings" })
+    {
+        const auto panel = juce::String (button) + "-panel";
+        rig.click (button);
+        check (rig.get (panel).isShowing() && rig.hasFocus (panel), name + ": the " + button + " panel has the focus while it is open");
+        spaceIsTheDaws (juce::String ("with the ") + button + " panel open");
+        check (rig.uses (escapeKey) && ! rig.get (panel).isVisible(), name + ": Esc closes the " + button + " panel");
+        check (rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's again");
+        spaceIsTheDaws (juce::String ("after the ") + button + " panel has closed");
+    }
+
+    // The timing in the settings: segmented controls clicked, the start bar typed.
+    rig.click ("settings");
+
+    for (const auto* id : { "trigger", "tempo-source", "start-at" })
+    {
+        rig.click (rig.get (id), { static_cast<float> (rig.get (id).getWidth()) * 0.75f, 14.0f });
+        check (rig.hasFocus ("settings-panel"), name + ": a click on " + juce::String (id) + " in the settings leaves the focus with the panel");
+        spaceIsTheDaws (juce::String ("after a click on ") + id + " in the settings");
+        setParameter (processor, params::id::trigger, 0.0f);
+        pump (60);
+    }
+
+    check (juce::roundToInt (parameterValue (params::id::startAt)) == params::atBarStartIndex && rig.get ("start-bar").isShowing()
+               && rig.get ("bpm").isShowing(), name + ": (At bar and a typed tempo: their fields are there)");
+    rig.click ("start-bar");
+    check (rig.typing(), name + ": a click on the start bar field starts typing into it");
+    check (rig.usesSpace(), name + ": ... where the space bar is the field's");
+    rig.type ("12");
+    check (rig.uses (returnKey) && juce::roundToInt (parameterValue (params::id::startBar)) == 12, name + ": Return sets the typed bar");
+    check (! rig.typing() && rig.hasFocus ("settings-panel"), name + ": ... and hands the focus back to the settings");
+    spaceIsTheDaws ("after typing a start bar");
+    rig.drag (rig.get ("bpm"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
+    spaceIsTheDaws ("after dragging the BPM field");
+    check (rig.uses (escapeKey) && ! rig.get ("settings-panel").isVisible() && rig.hasFocus ("canvas"), name + ": Esc closes the settings");
+    setParameter (processor, params::id::startBar, 1.0f);
+    setParameter (processor, params::id::startAt, static_cast<float> (params::onPlayStartIndex));
+    setParameter (processor, params::id::tempoSource, 0.0f);
+    setParameter (processor, params::id::bpm, 120.0f);
+    pump (60);
+
+    // The live view: no canvas to hold the focus.
+    rig.click ("live");
+    spaceIsTheDaws ("in the live view");
+    rig.click ("repeat");
+    spaceIsTheDaws ("in the live view, after a click");
+    setParameter (processor, params::id::repeat, 0.0f);
+    rig.click ("live");
+    pump (60);
+    check (rig.get ("canvas").isShowing(), name + ": Live again shows the canvas");
+
+    // ---- the drawer: the layer list -------------------------------------------------------------------
+    rig.click ("layers");
+    auto* list = dynamic_cast<ui::LayerList*> (findComponentWithId (editor, "layer-list"));
+
+    if (list != nullptr && list->isShowing())
+    {
+        rig.click (*list, list->getRowBounds (1).toFloat().getCentre().withX (60.0f));
+        check (rig.hasFocus ("layer-list") && editor.getSelectedObject() == rig.textId && editor.isLayerListShown(),
+               name + ": a click on a row of the layer list selects its object and gives the list the focus");
+        spaceIsTheDaws ("with the layer list focused");
+        check (rig.uses (escapeKey) && editor.getSelectedObject().isNull() && editor.isLayerListShown(), name + ": Esc deselects; the list stays");
+        check (rig.uses (escapeKey) && ! editor.isDrawerOpen(), name + ": Esc again closes the list");
+        check (rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's");
+        check (! rig.uses (escapeKey), name + ": ... and a third Esc goes on to the DAW");
+        spaceIsTheDaws ("after the layer list has closed");
+    }
+    else
+    {
+        check (false, name + ": the Layers button shows the layer list");
+    }
+
+    // ---- a text object: selected is not typing; the drawer keeps clear of the mouse -----------------------
+    auto& textBox = rig.get ("inspector-text");
+
+    rig.click (rig.canvas(), rig.onText());
+    check (editor.getSelectedObject() == rig.textId && editor.isDrawerOpen() && ! editor.isDrawerOnLeft() && textBox.isShowing()
+           && ! textBox.hasKeyboardFocus (true) && rig.hasFocus ("canvas"),
+           name + ": a click on a text object selects it and opens its settings on the right; the focus stays with the canvas");
+    spaceIsTheDaws ("with a text object selected");
+    check (rig.text (rig.textId) == "HELLO", name + ": ... and nothing was typed into the text");
+
+    // The close button: the drawer goes, the selection stays; a click on the object brings it back.
+    rig.click ("inspector-close");
+    check (! editor.isDrawerOpen() && editor.getSelectedObject() == rig.textId && rig.hasFocus ("canvas"),
+           name + ": the drawer's close button closes it and keeps the selection");
+    spaceIsTheDaws ("after closing the drawer");
+    rig.drag (rig.canvas(), rig.onText(), rig.onText().translated (20.0f, 0.0f));
+    check (! editor.isDrawerOpen(), name + ": dragging the object leaves the drawer closed");
+    processor.undo();
+    pump (60);
+    rig.click (rig.canvas(), rig.onText());
+    check (editor.isDrawerOpen() && editor.getSelectedObject() == rig.textId, name + ": a click on the selected object opens its settings again");
+
+    // The text on the right (under the open drawer: Esc first): its settings open on the left, so
+    // the double-click's second click lands on the text, not on a control of a drawer that
+    // opened under the mouse.
+    rig.uses (escapeKey);
+    pump (40);
+    rig.click (rig.canvas(), onRightText());
+    check (editor.getSelectedObject() == rightId && editor.isDrawerOpen() && editor.isDrawerOnLeft(),
+           name + ": a click on an object on the right opens its settings on the left");
+    saveWindow ("artfreq-fx-drawer-left.png");
+    rig.uses (escapeKey);
+    pump (40);
+    check (! editor.isDrawerOpen(), name + ": (Esc: deselected, the drawer gone)");
+
+    rig.doubleClick (rig.canvas(), onRightText());
+    check (editor.getSelectedObject() == rightId && editor.isDrawerOnLeft() && textBox.hasKeyboardFocus (true) && rig.typing(),
+           name + ": a double-click on the text on the right selects it and puts the focus in its text box");
+    rig.type ("PLAY IT");
+    check (rig.text (rightId) == "PLAY IT", name + ": typed text goes into the text box, the space too (\"" + rig.text (rightId) + "\")");
+    check (rig.usesSpace() && rig.text (rightId) == "PLAY IT ", name + ": the space bar types a space while the text box is typed in");
+    saveWindow ("artfreq-fx-typing.png");
+    check (rig.uses (returnKey) && ! rig.typing() && rig.hasFocus ("canvas"),
+           name + ": Return ends the typing and hands the focus back to the canvas");
+    spaceIsTheDaws ("after Return in the text box");
+
+    // Dragged to the left, under its drawer: the drawer moves aside when the object is let go.
+    {
+        const auto from = onRightText();
+        const auto to = juce::Point<float> (rig.canvas().getDrawingArea().getX() + 0.12f * rig.canvas().getDrawingArea().getWidth(), from.y);
+        rig.drag (rig.canvas(), from, to);
+        const auto* moved = processor.getDocument().find (rightId);
+        check (moved != nullptr && moved->startTime < 0.2f && editor.isDrawerOpen() && ! editor.isDrawerOnLeft(),
+               name + ": dragged under the drawer, the object is uncovered: the drawer goes to the other side");
+        processor.undo();
+        pump (60);
+    }
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    rig.type ("NOW");
+    check (rig.uses (escapeKey) && ! rig.typing() && rig.hasFocus ("canvas") && rig.text (rig.textId) == "NOW",
+           name + ": Esc ends the typing too");
+    spaceIsTheDaws ("after Esc in the text box");
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    check (textBox.hasKeyboardFocus (true), name + ": (typing again)");
+    rig.click ("mode");
+    check (! textBox.hasKeyboardFocus (true) && ! rig.typing(), name + ": a click anywhere else ends the typing");
+    spaceIsTheDaws ("after clicking away from the text box");
+    setParameter (processor, params::id::mode, 0.0f);
+    pump (40);
+
+    // + Text: typing is what comes next, so the drawer opens on the new text and its box has the focus.
+    rig.uses (escapeKey);
+    pump (40);
+    const auto objectsBefore = processor.getDocument().objects.size();
+    rig.click ("add-text");
+    pump (60);
+    const auto newId = editor.getSelectedObject();
+    check (processor.getDocument().objects.size() == objectsBefore + 1 && editor.isDrawerOpen() && textBox.isShowing()
+           && textBox.hasKeyboardFocus (true) && rig.typing(), name + ": + Text opens the drawer on the new text, with the focus in its text box");
+    rig.type ("NEW ONE");
+    check (rig.text (newId) == "NEW ONE", name + ": ... where typing replaces its text (\"" + rig.text (newId) + "\")");
+    check (rig.uses (returnKey) && rig.hasFocus ("canvas"), name + ": ... and Return hands the focus back");
+    spaceIsTheDaws ("after + Text, typing and Return");
+
+    // A bar in the drawer, typed.
+    rig.doubleClick (rig.get ("inspector-intensity"), { 60.0f, 13.0f });
+    pump (40);
+
+    if (rig.typing())
+    {
+        rig.type ("50");
+        check (rig.uses (returnKey) && juce::Component::getCurrentlyModalComponent() == nullptr && rig.hasFocus ("canvas"),
+               name + ": a value typed into the drawer's Intensity is set, and the focus goes back to the canvas");
+        spaceIsTheDaws ("after typing an intensity");
+    }
+
+    // ---- the keys the editor does use are still its own ------------------------------------------------
+    // (Between the two texts, above the new one in the lows: nothing is there.)
+    rig.uses (escapeKey);
+    pump (40);
+    rig.click (rig.canvas(), { rig.canvas().getDrawingArea().getX() + 0.56f * rig.canvas().getDrawingArea().getWidth(),
+                               rig.canvas().getDrawingArea().getY() + 0.45f * rig.canvas().getDrawingArea().getHeight() });
+    check (editor.getSelectedObject().isNull(), name + ": (a click on empty canvas selects nothing)");
+    check (rig.uses (juce::KeyPress ('b', juce::ModifierKeys(), 'b')) && rig.get ("brush-strip").isVisible(),
+           name + ": B chooses the brush, and its strip is there");
+    check (rig.uses (juce::KeyPress ('v', juce::ModifierKeys(), 'v')) && ! rig.get ("brush-strip").isVisible(), name + ": V the Select tool again");
+    check (! rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && ! rig.uses (juce::KeyPress (juce::KeyPress::leftKey))
+           && ! rig.uses (returnKey) && ! rig.uses (juce::KeyPress ('a', juce::ModifierKeys(), 'a'))
+           && ! rig.uses (juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys(), '\t')),
+           name + ": with nothing selected, Delete, the arrows, Return, Tab and other letters go on to the DAW too");
+    pump (60);
+
+    rig.click (rig.canvas(), rig.onText());
+    check (rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && rig.text (rig.textId) == "(gone)" && ! editor.isDrawerOpen(),
+           name + ": Delete removes the selected object, and its drawer goes");
     check (rig.uses (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)) && rig.text (rig.textId) == "NOW",
            name + ": Cmd+Z brings it back");
     spaceIsTheDaws ("at the end");
@@ -2953,8 +3311,8 @@ int main (int argc, char* argv[])
     pump (50);
 
     // ---- the DAW's play key, in both plug-ins --------------------------------------------------------
-    checkKeys (ArtFreqProcessor::Variant::instrument, outputDir, pixelScale);
-    //checkKeys (ArtFreqProcessor::Variant::effect, outputDir, pixelScale);
+    checkKeys (outputDir, pixelScale);
+    checkEffectKeys (outputDir, pixelScale);
     pump (50);
 
     if (failed)
