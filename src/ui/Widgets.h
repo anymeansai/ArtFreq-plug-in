@@ -65,6 +65,7 @@ namespace icons
     juce::Path eyeOff();
     juce::Path chevronLeft();
     juce::Path chevronRight();
+    juce::Path layers();
 } // namespace icons
 
 /** A button showing a path icon (optionally with a text label after it), with hover, pressed,

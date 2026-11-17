@@ -173,9 +173,18 @@ namespace
             const auto label = getButtonText();
             const auto textWidth = juce::GlyphArrangement::getStringWidth (font, label);
             constexpr float iconSize = 16.0f, gap = 6.0f;
+            auto icon = icons::trash();
+
+            // Too narrow for the word (the compact layout): the bin alone.
+            if (bounds.getWidth() < iconSize + gap + textWidth + 12.0f)
+            {
+                g.setColour (colour);
+                g.fillPath (icon, icon.getTransformToScaleToFit (juce::Rectangle<float> (iconSize, iconSize).withCentre (bounds.getCentre()), true));
+                return;
+            }
+
             const auto left = bounds.getCentreX() - (iconSize + gap + textWidth) * 0.5f;
 
-            auto icon = icons::trash();
             const auto iconBox = juce::Rectangle<float> (left, bounds.getCentreY() - iconSize * 0.5f, iconSize, iconSize);
             g.setColour (colour);
             g.fillPath (icon, icon.getTransformToScaleToFit (iconBox, true));
@@ -197,9 +206,10 @@ struct Inspector::Impl
         image
     };
 
-    Impl (Inspector& ownerToUse, ArtFreqProcessor& processorToUse, EditorState& stateToUse)
-        : owner (ownerToUse), processor (processorToUse), state (stateToUse),
+    Impl (Inspector& ownerToUse, ArtFreqProcessor& processorToUse, EditorState& stateToUse, bool compactLayout)
+        : owner (ownerToUse), processor (processorToUse), state (stateToUse), compact (compactLayout),
           layerList (processorToUse, stateToUse),
+          closeButton ("Close", icons::close()),
           addTextButton ("Add text", icons::text(), "Add text"),
           addImageButton ("Add image", icons::image(), "Add image..."),
           styleControl ({ "Solid", "Outline" }),
@@ -226,6 +236,10 @@ struct Inspector::Impl
         strengthSlider.setDoubleClickReturnValue (true, 100.0);
 
         backButton.onClick = [this] { state.showLayerList (true); };
+
+        closeButton.setFlat (true);
+        closeButton.setTooltip ("Close (Esc)");
+        closeButton.onClick = [this] { if (owner.onClose != nullptr) owner.onClose(); };
 
         // Lows: how the whole drawing's low end plays. It belongs to the drawing rather than to
         // an object or to the analyser match, so it stays at the foot of the layer list.
@@ -316,6 +330,7 @@ struct Inspector::Impl
         layerList.setComponentID ("layer-list");
         lowsControl.setComponentID ("lows");
         backButton.setComponentID ("inspector-layers");
+        closeButton.setComponentID ("inspector-close");
         addTextButton.setComponentID ("inspector-add-text");
         addImageButton.setComponentID ("inspector-add-image");
         sizeSlider.setComponentID ("inspector-size");
@@ -340,7 +355,7 @@ struct Inspector::Impl
     {
         return { &layerList, &lowsControl, &backButton, &addTextButton, &addImageButton, &sizeSlider, &softnessSlider,
                  &strengthSlider, &textField, &fontBox, &styleControl, &bandControl, &fillButton, &intensitySlider,
-                 &deleteButton, &modeControl, &cleanupSlider, &replaceButton };
+                 &deleteButton, &modeControl, &cleanupSlider, &replaceButton, &closeButton };
     }
 
     void setUpSlider (juce::Slider& slider, double low, double high, double step, std::function<juce::String (double)> format)
@@ -460,7 +475,7 @@ struct Inspector::Impl
             shownId = newId;
             shownTool = tool;
             laidOutListHeight = listHeight;
-            brushControlsShown = newMode == Mode::layers && tool != Tool::select;
+            brushControlsShown = ! compact && newMode == Mode::layers && tool != Tool::select;
             updateVisibility();
             layout();
             owner.repaint();
@@ -494,11 +509,13 @@ struct Inspector::Impl
                            static_cast<juce::Slider*> (&intensitySlider), static_cast<juce::Slider*> (&cleanupSlider) })
             bar->hideTextBox (true);
 
+        // The compact layout leaves adding, the brush and Lows to the window's bars and strips.
         layerList.setVisible (layers);
-        lowsControl.setVisible (layers);
+        lowsControl.setVisible (layers && ! compact);
         backButton.setVisible (! layers);
-        addTextButton.setVisible (layers);
-        addImageButton.setVisible (layers);
+        addTextButton.setVisible (layers && ! compact);
+        addImageButton.setVisible (layers && ! compact);
+        closeButton.setVisible (compact);
         sizeSlider.setVisible (layers && brushControlsShown);
         softnessSlider.setVisible (layers && brushControlsShown);
         strengthSlider.setVisible (layers && brushControlsShown);
@@ -524,6 +541,9 @@ struct Inspector::Impl
             title = newTitle;
             readout = newReadout;
             owner.repaint (titleArea);
+
+            if (compact)
+                owner.repaint (bandReadoutArea);
         }
     }
 
@@ -700,6 +720,7 @@ struct Inspector::Impl
         juce::String text;
         juce::Rectangle<int> area;
         bool heading = false;  // a section title (with a divider) rather than a control's label
+        bool beside = false;   // the compact layout: on the left of its control, not over it
     };
 
     void layout()
@@ -712,6 +733,13 @@ struct Inspector::Impl
         typingHintArea = {};
         hintArea = {};
         lowsRow = {};
+        bandReadoutArea = {};
+
+        if (compact)
+        {
+            layoutCompact();
+            return;
+        }
 
         auto area = owner.getLocalBounds().reduced (pad);
         const auto titleRow = area.removeFromTop (titleHeight);
@@ -813,13 +841,98 @@ struct Inspector::Impl
         }
     }
 
+    /** The compact layout (ArtFreq FX's drawer): each caption beside its control rather than
+        over it, so a text object's settings fit under 290 px. */
+    void layoutCompact()
+    {
+        constexpr int rowHeight = compactControl + 6;
+
+        auto area = owner.getLocalBounds().reduced (compactPad, 10);
+        auto titleRow = area.removeFromTop (titleHeight);
+        titleArea = titleRow.expanded (compactPad, 4);
+        closeButton.setBounds (titleRow.removeFromRight (titleHeight));
+        titleRow.removeFromRight (4);
+        compactTitleRow = titleRow;
+        area.removeFromTop (8);
+
+        backButton.setBounds (titleRow.withX (titleRow.getX() - 4).withWidth (backButton.getIdealWidth()));
+
+        if (mode == Mode::layers)
+        {
+            // The list takes what its rows need, and scrolls once the drawer is full.
+            const auto room = area.getHeight() - 6 - hintHeight;
+            const auto minimum = juce::jmin (room, 2 * LayerList::rowHeight + 8);
+            layerList.setBounds (area.removeFromTop (juce::jmax (minimum, juce::jmin (layerList.getContentHeight(), room))));
+            area.removeFromTop (6);
+            hintArea = area.removeFromTop (hintHeight);
+            return;
+        }
+
+        /** A row: the caption on the left, its control filling the rest. */
+        const auto row = [&] (const juce::String& caption, juce::Component& control)
+        {
+            auto r = area.removeFromTop (compactControl);
+            captions.push_back ({ caption, r.removeFromLeft (compactCaptionWidth), false, true });
+            control.setBounds (r);
+            area.removeFromTop (rowHeight - compactControl);
+        };
+
+        if (mode == Mode::text)
+        {
+            typingHintArea = area.removeFromTop (compactCaptionHeight);
+            captions.push_back ({ "Text", typingHintArea });
+            textField.setBounds (area.removeFromTop (compactTextHeight));
+            area.removeFromTop (6);
+            row ("Font", fontBox);
+            row ("Style", styleControl);
+        }
+        else
+        {
+            thumbnailArea = area.removeFromTop (compactThumbnailHeight);
+            area.removeFromTop (6);
+            modeCaptionArea = area.removeFromTop (compactCaptionHeight);
+            captions.push_back ({ "Mode", modeCaptionArea });
+            modeControl.setBounds (area.removeFromTop (compactControl));
+            area.removeFromTop (6);
+            row ("Clean-up", cleanupSlider);
+        }
+
+        // The band, and under it the frequencies it comes to.
+        {
+            auto r = area.removeFromTop (compactControl);
+            captions.push_back ({ "Band", r.removeFromLeft (compactCaptionWidth), false, true });
+            bandControl.setBounds (r);
+            bandReadoutArea = area.removeFromTop (14).withTrimmedLeft (compactCaptionWidth);
+            area.removeFromTop (6);
+        }
+
+        row ("Intensity", intensitySlider);
+        area.removeFromTop (2);
+
+        auto buttons = area.removeFromTop (compactControl);
+        deleteButton.setBounds (buttons.removeFromRight (compactControl + 2));
+        buttons.removeFromRight (6);
+
+        if (mode == Mode::image)
+        {
+            const auto half = (buttons.getWidth() - 6) / 2;
+            fillButton.setBounds (buttons.removeFromLeft (half));
+            replaceButton.setBounds (buttons.removeFromRight (half));
+        }
+        else
+        {
+            fillButton.setBounds (buttons.removeFromLeft (88));
+            timeReadoutArea = buttons.withTrimmedLeft (10);
+        }
+    }
+
     void paint (juce::Graphics& g)
     {
         g.fillAll (theme::panel);
         g.setColour (theme::line);
-        g.fillRect (0, 0, 1, owner.getHeight());
+        g.fillRect (compact && onLeft ? owner.getWidth() - 1 : 0, 0, 1, owner.getHeight());
 
-        auto titleRow = owner.getLocalBounds().reduced (pad).removeFromTop (titleHeight);
+        auto titleRow = compact ? compactTitleRow : owner.getLocalBounds().reduced (pad).removeFromTop (titleHeight);
 
         if (mode != Mode::layers)
         {
@@ -838,17 +951,35 @@ struct Inspector::Impl
 
         if (readout.isNotEmpty())
         {
-            // Frequencies in mono (numbers line up); the list's summary is words.
+            // Frequencies in mono (numbers line up); the list's summary is words. (The compact
+            // layout has no room for the frequencies beside the title: they go under the band.)
             const auto titleWidth = static_cast<int> (std::ceil (juce::GlyphArrangement::getStringWidth (titleFont, title)));
             g.setColour (mode == Mode::layers ? theme::textFaint : theme::textDim);
             g.setFont (mode == Mode::layers ? fonts::ui (12.0f) : fonts::mono (11.0f));
-            g.drawText (readout, titleRow.withTrimmedLeft (titleWidth + 8), juce::Justification::centredRight, true);
+
+            if (compact && mode != Mode::layers)
+                g.drawText (readout, bandReadoutArea, juce::Justification::centredRight, false);
+            else
+                g.drawText (readout, titleRow.withTrimmedLeft (titleWidth + 8), juce::Justification::centredRight, true);
         }
 
         g.setFont (theme::labelFont());
 
+        const auto typing = textField.isVisible() && textField.hasKeyboardFocus (true);
+
         for (const auto& caption : captions)
         {
+            if (caption.beside)
+            {
+                g.setColour (theme::textDim);
+                g.drawText (caption.text.toUpperCase(), caption.area, juce::Justification::centredLeft, false);
+                continue;
+            }
+
+            // (The compact layout's text caption makes way for the typing hint.)
+            if (compact && typing && caption.area == typingHintArea)
+                continue;
+
             if (caption.heading)
             {
                 g.setColour (theme::line);
@@ -879,7 +1010,7 @@ struct Inspector::Impl
             g.setColour (theme::line);
             g.fillRect (lowsRow.getX(), lowsRow.getY() - lowsGap / 2 - 1, lowsRow.getWidth(), 1);
             shell::drawCaps (g, "Lows", lowsRow.withRight (lowsControl.getX() - 8), juce::Justification::centredLeft,
-                             lowsControl.isEnabled() ? theme::textDim : theme::textFaint);
+                             theme::textDim);
         }
 
         if (! timeReadoutArea.isEmpty())
@@ -893,9 +1024,13 @@ struct Inspector::Impl
             g.setColour (theme::textDim);
             g.setFont (numbers);
             g.drawText (timeReadout, r.removeFromLeft (numbersWidth + 1.0f), juce::Justification::centredLeft, false);
-            g.setColour (theme::textFaint);
-            g.setFont (words);
-            g.drawText (" of the length", r, juce::Justification::centredLeft, true);
+
+            if (! compact)   // (no room for the words there)
+            {
+                g.setColour (theme::textFaint);
+                g.setFont (words);
+                g.drawText (" of the length", r, juce::Justification::centredLeft, true);
+            }
         }
 
         if (! modeCaptionArea.isEmpty() && shownModeHint.isNotEmpty())
@@ -909,8 +1044,9 @@ struct Inspector::Impl
         {
             // While the text box has the keyboard: how to give it back, and how to get a new line.
             g.setColour (theme::textFaint);
-            g.setFont (fonts::ui (11.0f));
-            g.drawText (typingHint, typingHintArea.withTrimmedBottom (4), juce::Justification::bottomRight, false);
+            g.setFont (fonts::ui (compact ? 10.5f : 11.0f));
+            g.drawText (typingHint, typingHintArea.withTrimmedBottom (4),
+                        compact ? juce::Justification::bottomLeft : juce::Justification::bottomRight, false);
         }
 
         if (! thumbnailArea.isEmpty())
@@ -971,6 +1107,17 @@ struct Inspector::Impl
     Inspector& owner;
     ArtFreqProcessor& processor;
     EditorState& state;
+
+    // The compact layout (ArtFreq FX's drawer), in logical pixels.
+    const bool compact;
+    bool onLeft = false;
+    static constexpr int compactPad = 12;
+    static constexpr int compactControl = 26;
+    static constexpr int compactCaptionWidth = 74;
+    static constexpr int compactCaptionHeight = 15;
+    static constexpr int compactTextHeight = 46;
+    static constexpr int compactThumbnailHeight = 44;
+    juce::Rectangle<int> compactTitleRow, bandReadoutArea;
 
     Mode mode = Mode::layers;
     juce::Uuid shownId = juce::Uuid::null();
@@ -1033,6 +1180,7 @@ struct Inspector::Impl
 
     // Controls
     LayerList layerList;
+    IconButton closeButton;   // the compact layout only
     LowsControl lowsControl;
     std::unique_ptr<shell::ChoiceSegments> lowsAttachment;
     LayersBackButton backButton;
@@ -1047,8 +1195,8 @@ struct Inspector::Impl
 };
 
 //==============================================================================
-Inspector::Inspector (ArtFreqProcessor& processor, EditorState& state)
-    : impl (std::make_unique<Impl> (*this, processor, state))
+Inspector::Inspector (ArtFreqProcessor& processor, EditorState& state, bool compact)
+    : impl (std::make_unique<Impl> (*this, processor, state, compact))
 {
     setOpaque (true);
     setTitle ("Inspector");
@@ -1077,16 +1225,11 @@ Inspector::~Inspector()
         impl->state.focusTextField = nullptr;
 }
 
-void Inspector::refreshEffectMode()
+void Inspector::setOnLeft (bool shouldBeOnLeft)
 {
-    if (! impl->processor.isEffect())
-        return;
-
-    const auto sines = playsSines (impl->processor.getEffectMode());
-
-    if (impl->lowsControl.isEnabled() != sines)
+    if (impl->onLeft != shouldBeOnLeft)
     {
-        impl->lowsControl.setEnabled (sines);
+        impl->onLeft = shouldBeOnLeft;
         repaint();
     }
 }

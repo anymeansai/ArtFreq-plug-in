@@ -1,7 +1,8 @@
 #pragma once
 
-// The footer: the sound (Density, Contrast, Level), the timing (Length, Trigger with Repeat and
-// where a single pass starts, Tempo, BPM), Preview and Export. See docs/DESIGN.md, "Footer".
+// The instrument's footer: the sound (Density, Contrast, Level), the timing (Length, Trigger with
+// Repeat and where a single pass starts, Tempo, BPM), Preview and Export. See docs/DESIGN.md,
+// "Footer". (ArtFreq FX has a bottom bar of its own: EffectShell.h.)
 
 #include "PluginProcessor.h"
 #include "ShellControls.h"

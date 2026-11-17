@@ -1,7 +1,7 @@
 #pragma once
 
-// The header bar: wordmark, Canvas | Live, undo / redo, help and settings; in ArtFreq FX also
-// the effect's Mode and Depth. See docs/DESIGN.md, "Header".
+// The instrument's header bar: wordmark, Canvas | Live, undo / redo, help and settings. See
+// docs/DESIGN.md, "Header". (ArtFreq FX has a top bar of its own: EffectShell.h.)
 
 #include "Widgets.h"
 
@@ -13,12 +13,7 @@ namespace artfreq::ui::shell
 class Header final : public juce::Component
 {
 public:
-    /** forEffect: ArtFreq FX's header ("ArtFreq FX", room for the effect's controls). */
-    explicit Header (bool forEffect = false);
-
-    /** ArtFreq FX: puts the effect's Mode and Depth in the header, between Canvas | Live (which
-        then moves next to the wordmark) and undo / redo. */
-    void setEffectControls (juce::Component* controls, int idealWidth);
+    Header();
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -30,11 +25,6 @@ public:
     IconButton settingsButton;
 
 private:
-    int bylineRight() const;
-
-    const bool effect;
-    juce::Component* effectControls = nullptr;
-    int effectControlsWidth = 0;
     juce::Rectangle<int> logoArea;
     int dividerX = 0;
 

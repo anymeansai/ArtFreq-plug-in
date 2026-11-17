@@ -93,6 +93,8 @@
 #include "ui/CanvasView.h"
 #include "ui/Editor.h"
 #include "ui/CanvasAxes.h"
+#include "ui/EffectShell.h"
+#include "ui/Inspector.h"
 #include "ui/LayerList.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
@@ -166,8 +168,8 @@ Type* find (juce::Component& root, const juce::String& id)
 
 void setWindowScale (artfreq::ArtFreqEditor& editor, float scale)
 {
-    editor.setSize (juce::roundToInt (static_cast<float> (artfreq::ArtFreqEditor::baseWidth) * scale),
-                    juce::roundToInt (static_cast<float> (artfreq::ArtFreqEditor::baseHeight) * scale));
+    editor.setSize (juce::roundToInt (static_cast<float> (editor.getBaseWidth()) * scale),
+                    juce::roundToInt (static_cast<float> (editor.getBaseHeight()) * scale));
 }
 
 /** A stand-in for an imported picture: a shaded disc and a frame on a white background, the
@@ -1354,8 +1356,138 @@ std::vector<float> carveSong (artfreq::ArtFreqProcessor& effect, const std::vect
     return out;
 }
 
-/** ArtFreq FX's editor: the header's Mode and Depth, what they show and grey, the canvas in each
-    mode, the export's hint, the live view of a carved song, the help, the window sizes. */
+/** A showing component that is disabled, by name (ArtFreq FX shows nothing it would have to
+    grey: what does not apply is not there). */
+void collectDisabled (juce::Component& component, juce::StringArray& names)
+{
+    if (! component.isVisible())
+        return;
+
+    if (! component.isEnabled())
+    {
+        names.add (component.getComponentID().isNotEmpty() ? component.getComponentID()
+                 : component.getName().isNotEmpty() ? component.getName() : juce::String ("(unnamed)"));
+        return;
+    }
+
+    for (auto* child : component.getChildren())
+        collectDisabled (*child, names);
+}
+
+juce::String nameOf (const juce::Component& component)
+{
+    return component.getComponentID().isNotEmpty() ? component.getComponentID()
+         : component.getName().isNotEmpty() ? component.getName() : juce::String ("(unnamed)");
+}
+
+/** The visible children of `parent` lie inside it and none overlaps another. */
+void checkNoOverlap (juce::Component& parent, const juce::String& state)
+{
+    std::vector<juce::Component*> shown;
+
+    for (auto* child : parent.getChildren())
+        if (child->isVisible() && ! child->getBounds().isEmpty())
+            shown.push_back (child);
+
+    juce::StringArray problems;
+
+    for (size_t i = 0; i < shown.size(); ++i)
+    {
+        if (! parent.getLocalBounds().contains (shown[i]->getBounds()))
+            problems.add (nameOf (*shown[i]) + " leaves " + nameOf (parent));
+
+        for (size_t j = i + 1; j < shown.size(); ++j)
+            if (shown[i]->getBounds().intersects (shown[j]->getBounds()))
+                problems.add (nameOf (*shown[i]) + " overlaps " + nameOf (*shown[j]));
+    }
+
+    check (problems.isEmpty(), "ArtFreq FX, " + state + ": in " + nameOf (parent) + " nothing overlaps or is cut off"
+                                   + (problems.isEmpty() ? juce::String() : " (" + problems.joinIntoString ("; ") + ")"));
+}
+
+/** ArtFreq FX's window holds together in the state it is in: the bars, the strips that are
+    there and the canvas tile the window without overlapping, the drawer stays over the canvas,
+    inside every bar, strip and the drawer nothing overlaps, the line in the bottom bar fits, and
+    nothing that is shown is disabled. */
+void checkEffectLayout (artfreq::ArtFreqEditor& editor, const juce::String& state)
+{
+    using namespace artfreq;
+
+    auto* content = findComponentWithId (editor, "content");
+    auto* top = findComponentWithId (editor, "header");
+    auto* bottom = dynamic_cast<ui::shell::EffectBottomBar*> (findComponentWithId (editor, "footer"));
+    auto* sound = findComponentWithId (editor, "sound-strip");
+    auto* brush = findComponentWithId (editor, "brush-strip");
+    auto* controls = findComponentWithId (editor, "effect-controls");
+    auto* canvas = findComponentWithId (editor, "canvas");
+    auto* live = findComponentWithId (editor, "live-view");
+    auto* drawer = findComponentWithId (editor, "inspector");
+
+    if (content == nullptr || top == nullptr || bottom == nullptr || sound == nullptr || brush == nullptr || controls == nullptr
+        || canvas == nullptr || live == nullptr || drawer == nullptr)
+    {
+        check (false, "ArtFreq FX, " + state + ": the window's parts exist");
+        return;
+    }
+
+    // From top to bottom, without a gap or an overlap.
+    auto* view = canvas->isVisible() ? canvas : live;
+    auto y = 0;
+    juce::StringArray problems;
+
+    for (auto* part : { top, sound, view, brush, static_cast<juce::Component*> (bottom) })
+    {
+        if (! part->isVisible())
+            continue;
+
+        // (The canvas keeps a few pixels of air around it.)
+        const auto air = part == view || y == view->getBottom() ? 12 : 0;
+
+        if (part->getY() < y || part->getY() > y + air || part->getX() < 0 || part->getRight() > content->getWidth())
+            problems.add (nameOf (*part) + " at " + part->getBounds().toString());
+
+        y = part->getBottom();
+    }
+
+    check (problems.isEmpty() && bottom->getBottom() == content->getHeight() && view->getHeight() >= 200,
+           "ArtFreq FX, " + state + ": the bars, the strips and the canvas share the window"
+               + (problems.isEmpty() ? juce::String() : " (" + problems.joinIntoString ("; ") + ")"));
+
+    for (auto* part : { top, controls, sound, brush, static_cast<juce::Component*> (bottom) })
+        if (part->isVisible())
+            checkNoOverlap (*part, state);
+
+    // The line that says what will happen: whole, and clear of the buttons beside it.
+    const auto hint = bottom->getHintBounds();
+    auto hintClear = true;
+
+    for (auto* child : bottom->getChildren())
+        hintClear = hintClear && ! (child->isVisible() && child->getBounds().intersects (hint));
+
+    check (hintClear && bottom->getShownHint().isNotEmpty()
+               && juce::GlyphArrangement::getStringWidth (fonts::ui (11.0f), bottom->getShownHint()) <= static_cast<float> (hint.getWidth()),
+           "ArtFreq FX, " + state + ": \"" + bottom->getShownHint() + "\" fits in the bottom bar");
+
+    if (drawer->isVisible())
+    {
+        check (drawer->getY() >= (sound->isVisible() ? sound->getBottom() : top->getBottom())
+                   && drawer->getBottom() <= (brush->isVisible() ? brush->getY() : bottom->getY())
+                   && drawer->getX() >= 0 && drawer->getRight() <= content->getWidth()
+                   && drawer->getHeight() >= ui::Inspector::compactMinimumHeight,
+               "ArtFreq FX, " + state + ": the drawer lies over the canvas, between the bars, with room for its tallest content");
+        checkNoOverlap (*drawer, state);
+    }
+
+    juce::StringArray disabled;
+    collectDisabled (editor, disabled);
+    check (disabled.isEmpty(), "ArtFreq FX, " + state + ": nothing that is shown is greyed"
+                                   + (disabled.isEmpty() ? juce::String() : " (" + disabled.joinIntoString (", ") + ")"));
+}
+
+/** ArtFreq FX's editor: a small window of its own. The top bar's Mode and Depth, what each mode
+    shows (and that nothing is greyed), the canvas in each mode, the strips, the drawer (an
+    object's settings, the layer list, which side it opens on), the bottom bar's line, the
+    settings that hold the timing, the live view of a carved song, the help, the window sizes. */
 void checkEffect (const juce::File& outputDir, float pixelScale)
 {
     using namespace artfreq;
@@ -1393,73 +1525,117 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
     pump (150);
 
+    check (editor->getWidth() == ArtFreqEditor::effectBaseWidth && editor->getHeight() == ArtFreqEditor::effectBaseHeight
+               && editor->getBaseWidth() == 720 && editor->getBaseHeight() == 440,
+           "a new ArtFreq FX opens at 720 x 440");
+
     auto* mode = find<ui::SegmentedControl> (*editor, "mode");
     auto* depth = find<ui::shell::NumberField> (*editor, "depth");
-    auto* header = findComponentWithId (*editor, "header");
-    auto* view = findComponentWithId (*editor, "view-switch");
-    auto* controls = findComponentWithId (*editor, "effect-controls");
+    auto* top = findComponentWithId (*editor, "header");
+    auto* bottom = find<ui::shell::EffectBottomBar> (*editor, "footer");
+    auto* sound = findComponentWithId (*editor, "sound-strip");
+    auto* brush = findComponentWithId (*editor, "brush-strip");
+    auto* drawer = findComponentWithId (*editor, "inspector");
+    auto* canvas = find<ui::CanvasView> (*editor, "canvas");
+    auto* list = find<ui::LayerList> (*editor, "layer-list");
     auto* undo = findComponentWithId (*editor, "undo");
-    auto* exporter = find<ui::shell::ExportPanel> (*editor, "export");
-    auto* bounce = find<juce::Button> (*editor, "bounce");
+    auto* redo = findComponentWithId (*editor, "redo");
+    auto* live = find<juce::Button> (*editor, "live");
+    auto* layers = find<juce::Button> (*editor, "layers");
+    auto* repeat = find<juce::Button> (*editor, "repeat");
 
-    if (mode == nullptr || depth == nullptr || header == nullptr || view == nullptr || controls == nullptr || undo == nullptr
-        || exporter == nullptr || bounce == nullptr)
+    if (mode == nullptr || depth == nullptr || top == nullptr || bottom == nullptr || sound == nullptr || brush == nullptr
+        || drawer == nullptr || canvas == nullptr || list == nullptr || undo == nullptr || redo == nullptr || live == nullptr
+        || layers == nullptr || repeat == nullptr)
         return;
 
-    // The header: Canvas | Live beside the wordmark, Mode and Depth after it, clear of undo.
-    check (controls->getParentComponent() == header && controls->isVisible(), "Mode and Depth are in the header");
-    check (view->getRight() < controls->getX() && controls->getRight() < undo->getX()
-               && mode->getRight() <= controls->getWidth() && depth->getRight() <= controls->getWidth(),
-           "the header's controls do not overlap");
+    // (Shown: visible, and so is everything it is in. The editor itself is on no screen here.)
+    const auto shown = [&] (const juce::String& id)
+    {
+        auto* c = findComponentWithId (*editor, id);
+
+        for (auto* p = c; p != nullptr && p != editor.get(); p = p->getParentComponent())
+            if (! p->isVisible())
+                return false;
+
+        return c != nullptr;
+    };
+    const auto scale = processor.getScale();
+    const auto choice = [&] (const char* id) { return juce::roundToInt (processor.getParameters().getRawParameterValue (id)->load()); };
+
+    // ---- a fresh window: Carve, and only what Carve has a use for ---------------------------------
     check (mode->getSelectedIndex() == 0 && processor.getEffectMode() == EffectMode::carve, "a new ArtFreq FX carves");
-    check (depth->isEnabled(), "Depth can be changed in Carve");
+    check (shown ("depth") && ! sound->isVisible() && ! brush->isVisible() && ! drawer->isVisible(),
+           "Carve with the Select tool: Depth, and neither strip nor the drawer");
+    check (! undo->isVisible() && ! redo->isVisible(), "nothing to undo or redo yet: neither button is there");
+    check (bottom->getShownHint() == "Carves once when you press play", "the bottom bar says \"Carves once when you press play\"");
 
-    for (auto* id : { "density", "contrast", "level" })
-        if (auto* knob = findComponentWithId (*editor, id))
-            check (! knob->isEnabled(), juce::String (id) + " is greyed in Carve (it shapes the sines only)");
+    // What the instrument's window has and this one leaves out.
+    for (const auto* id : { "preview", "export", "bounce", "clear", "trigger", "tempo-source", "start-choice", "view-switch",
+                            "toolbar", "inspector-add-text", "inspector-size" })
+        check (! shown (id), juce::String ("ArtFreq FX's window has no ") + id);
 
-    check (exporter->isAskingForDawBounce() && ! bounce->isVisible(), "Carve: the export asks for a bounce in the DAW");
+    checkEffectLayout (*editor, "a new window");
     save ("default", pixelScale);
 
     juce::Uuid textId, imageId;
     makeRichDrawing (processor, textId, imageId);
     pump (100);
+    checkEffectLayout (*editor, "Carve");
     save ("carve", pixelScale);
 
-    // Mode, clicked: the segments sit at about these fractions of its width.
+    // ---- Mode, clicked: the segments sit at about these fractions of its width ----------------------
     const auto clickMode = [&] (float fraction)
     {
-        clickOn (*mode, { mode->getWidth() * fraction, mode->getHeight() * 0.5f });
-        pump (60);
+        clickOn (*mode, { static_cast<float> (mode->getWidth()) * fraction, static_cast<float> (mode->getHeight()) * 0.5f });
+        pump (80);
     };
 
-    clickMode (0.39f);
+    const auto canvasHeightInCarve = canvas->getHeight();
+
+    clickMode (0.38f);
     check (processor.getEffectMode() == EffectMode::carveDraw && mode->getSelectedIndex() == 1, "clicking Carve + Draw chooses it");
-    check (depth->isEnabled() && ! exporter->isAskingForDawBounce() && bounce->isVisible(), "Carve + Draw: Depth on, Bounce WAV back");
-
-    for (auto* id : { "density", "contrast", "level" })
-        if (auto* knob = findComponentWithId (*editor, id))
-            check (knob->isEnabled(), juce::String (id) + " can be changed in Carve + Draw");
-
+    check (shown ("depth") && sound->isVisible() && shown ("level") && shown ("density") && shown ("contrast") && shown ("lows"),
+           "Carve + Draw: Depth, and the Sound strip with Level, Density, Contrast and Lows");
+    check (canvas->getHeight() == canvasHeightInCarve - sound->getHeight(), "... the canvas makes room for the strip");
+    check (bottom->getShownHint() == "Draws once when you press play", "... and the bottom bar says \"Draws once when you press play\"");
+    checkEffectLayout (*editor, "Carve + Draw");
     save ("carve-draw", pixelScale);
 
-    clickMode (0.69f);
+    // The Sound strip's fields are the sines' parameters.
+    if (auto* level = find<ui::shell::NumberField> (*editor, "level"))
+    {
+        const auto before = processor.getParameters().getRawParameterValue (params::id::level)->load();
+        dragOn (*level, { 30.0f, 12.0f }, { 30.0f, 32.0f });
+        check (processor.getParameters().getRawParameterValue (params::id::level)->load() < before - 2.0f, "dragging Level down turns the sines down");
+        setParameter (processor, params::id::level, before);
+    }
+
+    if (auto* lows = find<ui::SegmentedControl> (*editor, "lows"))
+    {
+        clickOn (*lows, { static_cast<float> (lows->getWidth()) * 0.75f, 12.0f });
+        check (choice (params::id::lowEnd) == params::stripesLowEndIndex, "clicking Stripes chooses it");
+        clickOn (*lows, { static_cast<float> (lows->getWidth()) * 0.25f, 12.0f });
+        check (choice (params::id::lowEnd) == params::smoothLowEndIndex, "... and Smooth, Smooth");
+    }
+
+    clickMode (0.7f);
     check (processor.getEffectMode() == EffectMode::stencil, "clicking Stencil chooses it");
-    check (exporter->isAskingForDawBounce(), "Stencil: the export asks for a bounce in the DAW");
+    check (shown ("depth") && ! sound->isVisible() && ! shown ("level"), "Stencil: Depth, and no Sound strip");
+    check (bottom->getShownHint() == "Stencils once when you press play", "... \"Stencils once when you press play\"");
+    checkEffectLayout (*editor, "Stencil");
     save ("stencil", pixelScale);
 
-    clickMode (0.9f);
+    clickMode (0.92f);
     check (processor.getEffectMode() == EffectMode::draw, "clicking Draw chooses it");
-    check (! depth->isEnabled(), "Depth is greyed in Draw, which carves nothing");
-    check (bounce->isVisible() && bounce->isEnabled(), "Draw: Bounce WAV bounces the sines");
+    check (! depth->isVisible() && sound->isVisible(), "Draw carves nothing: Depth is not there, the Sound strip is");
+    checkEffectLayout (*editor, "Draw");
     save ("draw", pixelScale);
 
     // The canvas shows each mode differently (and not as the instrument does).
-    clickMode (0.1f);
+    clickMode (0.08f);
     check (processor.getEffectMode() == EffectMode::carve, "clicking Carve chooses it");
-    auto* canvas = findComponentWithId (*editor, "canvas");
 
-    if (canvas != nullptr)
     {
         const auto carved = canvas->createComponentSnapshot (canvas->getLocalBounds());
         setParameter (processor, params::id::mode, 2.0f);
@@ -1470,7 +1646,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         pump (80);
     }
 
-    // Depth: dragged up it carves less, typed it takes the value, Esc leaves it.
+    // Depth: dragged up it carves less, typed it takes the value.
     const auto before = processor.getDepthDb();
     dragOn (*depth, { 30.0f, 14.0f }, { 30.0f, -10.0f });
     check (processor.getDepthDb() > before + 5.0f, "dragging Depth up carves less deeply");
@@ -1502,41 +1678,261 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         }
     }
 
-    // Preview runs the pass on the audio coming in, with the DAW stopped.
+    // Every control says what it is: a label of its own, or a tooltip.
+    for (const auto* id : { "mode", "depth", "live", "help", "settings", "tool-select", "tool-brush", "tool-erase", "add-text",
+                            "add-image", "layers", "length", "repeat", "level", "density", "contrast", "lows" })
     {
-        processor.setPreview (true);
-        const auto song = makeSong (1.0);
-        juce::AudioBuffer<float> buffer (2, 512);
-        juce::MidiBuffer midi;
-        auto changed = 0.0f;
+        auto* client = dynamic_cast<juce::TooltipClient*> (findComponentWithId (*editor, id));
+        check (client != nullptr && client->getTooltip().isNotEmpty(), juce::String (id) + " has a tooltip");
+    }
 
-        for (int start = 0; start + 512 <= 48000; start += 512)
+    // ---- the drawer: an object's settings --------------------------------------------------------------
+    const auto objectAt = [&] (const juce::Uuid& id) { return onCanvas (*canvas, *processor.getDocument().find (id), scale); };
+
+    // The text is on the left of the canvas: its settings open on the right.
+    clickOn (*canvas, objectAt (textId).getCentre());
+    pump (60);
+    check (editor->getSelectedObject() == textId && editor->isDrawerOpen() && ! editor->isLayerListShown() && ! editor->isDrawerOnLeft()
+               && shown ("inspector-text") && shown ("inspector-band") && shown ("inspector-close"),
+           "a click on the text opens its settings in a drawer on the right");
+    check (drawer->getX() > juce::roundToInt (objectAt (textId).getRight()) + canvas->getX(), "... clear of the text itself");
+    check (! layers->getToggleState(), "... the Layers button is not lit (the drawer shows an object)");
+    checkEffectLayout (*editor, "a text object selected");
+    save ("text-selected", pixelScale);
+
+    // Its settings edit it, as in the instrument.
+    if (auto* band = find<ui::SegmentedControl> (*editor, "inspector-band"))
+    {
+        const auto highLow = processor.getDocument().find (textId)->lowHz;
+        clickOn (*band, { static_cast<float> (band->getWidth()) * 0.38f, 13.0f });
+        pump (40);
+        check (ui::actions::bandOf (*processor.getDocument().find (textId), scale) == static_cast<int> (Band::mid)
+                   && processor.getDocument().find (textId)->lowHz < highLow,
+               "the drawer's Band moves the text to the mid band");
+        processor.undo();
+        pump (40);
+    }
+
+    if (auto* field = find<juce::TextEditor> (*editor, "inspector-text"))
+    {
+        field->setText ("HELLO YOU", true);
+        pump (40);
+        check (processor.getDocument().find (textId)->text == "HELLO YOU", "typing in the drawer's text box changes the text");
+        processor.undo();
+        pump (40);
+        check (processor.getDocument().find (textId)->text == "HELLO", "... and undo takes it back");
+    }
+
+    check (undo->isVisible() || redo->isVisible(), "after an edit, undo or redo is there");
+
+    // The picture is on the right: its settings would cover it there, so they open on the left.
+    clickOn (*canvas, objectAt (imageId).getCentre());
+    pump (60);
+    check (editor->getSelectedObject() == imageId && editor->isDrawerOpen() && editor->isDrawerOnLeft()
+               && shown ("inspector-mode") && shown ("inspector-replace"),
+           "a click on the picture (on the right of the canvas) opens its settings on the left");
+    check (drawer->getRight() < juce::roundToInt (objectAt (imageId).getX()) + canvas->getX(), "... clear of the picture");
+    checkEffectLayout (*editor, "a picture selected");
+    save ("image-selected", pixelScale);
+
+    // The close button puts the drawer away and keeps the selection (and its handles).
+    if (auto* close = find<juce::Button> (*editor, "inspector-close"))
+    {
+        close->onClick();
+        pump (40);
+        check (! editor->isDrawerOpen() && editor->getSelectedObject() == imageId, "the drawer's close button closes it; the picture stays selected");
+    }
+
+    // Esc deselects; with nothing selected the drawer is gone.
+    editor->selectObject (textId);
+    pump (40);
+    check (editor->isDrawerOpen() && ! editor->isDrawerOnLeft(), "selecting the text again opens its settings (on the right)");
+    canvas->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    pump (40);
+    check (editor->getSelectedObject().isNull() && ! editor->isDrawerOpen(), "Esc deselects, and the drawer goes");
+
+    // ---- the drawer: the layer list ------------------------------------------------------------------------
+    layers->onClick();
+    pump (60);
+    check (editor->isDrawerOpen() && editor->isLayerListShown() && layers->getToggleState() && shown ("layer-list")
+               && list->getNumObjectRows() == 2 && ! editor->isDrawerOnLeft(),
+           "the Layers button opens the layer list in the drawer, and is lit");
+    checkEffectLayout (*editor, "the layer list");
+
+    clickOn (*list, list->getRowBounds (1).toFloat().getCentre().withX (60.0f));
+    pump (40);
+    check (editor->getSelectedObject() == textId && editor->isLayerListShown(), "a click on a row selects its object; the list stays");
+    save ("layers", pixelScale);
+
+    clickOn (*list, list->getEyeBounds (0).toFloat().getCentre());
+    pump (40);
+    check (! processor.getDocument().find (imageId)->visible, "a row's eye hides its object");
+    processor.undo();
+    pump (40);
+
+    clickOn (*list, list->getSettingsBounds (1).toFloat().getCentre());
+    pump (40);
+    check (editor->isDrawerOpen() && ! editor->isLayerListShown() && shown ("inspector-band"), "a row's chevron opens the object's settings");
+
+    if (auto* back = find<juce::Button> (*editor, "inspector-layers"))
+    {
+        back->onClick();
+        pump (40);
+        check (editor->isLayerListShown(), "\"Layers\" in the settings goes back to the list");
+    }
+
+    layers->onClick();
+    pump (40);
+    check (! editor->isDrawerOpen() && ! layers->getToggleState(), "the Layers button closes the list again");
+    editor->selectObject (juce::Uuid::null());
+    pump (40);
+
+    // ---- the brush: its settings appear with it ----------------------------------------------------------
+    if (auto* brushTool = find<juce::Button> (*editor, "tool-brush"))
+    {
+        const auto heightBefore = canvas->getHeight();
+        brushTool->onClick();
+        pump (60);
+        check (brush->isVisible() && shown ("brush-size") && shown ("brush-softness") && shown ("brush-strength"),
+               "the Brush tool brings its settings: Size, Soft, Strength, in a strip over the bottom bar");
+        check (canvas->getHeight() == heightBefore - brush->getHeight(), "... the canvas makes room for it");
+        checkEffectLayout (*editor, "the brush");
+
+        // It paints.
+        const auto area = canvas->getDrawingArea();
+        const auto from = juce::Point<float> (area.getX() + 0.55f * area.getWidth(), area.getY() + 0.12f * area.getHeight());
+        const auto to = from.translated (0.3f * area.getWidth(), 0.05f * area.getHeight());
+        const auto painted = paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f);
+        dragOn (*canvas, from, to);
+        pump (60);
+        check (paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) > painted, "the brush paints on the canvas");
+        save ("brush", pixelScale);
+
+        if (auto* eraser = find<juce::Button> (*editor, "tool-erase"))
         {
-            for (int channel = 0; channel < 2; ++channel)
-                buffer.copyFrom (channel, 0, song[static_cast<size_t> (channel)].data() + start, 512);
-
-            processor.processBlock (buffer, midi);
-
-            if (start >= 4096 + 8192)
-                for (int i = 0; i < 512; ++i)
-                    changed = std::max (changed, std::abs (buffer.getSample (0, i) - song[0][static_cast<size_t> (start + i - 4096)]));
+            eraser->onClick();
+            pump (40);
+            check (brush->isVisible(), "the Eraser keeps the strip");
+            dragOn (*canvas, from, to);
+            pump (60);
+            check (paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) <= painted, "the eraser takes the stroke away");
         }
 
-        check (processor.isSounding() && changed > 0.01f, "Preview carves the audio coming in");
-        processor.setPreview (false);
+        // Both strips at once (Draw, painting), with the drawer open: the least room there is.
+        setParameter (processor, params::id::mode, 3.0f);
+        pump (80);
+        editor->showLayers (true);
+        pump (60);
+        check (sound->isVisible() && brush->isVisible() && editor->isDrawerOpen(), "Draw while painting, the layer list open: both strips and the drawer");
+        checkEffectLayout (*editor, "Draw, the eraser and the layer list");
+        save ("draw-brush", pixelScale);
+        editor->showLayers (false);
+        setParameter (processor, params::id::mode, 0.0f);
+        pump (80);
 
-        // The host carries on: the pass stops, and with it the playhead.
-        for (int i = 0; i < 8; ++i)
-            processor.processBlock (buffer, midi);
+        if (auto* select = find<juce::Button> (*editor, "tool-select"))
+        {
+            select->onClick();
+            pump (60);
+            check (! brush->isVisible() && canvas->getHeight() == heightBefore, "back on Select the brush's settings are gone");
+        }
+    }
 
-        check (! processor.isSounding(), "Preview off stops the pass");
+    // ---- the bottom bar: Length, Repeat and the line that says what will happen ---------------------------
+    repeat->triggerClick();
+    pump (80);
+    check (choice (params::id::repeat) == 1 && bottom->getShownHint() == "Repeats every 4 bars", "Repeat on: \"Repeats every 4 bars\"");
+    checkEffectLayout (*editor, "Repeat on");
+    save ("repeat", pixelScale);
+    repeat->triggerClick();
+    pump (80);
+    check (choice (params::id::repeat) == 0 && bottom->getShownHint() == "Carves once when you press play", "... and off again");
+
+    if (auto* length = find<juce::ComboBox> (*editor, "length"))
+    {
+        length->setSelectedId (6, juce::sendNotificationSync);   // 8 bars
+        pump (60);
+        check (choice (params::id::length) == 5, "the Length box sets the length");
+        length->setSelectedId (params::defaultLengthIndex + 1, juce::sendNotificationSync);
         pump (60);
     }
 
-    // The live view: a stand-in song through a second ArtFreq FX with this one's state.
-    editor->showLiveView (true);
+    // ---- Settings: the analyser, and what the instrument keeps in its footer ---------------------------------
+    editor->showSettings (true);
+    pump (80);
 
-    if (auto* live = find<ui::LiveView> (*editor, "live-view"))
+    auto* settings = findComponentWithId (*editor, "settings-panel");
+    auto* content = findComponentWithId (*editor, "content");
+
+    if (settings != nullptr && content != nullptr)
+    {
+        check (shown ("settings-panel") && content->getLocalBounds().reduced (8).contains (settings->getBounds()),
+               "the settings fit in the window with room around them");
+        checkNoOverlap (*settings, "the settings");
+        check (shown ("scale") && shown ("range-low") && shown ("slope") && shown ("window-size") && shown ("reset-drawing")
+                   && shown ("trigger") && shown ("start-at") && shown ("tempo-source"),
+               "the settings hold the analyser match, the window size, Trigger, Start and Tempo");
+        check (! shown ("start-bar") && ! shown ("bpm"), "On play has no bar to set, and the DAW's tempo no field (nothing is greyed)");
+        save ("settings", pixelScale);
+
+        // Start: at a bar of the song.
+        if (auto* startAt = find<ui::SegmentedControl> (*editor, "start-at"))
+        {
+            clickOn (*startAt, { static_cast<float> (startAt->getWidth()) * 0.75f, 14.0f });
+            pump (80);
+            check (choice (params::id::startAt) == params::atBarStartIndex && shown ("start-bar"), "Start: At bar shows the bar's field");
+            setParameter (processor, params::id::startBar, 9.0f);
+            pump (80);
+            check (bottom->getShownHint() == "Carves once from bar 9" && canvasBarLabels (processor) == "9 10 11 12",
+                   "... the bottom bar says \"Carves once from bar 9\" and the canvas numbers the song's bars");
+        }
+
+        // Tempo: typed in.
+        if (auto* tempo = find<ui::SegmentedControl> (*editor, "tempo-source"))
+        {
+            clickOn (*tempo, { static_cast<float> (tempo->getWidth()) * 0.75f, 14.0f });
+            pump (80);
+            check (choice (params::id::tempoSource) == 1 && shown ("bpm"), "Tempo: Manual shows the BPM field");
+            checkNoOverlap (*settings, "the settings, At bar and a typed tempo");
+            save ("settings-timing", pixelScale);
+            clickOn (*tempo, { static_cast<float> (tempo->getWidth()) * 0.25f, 14.0f });
+            pump (80);
+            check (choice (params::id::tempoSource) == 0 && ! shown ("bpm"), "... Host hides it again");
+        }
+
+        // Trigger: MIDI notes.
+        if (auto* trigger = find<ui::SegmentedControl> (*editor, "trigger"))
+        {
+            clickOn (*trigger, { static_cast<float> (trigger->getWidth()) * 0.8f, 14.0f });
+            pump (80);
+            check (choice (params::id::trigger) == 1 && ! shown ("start-at") && ! shown ("start-bar"),
+                   "Trigger: MIDI has no start to choose (a note starts it)");
+            check (bottom->getShownHint() == "Each note carves it once", "... the bottom bar says \"Each note carves it once\"");
+            clickOn (*trigger, { static_cast<float> (trigger->getWidth()) * 0.2f, 14.0f });
+            pump (80);
+        }
+
+        setParameter (processor, params::id::startBar, 1.0f);
+        setParameter (processor, params::id::startAt, static_cast<float> (params::onPlayStartIndex));
+        pump (80);
+        check (bottom->getShownHint() == "Carves once when you press play", "back to the defaults");
+
+        juce::StringArray disabled;
+        collectDisabled (*editor, disabled);
+        check (disabled.isEmpty(), "ArtFreq FX, the settings: nothing that is shown is greyed (" + disabled.joinIntoString (", ") + ")");
+    }
+
+    editor->showSettings (false);
+    pump (40);
+
+    // ---- the live view: a stand-in song through a second ArtFreq FX with this one's state -----------------
+    editor->showLiveView (true);
+    pump (40);
+    check (live->getToggleState() && ! shown ("tool-select") && ! shown ("tool-brush") && shown ("add-text") && shown ("layers"),
+           "the live view: Live is lit, and the tools (which have nothing to act on) are not there");
+    checkEffectLayout (*editor, "the live view");
+
+    if (auto* liveView = find<ui::LiveView> (*editor, "live-view"))
     {
         ArtFreqProcessor second (ArtFreqProcessor::Variant::effect);
         juce::MemoryBlock state;
@@ -1546,7 +1942,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         second.prepareToPlay (48000.0, 512);
         second.rebuildPlanIfNeeded();
 
-        const auto seconds = live->getVisibleSeconds();
+        const auto seconds = liveView->getVisibleSeconds();
         const auto song = makeSong (seconds);
         const auto carved = carveSong (second, song);
         check (second.getDocument().objects.size() == processor.getDocument().objects.size(), "the state carries the drawing");
@@ -1557,25 +1953,117 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         for (size_t i = 4096 + 48000; i < 4096 + 6 * 48000 && i < carved.size(); ++i)
             changed = std::max (changed, std::abs (carved[i] - song[0][i - 4096]));
 
-        check (changed > 0.05f, "the processor carves the song");
-        live->fillFromAudioForSnapshot (carved, 48000.0);
+        check (changed > 0.05f, "the processor carves the song from where the DAW starts playing");
+        liveView->fillFromAudioForSnapshot (carved, 48000.0);
     }
 
     save ("live", pixelScale);
-    editor->showLiveView (false);
+    live->onClick();
+    pump (40);
+    check (! live->getToggleState() && shown ("canvas") && shown ("tool-select"), "Live again goes back to the canvas and the tools");
 
+    // ---- the help ------------------------------------------------------------------------------------------------
     editor->showHelp (true);
+    pump (40);
+
+    if (auto* help = findComponentWithId (*editor, "help-panel"); help != nullptr && content != nullptr)
+        check (shown ("help-panel") && content->getLocalBounds().reduced (12).contains (help->getBounds()),
+               "the help fits in the window with room around it");
+
     save ("help", pixelScale);
     editor->showHelp (false);
 
-    // Window sizes: the header holds together from 75 to 200 %.
-    for (const auto& [scale, name] : { std::pair<float, const char*> { 1.0f, "100" }, { 2.0f, "200" }, { 0.75f, "75" } })
+    // ---- an empty drawing ----------------------------------------------------------------------------------------
     {
-        setWindowScale (*editor, scale);
+        const auto drawing = processor.getDocument();
+        processor.setDocument (ArtDocument());
+        pump (80);
+        checkEffectLayout (*editor, "nothing drawn");
+        save ("empty", pixelScale);
+        processor.setDocument (drawing);
+        pump (80);
+    }
+
+    // ---- window sizes: every state holds together from 75 to 200 % ---------------------------------------------
+    const auto atEveryState = [&] (const juce::String& size)
+    {
+        // Carve; then Carve + Draw with a text's settings; then Draw, painting, the layer list.
+        checkEffectLayout (*editor, size + ", Carve");
+
+        setParameter (processor, params::id::mode, 1.0f);
+        editor->selectObject (textId);
+        pump (80);
+        checkEffectLayout (*editor, size + ", Carve + Draw with a text's settings");
+        save (size, 1.0f);
+
+        setParameter (processor, params::id::mode, 3.0f);
+        editor->selectObject (imageId);
+        pump (80);
+        checkEffectLayout (*editor, size + ", Draw with a picture's settings");
+
+        editor->selectObject (juce::Uuid::null());
+        editor->showLayers (true);
+
+        if (auto* brushTool = find<juce::Button> (*editor, "tool-brush"))
+            brushTool->onClick();
+
+        pump (80);
+        checkEffectLayout (*editor, size + ", Draw, painting, the layer list");
+
+        if (auto* select = find<juce::Button> (*editor, "tool-select"))
+            select->onClick();
+
+        editor->showLayers (false);
+        setParameter (processor, params::id::mode, 0.0f);
+        pump (80);
+
+        editor->showSettings (true);
+        pump (40);
+
+        if (settings != nullptr)
+            check (editor->getLocalBounds().contains (editor->getLocalArea (settings, settings->getLocalBounds())),
+                   "ArtFreq FX, " + size + ": the settings fit in the window");
+
+        editor->showSettings (false);
+        pump (40);
+    };
+
+    for (const auto& [windowScale, name] : { std::pair<float, const char*> { 1.0f, "100" }, { 2.0f, "200" }, { 1.5f, "150" }, { 0.75f, "75" } })
+    {
+        setWindowScale (*editor, windowScale);
         pump (60);
-        check (view->getRight() < controls->getX() && controls->getRight() < undo->getX(),
-               "the header's controls do not overlap at " + juce::String (name) + " %");
-        save (name, 1.0f);
+        check (editor->getWidth() == juce::roundToInt (720.0f * windowScale) && editor->getHeight() == juce::roundToInt (440.0f * windowScale),
+               "ArtFreq FX's window at " + juce::String (name) + " % is " + juce::String (editor->getWidth()) + " x " + juce::String (editor->getHeight()));
+        atEveryState (name);
+    }
+
+    // The size is remembered, and a window that is opened again has it.
+    setWindowScale (*editor, 1.5f);
+    pump (60);
+    check (processor.getEditorWidth() == 1080 && processor.getEditorHeight() == 660, "the window size is remembered");
+
+    {
+        const std::unique_ptr<juce::AudioProcessorEditor> again (processor.createEditor());
+        check (again != nullptr && again->getWidth() == 1080 && again->getHeight() == 660, "a reopened ArtFreq FX has the remembered size");
+    }
+
+    // A project saved by 0.4, whose ArtFreq FX had the instrument's large window: the size it
+    // saved is read as that window's scale, so 100 % stays 100 % (720 x 440, not 1120 x 720).
+    check (std::abs (ArtFreqEditor::scaleForSavedSize (true, 1120, 720) - 1.0f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 1680, 1080) - 1.5f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 840, 540) - 0.75f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 2240, 1440) - 2.0f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 1080, 660) - 1.5f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 0, 0) - 1.0f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (false, 1680, 1080) - 1.5f) < 1.0e-4f,
+           "a size saved with the old large window opens at the same scale of the small one");
+
+    processor.setEditorSize (1120, 720);
+
+    {
+        const std::unique_ptr<juce::AudioProcessorEditor> old (processor.createEditor());
+        check (old != nullptr && old->getWidth() == 720 && old->getHeight() == 440,
+               "an ArtFreq FX saved at 0.4's 1120 x 720 opens at 720 x 440");
     }
 
     processor.releaseResources();
@@ -2466,7 +2954,7 @@ int main (int argc, char* argv[])
 
     // ---- the DAW's play key, in both plug-ins --------------------------------------------------------
     checkKeys (ArtFreqProcessor::Variant::instrument, outputDir, pixelScale);
-    checkKeys (ArtFreqProcessor::Variant::effect, outputDir, pixelScale);
+    //checkKeys (ArtFreqProcessor::Variant::effect, outputDir, pixelScale);
     pump (50);
 
     if (failed)

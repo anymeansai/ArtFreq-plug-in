@@ -394,6 +394,12 @@ namespace icons
     {
         return stroked ("M9.5 6 L15.5 12 L9.5 18");
     }
+
+    juce::Path layers()
+    {
+        // Three sheets, one over the other.
+        return stroked ("M12 3.5 L21 8.5 L12 13.5 L3 8.5 Z M3.5 12.5 L12 17.2 L20.5 12.5 M3.5 16.3 L12 21 L20.5 16.3");
+    }
 } // namespace icons
 
 //==============================================================================

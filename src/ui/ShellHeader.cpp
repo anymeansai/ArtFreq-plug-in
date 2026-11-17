@@ -10,9 +10,7 @@ namespace
     constexpr int logoSize = 24;
     constexpr int switchWidth = 168;
     constexpr int buttonGap = 4;
-    constexpr int effectGap = 24;   // ArtFreq FX: around Canvas | Live and the effect's controls
     constexpr const char* wordmark = "ArtFreq";
-    constexpr const char* effectMark = "FX";
     constexpr const char* byline = "by AnyMeans";
 
     juce::Font wordmarkFont()   { return fonts::ui (theme::wordmarkSize, fonts::UiWeight::semiBold); }
@@ -35,12 +33,11 @@ juce::String shortcutText (const juce::String& keys)
    #endif
 }
 
-Header::Header (bool forEffect)
+Header::Header()
     : undoButton ("Undo", icons::undo()),
       redoButton ("Redo", icons::redo()),
       helpButton ("Help", icons::help()),
-      settingsButton ("Settings", icons::gear()),
-      effect (forEffect)
+      settingsButton ("Settings", icons::gear())
 {
     setOpaque (true);
 
@@ -50,7 +47,7 @@ Header::Header (bool forEffect)
 
     undoButton.setTooltip ("Undo  " + shortcutText ("Cmd+Z"));
     redoButton.setTooltip ("Redo  " + shortcutText ("Cmd+Shift+Z"));
-    helpButton.setTooltip (effect ? "How ArtFreq FX works" : "How ArtFreq works");
+    helpButton.setTooltip ("How ArtFreq works");
     settingsButton.setTooltip ("Settings: match your analyser, window size");
 
     undoButton.setComponentID ("undo");
@@ -67,31 +64,6 @@ Header::Header (bool forEffect)
     addAndMakeVisible (viewSwitch);
 }
 
-void Header::setEffectControls (juce::Component* controls, int idealWidth)
-{
-    if (effectControls != nullptr)
-        removeChildComponent (effectControls);
-
-    effectControls = controls;
-    effectControlsWidth = idealWidth;
-
-    if (effectControls != nullptr)
-        addAndMakeVisible (effectControls);
-
-    resized();
-}
-
-int Header::bylineRight() const
-{
-    // Where paint() ends the byline.
-    auto x = logoArea.getRight() + 10 + textWidth (wordmarkFont(), wordmark);
-
-    if (effect)
-        x += 5 + textWidth (wordmarkFont(), effectMark);
-
-    return x + 8 + textWidth (bylineFont(), byline);
-}
-
 void Header::paint (juce::Graphics& g)
 {
     g.fillAll (theme::panel);
@@ -100,7 +72,6 @@ void Header::paint (juce::Graphics& g)
     drawLogo (g, logoArea);
 
     // Wordmark and byline share a baseline, centred on the bar by the wordmark's cap height.
-    // The effect's "FX" is in the playing colour: the same plug-in, the other way round.
     const auto baseline = getHeight() / 2 + 7;
     auto x = logoArea.getRight() + 10;
 
@@ -108,14 +79,6 @@ void Header::paint (juce::Graphics& g)
     g.setFont (wordmarkFont());
     g.drawSingleLineText (wordmark, x, baseline);
     x += textWidth (wordmarkFont(), wordmark);
-
-    if (effect)
-    {
-        x += 5;
-        g.setColour (theme::accent2);
-        g.drawSingleLineText (effectMark, x, baseline);
-        x += textWidth (wordmarkFont(), effectMark);
-    }
 
     g.setColour (theme::textDim);
     g.setFont (bylineFont());
@@ -136,11 +99,6 @@ void Header::resized()
     viewSwitch.setBounds ((getWidth() - switchWidth) / 2, centreY - metrics::controlHeight / 2,
                           switchWidth, metrics::controlHeight);
 
-    // ArtFreq FX: Canvas | Live beside the wordmark, the effect's controls after it (laid out
-    // below, once the buttons they end before are placed).
-    if (effectControls != nullptr)
-        viewSwitch.setTopLeftPosition (bylineRight() + effectGap, viewSwitch.getY());
-
     // The icons sit inside their buttons: the buttons overhang the margin a little so the icons
     // line up with it optically.
     const auto right = getWidth() - pad + 4;
@@ -152,15 +110,6 @@ void Header::resized()
     dividerX = helpButton.getX() - 12;
     redoButton.setBounds (dividerX - 11 - button, buttonY, button, button);
     undoButton.setBounds (redoButton.getX() - buttonGap - button, buttonY, button, button);
-
-    if (effectControls != nullptr)
-    {
-        // Centred between Canvas | Live and undo, as far as it fits.
-        const auto from = viewSwitch.getRight() + effectGap;
-        const auto to = undoButton.getX() - effectGap;
-        const auto x = juce::jmax (from, (from + to - effectControlsWidth) / 2);
-        effectControls->setBounds (x, 0, juce::jmin (effectControlsWidth, to - x), getHeight());
-    }
 }
 
 } // namespace artfreq::ui::shell
