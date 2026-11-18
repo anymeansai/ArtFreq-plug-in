@@ -543,10 +543,12 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
   |   SOUND  LEVEL [-6.0 dB]  DENSITY [256 lines]  CONTRAST [40 dB]  LOWS [Smooth|Stripes] |
   +--------------------------------------------------------------+-----------------+
   | Hz axis | CANVAS, or the live view                           | Drawer 248,     |
-  |         |                                                    | over the canvas:|
-  |         | time axis                                          | layers / object |
-  +--------------------------------------------------------------+-----------------+
-  | Brush strip 32, Brush and Erase only: BRUSH  SIZE --o--  SOFT --o--  STRENGTH --o-- |
+  |         |                                                    | over the canvas |
+  |         |                                                    | (a wide object: |
+  |         |                                                    | beside it):     |
+  |         | time axis, and over it, Brush and Erase only:      | layers / object |
+  +---------+----------------------------------------------------+-----------------+
+  | Brush strip 32: BRUSH  SIZE --o--  SOFT --o--  STRENGTH --o--                  |
   +--------------------------------------------------------------------------------+
   | Bottom bar 40: [Select|Brush|Erase] [+ Text] [+ Image] [Layers]                |
   |                          Carves once when you press play  [4 bars v] [Repeat]  |
@@ -567,11 +569,16 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     the drawing's sines, in the two modes that play them (Carve + Draw and Draw). In Carve and
     Stencil it is not there and the canvas has its room. A strip rather than a popover: these
     are turned while watching the canvas, which a popover would cover, and a strip shows at a
-    glance that the mode has a sound to set.
+    glance that the mode has a sound to set. It is the one thing that changes the canvas's
+    height, with the mode, which redraws the whole canvas anyway (carved shapes become drawn
+    ones); reserving its room in Carve would leave an empty band in the mode most use.
   - **Canvas** (`ui/EffectPreview.h`): the effect needs a song the canvas does not have, so a
     stand-in is drawn under the drawing: a texture with a song's shape (falling towards the highs,
     -22 to -40 dB of the 60 dB colour window, sixteen beats of kick in the lows and hats in the
-    highs, held chords, grain on a fixed grid so resizing does not shimmer), carved by the
+    highs, held chords, grain on a fixed grid so resizing does not shimmer; worked out once at
+    768 x 384 and resampled to the canvas's size: worked out pixel by pixel at that size, it cost
+    47 / 99 / 179 ms at a new size on a 2x display at window 100 / 150 / 200 %, the most of a
+    corner drag, now 10 / 17 / 37 ms for the whole canvas), carved by the
     processor's own masks as deep as Depth: Carve, dark shapes; Stencil, the shapes filled with the
     stand-in on black; Carve + Draw, the sines' picture (the instrument's canvas, as levels) in a
     hole carved with the halo masks; Draw, the sines over the stand-in. Nothing drawn: the
@@ -602,8 +609,13 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     where the sentence does not fit it is said in fewer words ("Carves once on play", "Once per
     note", "Loops with a held note", "Waiting for audio", "Loop shows 2 of 4 bars"). It is words
     only; where a single pass starts is chosen in Settings.
-  - **Brush strip** (`BrushStrip`, 32 px, over the bottom bar): Size, Soft and Strength, while
-    the Brush or the Eraser is the tool and the canvas is shown. Its title names the tool.
+  - **Brush strip** (`BrushStrip`, 32 px, on the bottom bar): Size, Soft and Strength, while
+    the Brush or the Eraser is the tool and the canvas is shown. Its title names the tool. It
+    lies over the canvas's foot, its time axis: the canvas keeps that room under the drawing
+    always (and 6 px more, for the lowest Hz label, which is centred on the drawing's edge), so
+    B, E and V never resize the canvas. (When the strip took its room from the canvas, pressing B
+    squashed the drawing by 32 px and moved it under the brush just as painting began, and
+    redrew the canvas at the new size: 48 - 209 ms on a Retina display.)
   - **Drawer**: the inspector (`ui/Inspector.h`, its compact layout: 248 px wide, captions beside
     their controls, the selected object's frequencies under its Band, a bin for Delete, a close
     button) laid over one side of the canvas, between the bars and strips, with a soft shadow on
@@ -611,11 +623,23 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     button is on (the list), and gone otherwise. What the bars and strips hold is left out of
     it: Add text, Add image, the brush, Lows, the Keys.
     - It opens on the right. An object's settings open on the left instead if on the right they
-      would cover the object's middle or the spot that was just clicked on the canvas: the
-      object stays in view while its settings change it, the handles by the click stay free,
+      would cover any of the object (its handles included) or the spot that was just clicked on
+      the canvas: the object stays in view while its settings change it, its handles stay free,
       and the drawer never opens under the mouse, where the second click of a double-click
       would land on one of its controls. After a drag it moves aside if the object went under
       it (never to under the mouse). The layer list stays where it is while it is used.
+    - **An object too wide for either side** (more than about two thirds of the canvas: a new
+      text, which runs from 4 to 96 % of the length, Fill length, a new window's "ArtFreq") gets
+      its settings beside the canvas instead of over it: the canvas moves aside, narrower, on the
+      side away from the click, so all of the object and its handles stay in view (on the right
+      the drawer covered 35 % of the canvas: the end of the text being typed, and the handles
+      that resize it, were under it until it was closed). Not while the canvas is pressed (a
+      drag would lose the object under the mouse): on the release. The canvas stays beside the
+      drawer while that object's settings stay open, and an object that grows too wide while
+      they are (Fill length) moves it aside too; it comes back with the list, another object or
+      the drawer closing. Narrower objects keep the drawer over the canvas: the drawing does not
+      move for them. The snapshot tool checks, in every state with an object's settings open,
+      that the object and its handles are clear of the drawer.
     - Closing: the close button puts it away and keeps the selection (a click on the selected
       object brings its settings back); Esc or a click on empty canvas deselects, and the
       settings go with the selection; with nothing selected, Esc or the Layers button closes
@@ -915,6 +939,15 @@ the focus and counts as used); or a component is modal (JUCE then swallows every
   DAWs on macOS. A host decides what it does with a key that comes back to it (the usual thing
   is to act as if its own window had the keyboard), and a host that keeps the keyboard to itself,
   or eats the space bar before the plug-in's window sees it, never asks.
+- **Windows** is not the Mac with another installer. There JUCE posts a key nothing used to the
+  host's parent window (`juce_Windowing_windows.cpp`, `forwardMessageToParent`, a `PostMessage`
+  of WM_KEYDOWN / WM_CHAR) rather than handing it to the superclass in the same call: whether a
+  host acts on a posted key is the host's business, and nothing here tests it. Before a Windows
+  build is said to behave as the Mac's, the space bar must be tried in the DAWs it is for
+  (Ableton Live, FL Studio, Cubase, Reaper). Other differences: pictures (PNG, JPEG and GIF only;
+  macOS decodes the rest), the carver's FFT (JUCE's portable one without IPP, several times
+  slower than vDSP: see "Work per audio callback"), and the packaging. The Windows branch
+  (`win`) was cut before On play, these keys and ArtFreq FX's own window, and has none of them.
 
 `KeyFocusTests.cpp` and the snapshot tool drive this through the real path: the editor in a
 window on a (virtual) display, clicks through `ComponentPeer::handleMouseEvent`, keys through

@@ -16,6 +16,7 @@
 #include "PluginProcessor.h"
 #include "ui/Actions.h"
 #include "ui/CanvasPlanImage.h"
+#include "ui/CanvasView.h"
 #include "ui/Editor.h"
 #include "ui/EffectPreview.h"
 #include "ui/EffectShell.h"
@@ -272,8 +273,12 @@ ARTFREQ_TEST (uiEffectShowsOnlyWhatAppliesAndGreysNothing)
     brushTool->onClick();
     pump (60);
     CHECK (strip->isVisible() && isShown (*editor, "brush-size") && isShown (*editor, "brush-softness") && isShown (*editor, "brush-strength"));
-    CHECK (childrenAreApart (*strip) && canvas->getBottom() <= strip->getY());
-    CHECK (canvas->getHeight() == fullHeight - ui::shell::effectMetrics::stripHeight);
+    // It lies over the canvas's time axis, clear of the drawing: choosing a tool never resizes
+    // the canvas, so the drawing does not move under the brush.
+    auto* canvasView = dynamic_cast<ui::CanvasView*> (canvas);
+    CHECK (childrenAreApart (*strip) && canvasView != nullptr
+           && static_cast<float> (strip->getY()) >= static_cast<float> (canvas->getY()) + canvasView->getDrawingArea().getBottom());
+    CHECK (canvas->getHeight() == fullHeight);
     CHECK (nothingGreyed());
 
     // The live view has no use for the tools or the brush's settings: they are not there.
@@ -568,6 +573,81 @@ ARTFREQ_TEST (uiEffectDrawerOpensForLayersAndObjects)
     pump (120);
     CHECK (isShown (*editor, "sound-strip") && isShown (*editor, "brush-strip") && editor->isDrawerOpen());
     CHECK (drawer->getHeight() >= ui::Inspector::compactMinimumHeight);
+}
+
+ARTFREQ_TEST (uiEffectDrawerKeepsWideObjectsInView)
+{
+    // An object wider than the room beside the drawer (a new text runs from 4 to 96 % of the
+    // length; so do Fill length and a new window's "ArtFreq"): its settings open beside the
+    // canvas, which moves aside, so all of it and its handles stay in view. Over the canvas, the
+    // drawer hid the right third of it (the end of the text being typed, its right handles).
+    auto effect = makeProcessor (ArtFreqProcessor::Variant::effect);
+
+    ArtDocument document;
+    auto wide = ArtDocument::makeTextObject ("HELLO WORLD", 300.0f, 3000.0f);
+    wide.startTime = 0.04f;
+    wide.endTime = 0.96f;
+    auto narrow = ArtDocument::makeTextObject ("HI", 3500.0f, 16000.0f);
+    narrow.startTime = 0.1f;
+    narrow.endTime = 0.4f;
+    document.objects.push_back (wide);
+    document.objects.push_back (narrow);
+    effect->setDocument (document);
+
+    auto editor = makeEditor (*effect);
+    pump (80);
+
+    auto* drawer = findComponent (*editor, "inspector");
+    auto* canvas = dynamic_cast<ui::CanvasView*> (findComponent (*editor, "canvas"));
+    auto* fill = dynamic_cast<juce::Button*> (findComponent (*editor, "inspector-fill"));
+
+    if (drawer == nullptr || canvas == nullptr || fill == nullptr)
+    {
+        CHECK (false);
+        return;
+    }
+
+    const auto fullWidth = canvas->getWidth();
+
+    const auto inView = [&] (const juce::Uuid& id)
+    {
+        const auto object = canvas->getObjectBounds (id) + canvas->getPosition().toFloat();
+        const auto area = canvas->getDrawingArea() + canvas->getPosition().toFloat();
+        return ! object.isEmpty() && ! object.intersects (drawer->getBounds().toFloat())
+            && object.getX() >= area.getX() - 6.0f && object.getRight() <= area.getRight() + 6.0f;
+    };
+
+    // The wide one: the canvas beside the drawer, the whole object in view.
+    editor->selectObject (wide.id);
+    pump (60);
+    CHECK (editor->isDrawerOpen() && canvas->getWidth() < fullWidth - 200);
+    CHECK (canvas->getRight() <= drawer->getX() || canvas->getX() >= drawer->getRight());
+    CHECK (inView (wide.id));
+
+    // A narrow one: the drawer over the canvas again (its drawing does not move for it).
+    editor->selectObject (narrow.id);
+    pump (60);
+    CHECK (editor->isDrawerOpen() && canvas->getWidth() == fullWidth && inView (narrow.id));
+
+    // Fill length makes it too wide for either side: the canvas moves aside, under the mouse's
+    // feet as it were, but the drawer (where the mouse is) stays where it was.
+    const auto drawerBefore = drawer->getBounds();
+    fill->triggerClick();
+    pump (80);
+    CHECK (effect->getDocument().find (narrow.id)->endTime > 0.9f);
+    CHECK (drawer->getBounds() == drawerBefore && canvas->getWidth() < fullWidth - 200 && inView (narrow.id));
+
+    // The settings closed (Esc, the close button, deselecting): the canvas has the width again.
+    editor->selectObject (juce::Uuid::null());
+    pump (60);
+    CHECK (! editor->isDrawerOpen() && canvas->getWidth() == fullWidth);
+
+    // The layer list lies over the canvas, whatever is selected in it.
+    editor->selectObject (wide.id);
+    pump (60);
+    editor->showLayers (true);
+    pump (60);
+    CHECK (editor->isLayerListShown() && canvas->getWidth() == fullWidth);
 }
 
 ARTFREQ_TEST (uiEffectSettingsHoldTheTiming)

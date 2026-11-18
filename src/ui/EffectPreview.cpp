@@ -82,6 +82,54 @@ float EffectPreviewImage::songDb (double x, double y) noexcept
     return static_cast<float> (std::min (0.0, db));
 }
 
+namespace
+{
+    /** The stand-in is worked out once, at this size, and resampled to whatever size the canvas
+        has. Worked out pixel by pixel at the canvas's size it cost 50 to 200 ms on a Retina
+        display whenever that size changed (every step of a corner drag), most of the canvas's
+        cost. Its finest details are a few texels wide here: a hat (a 1/18 beat) 2.7, a held
+        note (1 % of the height) 3.8, the grain's grid (192 x 128) 4 and 3. */
+    constexpr int baseWidth = 768, baseHeight = 384;
+
+    /** The stand-in at baseWidth x baseHeight, as colour-map levels (row 0 at the top). */
+    const std::vector<float>& baseTexture()
+    {
+        static const auto base = []
+        {
+            std::vector<float> t (static_cast<size_t> (baseWidth) * static_cast<size_t> (baseHeight));
+
+            for (int y = 0; y < baseHeight; ++y)
+            {
+                const auto up = 1.0 - (y + 0.5) / baseHeight;
+
+                for (int x = 0; x < baseWidth; ++x)
+                    t[static_cast<size_t> (y) * static_cast<size_t> (baseWidth) + static_cast<size_t> (x)]
+                        = (CanvasPlanImage::windowDb + EffectPreviewImage::songDb ((x + 0.5) / baseWidth, up)) * levelsPerDb;
+            }
+
+            return t;
+        }();
+
+        return base;
+    }
+
+    /** For each of `size` pixels, the texel before its centre (of `baseSize`) and how far on to
+        the next it lies, for a linear resample with the texels' centres where they were sampled. */
+    void resampleSteps (int size, int baseSize, std::vector<int>& index, std::vector<float>& fraction)
+    {
+        index.resize (static_cast<size_t> (size));
+        fraction.resize (static_cast<size_t> (size));
+
+        for (int i = 0; i < size; ++i)
+        {
+            const auto at = (i + 0.5) * baseSize / size - 0.5;
+            const auto before = juce::jlimit (0, baseSize - 2, static_cast<int> (std::floor (at)));
+            index[static_cast<size_t> (i)] = before;
+            fraction[static_cast<size_t> (i)] = static_cast<float> (juce::jlimit (0.0, 1.0, at - before));
+        }
+    }
+} // namespace
+
 void EffectPreviewImage::makeTexture (int width, int height)
 {
     if (width == textureWidth && height == textureHeight)
@@ -91,14 +139,26 @@ void EffectPreviewImage::makeTexture (int width, int height)
     textureHeight = height;
     texture.resize (static_cast<size_t> (width) * static_cast<size_t> (height));
 
+    const auto& base = baseTexture();
+    std::vector<int> columns, rows;
+    std::vector<float> columnFractions, rowFractions;
+    resampleSteps (width, baseWidth, columns, columnFractions);
+    resampleSteps (height, baseHeight, rows, rowFractions);
+
     for (int y = 0; y < height; ++y)
     {
-        const auto up = 1.0 - (y + 0.5) / height;
+        const auto* above = base.data() + static_cast<size_t> (rows[static_cast<size_t> (y)]) * static_cast<size_t> (baseWidth);
+        const auto* below = above + baseWidth;
+        const auto fy = rowFractions[static_cast<size_t> (y)];
+        auto* out = texture.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
 
         for (int x = 0; x < width; ++x)
         {
-            const auto level = (CanvasPlanImage::windowDb + songDb ((x + 0.5) / width, up)) * levelsPerDb;
-            texture[static_cast<size_t> (y) * static_cast<size_t> (width) + static_cast<size_t> (x)] = level;
+            const auto i = static_cast<size_t> (columns[static_cast<size_t> (x)]);
+            const auto fx = columnFractions[static_cast<size_t> (x)];
+            const auto top = above[i] + (above[i + 1] - above[i]) * fx;
+            const auto bottom = below[i] + (below[i + 1] - below[i]) * fx;
+            out[x] = top + (bottom - top) * fy;
         }
     }
 }

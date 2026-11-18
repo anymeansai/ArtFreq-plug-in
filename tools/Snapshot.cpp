@@ -47,6 +47,8 @@
 // and for ArtFreq FX (the effect variant: a small window of its own, 720 x 440)
 //
 //   artfreq-fx-default.png        a fresh ArtFreq FX (Carve: the default drawing dark in the song)
+//   artfreq-fx-wide-selected.png  its "ArtFreq" (4 - 96 %) selected: the canvas beside the drawer
+//   artfreq-fx-new-text.png       + Text, "HELLO WORLD" typed: all of it in view while it is typed
 //   artfreq-fx-carve.png          the rich drawing in Carve: dark shapes on the stand-in song
 //   artfreq-fx-carve-draw.png     Carve + Draw: the sines bright in a hole a little wider than
 //                                 them; the Sound strip under the top bar
@@ -1448,18 +1450,19 @@ void checkEffectLayout (artfreq::ArtFreqEditor& editor, const juce::String& stat
         return;
     }
 
-    // From top to bottom, without a gap or an overlap.
+    // From top to bottom, without a gap or an overlap. (The Brush strip lies over the canvas's
+    // foot: see below.)
     auto* view = canvas->isVisible() ? canvas : live;
     auto y = 0;
     juce::StringArray problems;
 
-    for (auto* part : { top, sound, view, brush, static_cast<juce::Component*> (bottom) })
+    for (auto* part : { top, sound, view, static_cast<juce::Component*> (bottom) })
     {
         if (! part->isVisible())
             continue;
 
         // (The canvas keeps a few pixels of air around it.)
-        const auto air = part == view || y == view->getBottom() ? 12 : 0;
+        const auto air = part == view || y == view->getBottom() ? 16 : 0;
 
         if (part->getY() < y || part->getY() > y + air || part->getX() < 0 || part->getRight() > content->getWidth())
             problems.add (nameOf (*part) + " at " + part->getBounds().toString());
@@ -1470,6 +1473,32 @@ void checkEffectLayout (artfreq::ArtFreqEditor& editor, const juce::String& stat
     check (problems.isEmpty() && bottom->getBottom() == content->getHeight() && view->getHeight() >= 200,
            "ArtFreq FX, " + state + ": the bars, the strips and the canvas share the window"
                + (problems.isEmpty() ? juce::String() : " (" + problems.joinIntoString ("; ") + ")"));
+
+    auto* canvasView = dynamic_cast<ui::CanvasView*> (canvas);
+
+    // The Brush strip over the canvas's time axis, from edge to edge, on the bottom bar, clear of
+    // the drawing (so a tool never resizes the canvas).
+    if (brush->isVisible() && canvasView != nullptr)
+    {
+        const auto drawing = canvasView->getDrawingArea() + canvas->getPosition().toFloat();
+        check (canvas->isVisible() && brush->getBottom() == bottom->getY() && brush->getX() == 0 && brush->getRight() == content->getWidth()
+                   && static_cast<float> (brush->getY()) >= drawing.getBottom() && canvas->getBottom() <= bottom->getY(),
+               "ArtFreq FX, " + state + ": the Brush strip lies over the canvas's time axis, clear of the drawing");
+    }
+
+    // An object's settings in the drawer: the object and its handles are in view, none of them
+    // under the drawer (a wide one moves the canvas aside).
+    if (drawer->isVisible() && ! editor.isLayerListShown() && ! editor.getSelectedObject().isNull() && canvas->isVisible()
+        && canvasView != nullptr)
+    {
+        const auto object = canvasView->getObjectBounds (editor.getSelectedObject()) + canvas->getPosition().toFloat();
+        const auto drawing = canvasView->getDrawingArea() + canvas->getPosition().toFloat();
+        const auto reach = ui::CanvasView::handleReach + 1.0f;
+        check (! object.isEmpty() && ! object.intersects (drawer->getBounds().toFloat())
+                   && object.getX() >= drawing.getX() - reach && object.getRight() <= drawing.getRight() + reach,
+               "ArtFreq FX, " + state + ": the selected object and its handles are in view, clear of the drawer (object "
+                   + object.toNearestInt().toString() + ", drawer " + drawer->getBounds().toString() + ")");
+    }
 
     for (auto* part : { top, controls, sound, brush, static_cast<juce::Component*> (bottom) })
         if (part->isVisible())
@@ -1596,6 +1625,45 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
     checkEffectLayout (*editor, "a new window");
     save ("default", pixelScale);
+
+    // ---- wide objects: the canvas moves aside for the drawer, so all of them stays in view -------
+    {
+        const auto canvasWidth = canvas->getWidth();
+        const auto defaultText = processor.getDocument().objects.front().id;
+        editor->selectObject (defaultText);
+        pump (60);
+        check (editor->isDrawerOpen() && canvas->getWidth() < canvasWidth - 200 && canvas->getRight() <= drawer->getX(),
+               "the default drawing's \"ArtFreq\" (4 - 96 %) selected: the canvas lies beside the drawer, not under it");
+        checkEffectLayout (*editor, "the default text selected");
+        save ("wide-selected", pixelScale);
+
+        // + Text: across the length in a free band, typed into at once. What is typed stays in view.
+        if (auto* add = find<juce::Button> (*editor, "add-text"))
+            add->triggerClick();
+
+        pump (80);
+
+        if (auto* field = find<juce::TextEditor> (*editor, "inspector-text"))
+        {
+            field->selectAll();
+            field->insertTextAtCaret ("HELLO WORLD");
+        }
+
+        pump (80);
+        const auto* added = processor.getDocument().find (editor->getSelectedObject());
+        check (added != nullptr && added->text == "HELLO WORLD" && added->endTime - added->startTime > 0.8f
+                   && canvas->getRight() <= drawer->getX(),
+               "+ Text, typed: the new text across the length, all of it beside the drawer ("
+                   + (added != nullptr ? added->text + " " + juce::String (added->startTime) + " - " + juce::String (added->endTime) : juce::String ("none"))
+                   + ", canvas " + canvas->getBounds().toString() + ", drawer " + drawer->getBounds().toString() + ")");
+        checkEffectLayout (*editor, "new text typed");
+        save ("new-text", pixelScale);
+
+        // Deselected: the canvas has the whole width again.
+        editor->selectObject (juce::Uuid::null());
+        pump (60);
+        check (! editor->isDrawerOpen() && canvas->getWidth() == canvasWidth, "deselected, the canvas has the window's width again");
+    }
 
     juce::Uuid textId, imageId;
     makeRichDrawing (processor, textId, imageId);
@@ -1850,7 +1918,9 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         pump (60);
         check (brush->isVisible() && shown ("brush-size") && shown ("brush-softness") && shown ("brush-strength"),
                "the Brush tool brings its settings: Size, Soft, Strength, in a strip over the bottom bar");
-        check (canvas->getHeight() == heightBefore - brush->getHeight(), "... the canvas makes room for it");
+        check (canvas->getHeight() == heightBefore && brush->getBottom() == bottom->getY()
+                   && static_cast<float> (brush->getY()) >= canvas->getY() + canvas->getDrawingArea().getBottom(),
+               "... over the canvas's time axis: the canvas keeps its size, the drawing stays clear");
         checkEffectLayout (*editor, "the brush");
 
         // It paints.
@@ -3003,9 +3073,12 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     rig.click (rig.canvas(), { rig.canvas().getDrawingArea().getX() + 0.56f * rig.canvas().getDrawingArea().getWidth(),
                                rig.canvas().getDrawingArea().getY() + 0.45f * rig.canvas().getDrawingArea().getHeight() });
     check (editor.getSelectedObject().isNull(), name + ": (a click on empty canvas selects nothing)");
+    const auto canvasBefore = rig.canvas().getBounds();
     check (rig.uses (juce::KeyPress ('b', juce::ModifierKeys(), 'b')) && rig.get ("brush-strip").isVisible(),
            name + ": B chooses the brush, and its strip is there");
-    check (rig.uses (juce::KeyPress ('v', juce::ModifierKeys(), 'v')) && ! rig.get ("brush-strip").isVisible(), name + ": V the Select tool again");
+    check (rig.canvas().getBounds() == canvasBefore, name + ": ... over the canvas's time axis: the canvas keeps its size and place");
+    check (rig.uses (juce::KeyPress ('v', juce::ModifierKeys(), 'v')) && ! rig.get ("brush-strip").isVisible()
+               && rig.canvas().getBounds() == canvasBefore, name + ": V the Select tool again (the canvas as it was)");
     check (! rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && ! rig.uses (juce::KeyPress (juce::KeyPress::leftKey))
            && ! rig.uses (returnKey) && ! rig.uses (juce::KeyPress ('a', juce::ModifierKeys(), 'a'))
            && ! rig.uses (juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys(), '\t')),

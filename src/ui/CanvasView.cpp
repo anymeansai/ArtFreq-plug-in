@@ -966,6 +966,12 @@ juce::Rectangle<float> CanvasView::getDrawingArea() const
     return axes::plotArea (getLocalBounds(), axisWidth, axisHeight).toFloat();
 }
 
+juce::Rectangle<float> CanvasView::getObjectBounds (const juce::Uuid& id) const
+{
+    const auto* object = impl->processor.getDocument().find (id);
+    return object != nullptr ? impl->screenRectOf (*object).expanded (handleReach) : juce::Rectangle<float>();
+}
+
 void CanvasView::paint (juce::Graphics& g)
 {
     impl->paint (g);

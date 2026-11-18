@@ -1,6 +1,7 @@
 #include "Editor.h"
 
 #include "Actions.h"
+#include "CanvasAxes.h"
 #include "CanvasView.h"
 #include "EditorState.h"
 #include "EffectShell.h"
@@ -47,14 +48,18 @@ namespace
         namespace fx = ui::shell::effectMetrics;
         constexpr int effectCanvasTop = 8;
         constexpr int effectCanvasRight = 10;
-        constexpr int effectCanvasBottom = 2;
         constexpr int effectCanvasLeft = 2;
+
+        // Under the drawing the canvas keeps the room of the Brush strip, which lies over its
+        // time axis while it is there (and clear of the lowest Hz label, which is centred on the
+        // drawing's edge): choosing a tool never resizes the canvas.
+        constexpr int effectCanvasBottom = fx::stripHeight + 6 - ui::CanvasView::axisHeight;
         constexpr int drawerWidth = ui::Inspector::compactWidth;
         constexpr int drawerShadow = 14;
         constexpr int effectSettingsTop = fx::topBarHeight + 6;
     } // namespace layout
 
-    // The drawer keeps clear of a canvas click for this long after it (see chooseDrawerSide).
+    // The drawer keeps clear of a canvas click for this long after it (see placeDrawer).
     constexpr juce::uint32 canvasPressMilliseconds = 1500;
 
     constexpr float helpDim = 0.55f;
@@ -690,19 +695,31 @@ namespace
             soundStrip->setBounds (0, topBar->getBottom(), width, layout::fx::stripHeight);
             brushStrip->setBounds (0, bottomBar->getY() - layout::fx::stripHeight, width, layout::fx::stripHeight);
 
-            // The canvas has what the bars, and the strips that are there, leave.
+            // The canvas has what the bars and the Sound strip (while there is one) leave. The
+            // Brush strip lies over the canvas's time axis, which the canvas keeps the strip's
+            // room for (effectCanvasBottom): pressing B, E or V never resizes the canvas, so the
+            // drawing does not move or squash under the brush (and nothing is redrawn at a new
+            // size). The Sound strip comes and goes only with the mode, which redraws the
+            // canvas anyway.
             effectMain = { 0, topBar->getBottom(), width, bottomBar->getY() - topBar->getBottom() };
 
             if (soundStrip->isVisible())
                 effectMain.removeFromTop (layout::fx::stripHeight);
 
-            if (brushStrip->isVisible())
-                effectMain.removeFromBottom (layout::fx::stripHeight);
+            auto view = effectMain.withTrimmedLeft (layout::effectCanvasLeft)
+                                  .withTrimmedTop (layout::effectCanvasTop)
+                                  .withTrimmedRight (layout::effectCanvasRight)
+                                  .withTrimmedBottom (layout::effectCanvasBottom);
 
-            const auto view = effectMain.withTrimmedLeft (layout::effectCanvasLeft)
-                                        .withTrimmedTop (layout::effectCanvasTop)
-                                        .withTrimmedRight (layout::effectCanvasRight)
-                                        .withTrimmedBottom (layout::effectCanvasBottom);
+            // An object too wide for the room beside the drawer: the canvas moves aside (see
+            // placeDrawer), so all of it stays in view, handles included.
+            if (canvasBeside)
+            {
+                const auto drawer = drawerBounds (drawerOnLeft);
+                view = drawerOnLeft ? view.withLeft (drawer.getRight() + layout::effectCanvasLeft)
+                                    : view.withRight (drawer.getX() - layout::effectCanvasRight);
+            }
+
             canvas.setBounds (view);
             liveView.setBounds (view);
             layoutDrawer();
@@ -732,10 +749,26 @@ namespace
             resized();
         }
 
+        /** The drawer's place: one side of the canvas's room, between the strips that are
+            there (the Brush strip lies over the canvas, not over the drawer). */
         juce::Rectangle<int> drawerBounds (bool onLeft) const
         {
-            return onLeft ? effectMain.withWidth (layout::drawerWidth)
-                          : effectMain.withLeft (effectMain.getRight() - layout::drawerWidth);
+            auto room = effectMain;
+
+            if (brushStrip->isVisible())
+                room.removeFromBottom (layout::fx::stripHeight);
+
+            return onLeft ? room.withWidth (layout::drawerWidth)
+                          : room.withLeft (room.getRight() - layout::drawerWidth);
+        }
+
+        /** Where the canvas would be with the window's whole width. */
+        juce::Rectangle<int> fullCanvasBounds() const
+        {
+            return effectMain.withTrimmedLeft (layout::effectCanvasLeft)
+                             .withTrimmedTop (layout::effectCanvasTop)
+                             .withTrimmedRight (layout::effectCanvasRight)
+                             .withTrimmedBottom (layout::effectCanvasBottom);
         }
 
         void layoutDrawer()
@@ -746,6 +779,29 @@ namespace
             drawerShadow.setOnLeft (drawerOnLeft);
             drawerShadow.setBounds (drawerOnLeft ? bounds.withX (bounds.getRight()).withWidth (layout::drawerShadow)
                                                  : bounds.withX (bounds.getX() - layout::drawerShadow).withWidth (layout::drawerShadow));
+        }
+
+        /** Moves the canvas aside for the drawer, or back to the window's whole width. Not while
+            the canvas is pressed: a drag would lose the object under the mouse. The change then
+            waits for the release (noteCanvasRelease). */
+        void setCanvasBeside (bool beside)
+        {
+            if (canvas.isMouseButtonDown())
+            {
+                besideAfterPress = beside;
+                return;
+            }
+
+            besideAfterPress.reset();
+
+            if (beside == canvasBeside)
+                return;
+
+            canvasBeside = beside;
+            layoutEffectShell();
+
+            // (Beside the canvas, the drawer casts no shadow on it.)
+            drawerShadow.setVisible (inspector.isVisible() && ! canvasBeside);
         }
 
         /** Whether the drawer is open, what it shows, and on which side. Called on every change
@@ -768,20 +824,42 @@ namespace
             const auto open = layersWanted || (state.hasSelection() && ! settingsDismissed);
             const auto showsSettings = open && state.hasSelection() && ! state.isLayerListShown();
             const auto wasOpen = inspector.isVisible();
+            const auto showedSettings = drawerShowsSettings;
+            drawerShowsSettings = showsSettings;
 
             if (showsSettings)
                 settingsDismissed = false;
 
+            // The canvas beside the drawer belongs to an object's settings: anything else lies
+            // over the canvas. While the same object's settings stay open the canvas never comes
+            // back from beside them (that would move the drawing for nothing); an object that
+            // grows under them (Fill length, a resize) moves it aside.
+            auto beside = besideAfterPress.value_or (canvasBeside);
+
             if (! open)
+            {
                 drawerOnLeft = false;                // it opens on the right
-            else if (showsSettings && (! wasOpen || selectionChanged))
-                chooseDrawerSide (true, {});
+                beside = false;
+            }
+            else if (! showsSettings)
+            {
+                beside = false;
+            }
+            else if (! wasOpen || ! showedSettings || selectionChanged)
+            {
+                beside = placeDrawer (true, {});
+            }
+            else if (! beside && ! canvas.isMouseButtonDown() && coversObject (drawerOnLeft) && coversObject (! drawerOnLeft))
+            {
+                beside = true;   // grown too wide for either side (a drag decides on its release)
+            }
 
             const auto hadFocus = wasOpen && inspector.hasKeyboardFocus (true);
 
+            setCanvasBeside (beside);
             layoutDrawer();
             inspector.setVisible (open);
-            drawerShadow.setVisible (open);
+            drawerShadow.setVisible (open && ! canvasBeside);
             bottomBar->layersButton.setToggleState (open && state.isLayerListShown(), juce::dontSendNotification);
 
             // (JUCE hands the focus of something hidden to its parent: the canvas is its home.)
@@ -789,44 +867,73 @@ namespace
                 takeKeyFocusBack();
         }
 
-        /** The drawer gets out of the way of what it is for. An object's settings open on the
-            right, unless that would cover the object's middle or the spot just clicked on the
-            canvas: then on the left. So the object stays in view while its settings change it,
-            the handles near the click stay free, and the drawer never opens under the mouse,
-            where the second click of a double-click would land on one of its controls. The
-            layer list stays where it is while it is used. `mouse` (in this component's
-            coordinates), if given, is somewhere the drawer must not move to. Returns whether
-            the side changed. */
-        bool chooseDrawerSide (bool usePress, std::optional<juce::Point<int>> mouse)
+        /** Where the selected object lies across the canvas at its whole width, with its
+            handles, in this component's x (empty if nothing is selected). */
+        juce::Range<float> objectSpan() const
         {
             const auto* object = processor.getDocument().find (state.getSelected());
 
             if (object == nullptr)
+                return {};
+
+            const auto drawing = ui::axes::plotArea (fullCanvasBounds(), ui::CanvasView::axisWidth, ui::CanvasView::axisHeight).toFloat();
+            const auto reach = ui::CanvasView::handleReach;
+            return { drawing.getX() + object->startTime * drawing.getWidth() - reach,
+                     drawing.getX() + object->endTime * drawing.getWidth() + reach };
+        }
+
+        /** Whether the drawer on that side would lie over any of the selected object (or its
+            handles) on the canvas at its whole width. */
+        bool coversObject (bool onLeft) const
+        {
+            const auto span = objectSpan();
+            const auto drawer = drawerBounds (onLeft).toFloat();
+            return ! span.isEmpty() && span.getStart() < drawer.getRight() && span.getEnd() > drawer.getX();
+        }
+
+        /** The drawer gets out of the way of what it is for. An object's settings open on the
+            right, unless there they would cover any of the object or the spot just clicked on
+            the canvas: then on the left. So the object stays in view while its settings change
+            it, its handles stay free, and the drawer never opens under the mouse, where the
+            second click of a double-click would land on one of its controls. An object too wide
+            for either side (more than about two thirds of the canvas: new text, Fill length, a
+            new window's "ArtFreq") gets the room it needs: the canvas moves aside, beside the
+            drawer, on the side away from the click. `mouse` (in this component's coordinates),
+            if given, is somewhere the drawer must not move to. Returns whether the canvas is to
+            be beside the drawer; the side is set. */
+        bool placeDrawer (bool usePress, std::optional<juce::Point<int>> mouse)
+        {
+            if (processor.getDocument().find (state.getSelected()) == nullptr)
                 return false;
 
-            const auto drawing = canvas.getDrawingArea();
-            const auto centreX = juce::roundToInt (static_cast<float> (canvas.getX()) + drawing.getX()
-                                                   + 0.5f * (object->startTime + object->endTime) * drawing.getWidth());
             const auto pressed = usePress && pressOnCanvas
                               && juce::Time::getMillisecondCounter() - canvasPressTime < canvasPressMilliseconds;
 
-            const auto covers = [&] (bool onLeft)
+            const auto inTheWay = [&] (bool onLeft)
             {
                 const auto bounds = drawerBounds (onLeft);
-                return (bounds.getX() <= centreX && centreX < bounds.getRight()) || (pressed && bounds.contains (canvasPress));
+                return (pressed && bounds.contains (canvasPress)) || (mouse.has_value() && bounds.contains (*mouse));
             };
 
-            if (! covers (drawerOnLeft) || covers (! drawerOnLeft))
+            const auto free = [&] (bool onLeft) { return ! coversObject (onLeft) && ! inTheWay (onLeft); };
+
+            if (free (drawerOnLeft))
                 return false;
 
-            if (mouse.has_value() && drawerBounds (! drawerOnLeft).contains (*mouse))
+            if (free (! drawerOnLeft))
+            {
+                drawerOnLeft = ! drawerOnLeft;
                 return false;
+            }
 
-            drawerOnLeft = ! drawerOnLeft;
+            // Too wide for either side: beside the canvas, away from the click.
+            if (inTheWay (drawerOnLeft))
+                drawerOnLeft = ! drawerOnLeft;
+
             return true;
         }
 
-        /** A press on the canvas: where, and when (see chooseDrawerSide). */
+        /** A press on the canvas: where, and when (see placeDrawer). */
         void noteCanvasPress (const juce::MouseEvent& e)
         {
             if (! compact)
@@ -846,7 +953,14 @@ namespace
             aside if the object went under it. */
         void noteCanvasRelease (const juce::MouseEvent& e)
         {
-            if (! compact || e.eventComponent != &canvas || ! state.hasSelection())
+            if (! compact || e.eventComponent != &canvas)
+                return;
+
+            // What waited for the release: the canvas moving aside for (or back from) the drawer.
+            if (besideAfterPress.has_value())
+                setCanvasBeside (*besideAfterPress);
+
+            if (! state.hasSelection())
                 return;
 
             if (! e.mouseWasDraggedSinceMouseDown())
@@ -857,10 +971,17 @@ namespace
                     updateDrawer();
                 }
             }
-            else if (inspector.isVisible() && ! state.isLayerListShown()
-                     && chooseDrawerSide (false, getLocalPoint (&canvas, e.position).roundToInt()))
+            else if (inspector.isVisible() && ! state.isLayerListShown() && ! canvasBeside)
             {
-                layoutDrawer();
+                // Dragged under the drawer: it moves aside (never to under the mouse), or the
+                // canvas does.
+                const auto side = drawerOnLeft;
+                const auto beside = placeDrawer (false, getLocalPoint (&canvas, e.position).roundToInt());
+
+                if (beside)
+                    setCanvasBeside (true);
+                else if (side != drawerOnLeft)
+                    layoutDrawer();
             }
         }
 
@@ -1082,6 +1203,9 @@ namespace
         bool layersWanted = false;                       // the Layers button is on
         bool settingsDismissed = false;                  // the drawer was closed on the current selection
         bool drawerOnLeft = false;
+        bool drawerShowsSettings = false;                // an object's settings, not the list
+        bool canvasBeside = false;                       // the canvas lies beside the drawer, not under it
+        std::optional<bool> besideAfterPress;            // ... changing when the canvas is let go of
         juce::Uuid drawerSelection = juce::Uuid::null(); // the selection the drawer last saw
         bool pressOnCanvas = false;                      // the last press was on the canvas, there and then:
         juce::Point<int> canvasPress;
