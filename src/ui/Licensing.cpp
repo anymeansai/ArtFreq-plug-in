@@ -479,6 +479,7 @@ ActivationScreen::ActivationScreen (ArtFreqProcessor& p)
     addAndMakeVisible (keyLink);
     addAndMakeVisible (buyLink);
 
+    showingUnfinished = license.getInterruptedDeactivation().has_value() && ! license.isActivated();
     license.addListener (this);
     update();
 }
@@ -603,6 +604,14 @@ void ActivationScreen::licenseStateChanged (LicenseManager&)
         setMessage ({}, MessageKind::none);
     }
 
+    // A deactivation that didn't finish has just come to light: its explanation (in the
+    // message's place) says more about the state than an older result does.
+    const auto finishing = license.getInterruptedDeactivation().has_value() && ! license.isActivated();
+
+    if (finishing && ! showingUnfinished && ! waitingForResult)
+        setMessage ({}, MessageKind::none);
+
+    showingUnfinished = finishing;
     update();
 }
 
@@ -635,11 +644,27 @@ void ActivationScreen::timerCallback()
     repaint (activateButton.getBounds());
 }
 
+juce::String ActivationScreen::getInfoText() const
+{
+    const juce::String name (effect ? "ArtFreq FX" : "ArtFreq");
+
+    // After a deactivation that was cut off (the project closed while it ran): why this computer
+    // is locked, and the two ways on.
+    if (license.getInterruptedDeactivation().has_value())
+        return "Deactivating didn't finish, so this computer is locked. To free your key, deactivate in Settings; "
+               "to use " + name + " here, activate again.";
+
+    return "Once activated, " + name + " works offline. A key activates two computers.";
+}
+
 void ActivationScreen::resized()
 {
     const auto inner = cardMetrics::width - 2 * cardMetrics::pad;
-    const auto lines = juce::jlimit (cardMetrics::minMessageLines, cardMetrics::maxMessageLines,
-                                     messageText.getHeightFor (inner) / messageLineHeight());
+    const auto shownLines = messageText.getMessage().isNotEmpty()
+                              ? messageText.getHeightFor (inner) / messageLineHeight()
+                              : layoutText (getInfoText(), SelectableText::messageFont(), theme::text, static_cast<float> (inner),
+                                            juce::Justification::centredTop, 1.0f).getNumLines();
+    const auto lines = juce::jlimit (cardMetrics::minMessageLines, cardMetrics::maxMessageLines, shownLines);
     const auto messageHeight = lines * messageLineHeight();
 
     auto height = cardMetrics::top + cardMetrics::emblemHeight + 10 + cardMetrics::titleHeight;
@@ -724,16 +749,12 @@ void ActivationScreen::paint (juce::Graphics& g)
         g.drawText (effect ? "Enter the ArtFreq Pro key from your purchase email." : "Enter the key from your purchase email.",
                     subtitleArea, juce::Justification::centred, false);
 
-        // Before anything has been tried: what activating means, where the message will go. Or,
-        // after a deactivation that was cut off (the project closed while it ran), why this
-        // computer is locked and how to finish it.
+        // Before anything has been tried: what activating means, where the message will go (or
+        // why it is locked after a deactivation that didn't finish).
         if (messageText.getMessage().isEmpty() && ! isBusy())
         {
             const auto finishing = license.getInterruptedDeactivation().has_value();
-            const auto text = finishing ? "Deactivating didn't finish, so the server may have freed this computer. "
-                                          "To free your key, deactivate in Settings; to use " + name + " here, activate again."
-                                        : "Once activated, " + name + " works offline. A key activates two computers.";
-            const auto info = layoutText (text, SelectableText::messageFont(), finishing ? theme::textDim : theme::textFaint,
+            const auto info = layoutText (getInfoText(), SelectableText::messageFont(), finishing ? theme::textDim : theme::textFaint,
                                           static_cast<float> (messageText.getWidth()), juce::Justification::centredTop, 1.0f);
             info.draw (g, messageText.getBounds().toFloat());
         }

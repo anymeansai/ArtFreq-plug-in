@@ -168,6 +168,7 @@ private:
     void timerCallback() override;
     void finished (const anymeans::license::LicenseManager::Result& result);
     void setMessage (const juce::String& text, MessageKind kind);
+    juce::String getInfoText() const;
     void continuePressed();
     void update();
 
@@ -185,6 +186,7 @@ private:
     MessageKind messageKind = MessageKind::none;
     bool waitingForResult = false;   // this screen sent the request that is on its way
     bool showingSuccess = false;
+    bool showingUnfinished = false;  // locked by a deactivation that didn't finish (see getInfoText)
     float spinnerPhase = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ActivationScreen)

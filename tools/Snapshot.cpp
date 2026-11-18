@@ -117,6 +117,12 @@
 //   artfreq-licence-confirm.png       Deactivate... asking first
 //   artfreq-licence-error.png         a deactivation that failed (no connection): still activated
 //   artfreq-licence-locked.png        not activated: the card offers the activation screen
+//   artfreq-licence-two-keys-confirm.png  an ArtFreq and an ArtFreq Pro key: what deactivating
+//                                     the Pro key locks and what stays
+//   artfreq-licence-two-keys.png      ... done: still activated (ArtFreq key), the card says so
+//                                     (ArtFreq FX: artfreq-fx-activate-two-keys.png, locked)
+//   artfreq-activate-unfinished.png   a deactivation that didn't finish (the project closed):
+//   artfreq-licence-unfinished.png    locked, and the card offers Deactivate to finish it
 //
 // checking in each that the screen's card fits the window with room around it, that nothing in it
 // overlaps or is cut off, that nothing shown is greyed, that the top bar shows only the name, help
@@ -2479,12 +2485,77 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
                who + ": deactivated, the activation screen is back with the result (" + message() + ")");
         save ("activate-deactivated", pixelScale);
 
-        // Not activated, the card offers the activation screen.
+        // Not activated, the card offers the activation screen, and no Reset drawing (the drawing
+        // is out of reach).
         editor->showSettings (true);
         pump (40);
         check (findComponentWithId (*editor, "licence-activate")->isVisible(), who + ": not activated, the card offers Activate...");
+        check (! findComponentWithId (*editor, "reset-drawing")->isVisible(), who + ": locked, the settings offer no Reset drawing");
         panelFits ("not activated");
         save ("licence-locked", pixelScale);
+        editor->showSettings (false);
+        pump (30);
+
+        // ---- two keys: ArtFreq, then ArtFreq Pro -------------------------------------------------------
+        // Deactivating frees the Pro key: ArtFreq FX locks, ArtFreq stays activated by its own key.
+        // The instrument's card says so (still activated, the settings stay); ArtFreq FX's
+        // activation screen does.
+        check (licensing.activateArtFreqThenPro(), who + ": two keys stored");
+        processor.getLicense().reload();
+        pump (40);
+        editor->showSettings (true);
+        pump (40);
+        find<juce::Button> (*editor, "deactivate")->onClick();
+        pump (30);
+        check (processor.getLicense().getDeactivationWarning().contains ("ArtFreq stays activated with your ArtFreq key"),
+               who + ", two keys: the question says what stays (" + processor.getLicense().getDeactivationWarning() + ")");
+        panelFits ("two keys, confirming");
+        save ("licence-two-keys-confirm", pixelScale);
+
+        server.reply (licensetest::deactivateArtFreq);
+        find<juce::Button> (*editor, "deactivate-confirm")->onClick();
+
+        if (effect)
+        {
+            check (settle ([&] { return ! processor.isLicensed() && screen->isVisible(); })
+                       && message().contains ("ArtFreq stays activated with your ArtFreq key"),
+                   who + ", two keys: locked, and the screen says what stays (" + message() + ")");
+            save ("activate-two-keys", pixelScale);
+        }
+        else
+        {
+            check (settle ([&] { return card->getMessageText().getMessage().isNotEmpty(); }) && processor.isLicensed()
+                       && panel->isVisible() && ! screen->isVisible()
+                       && card->getMessageText().getMessage().contains ("ArtFreq stays activated with your ArtFreq key"),
+                   who + ", two keys: still activated, and the card says what went (" + card->getMessageText().getMessage() + ")");
+            panelFits ("two keys, deactivated one");
+            save ("licence-two-keys", pixelScale);
+        }
+
+        editor->showSettings (false);
+        check (licensing.deactivate(), who + ": every key removed");
+        processor.getLicense().reload();
+        pump (40);
+
+        // ---- a deactivation that didn't finish ---------------------------------------------------------
+        // (The project closed while it ran.) Locked; the screen says why, and the card offers
+        // Deactivate to finish it beside Activate....
+        auto cutOff = licensetest::storedActivationFrom (licensetest::activateProFresh, licensetest::keyPro);
+        cutOff.deactivatingSince = "2021-01-01T00:00:00.000Z";
+        check (anymeans::license::LicenseStore (licensing.folder.folder).put (cutOff), who + ": a cut-off deactivation stored");
+        processor.getLicense().reload();
+        pump (60);
+        check (! processor.isLicensed() && screen->isVisible() && processor.getLicense().getInterruptedDeactivation().has_value(),
+               who + ": a deactivation that didn't finish leaves it locked");
+        checkActivationLayout (*editor, who + ", unfinished");
+        save ("activate-unfinished", pixelScale);
+
+        editor->showSettings (true);
+        pump (40);
+        check (findComponentWithId (*editor, "deactivate-confirm")->isVisible() && findComponentWithId (*editor, "licence-activate")->isVisible(),
+               who + ": the card offers Deactivate to finish it, and Activate...");
+        panelFits ("unfinished deactivation");
+        save ("licence-unfinished", pixelScale);
         editor->showSettings (false);
         pump (30);
     }
