@@ -503,9 +503,15 @@ jobs:
 
           Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
 
+          **New in 0.5**
+          - **Activation**: the first time, enter the key from your purchase email (internet needed once; offline after that). A key works on 2 computers; Settings > Licence has Deactivate for moving to a new one. Until activated, ArtFreq is silent and ArtFreq FX passes your audio through untouched.
+          - **Press play and it plays**: the drawing now starts wherever you start the DAW (Start: On play, the default); Repeat no longer has to be on. "At bar" keeps a fixed start bar.
+          - **ArtFreq FX** has a small window of its own with only the controls each mode uses; nothing is greyed out.
+          - The DAW's play key (Space) works while the plug-in's window has the focus, except while you type in a text box.
+          - **Windows**: both plug-ins for 64-bit Windows 10 and 11 (a zip; no installer yet).
+
           **New in 0.4**
           - FreqArt is now called **ArtFreq** (and FreqArt FX **ArtFreq FX**). Old projects keep working: they open with the renamed plug-ins, and the installer removes the old FreqArt bundles from \`/Library/Audio/Plug-Ins/VST3\`. Rescan plug-ins in your DAW after installing (after a manual install, delete \`FreqArt.vst3\` and \`FreqArt FX.vst3\` yourself).
-          - **Windows**: both plug-ins for 64-bit Windows 10 and 11 (a zip; no installer yet).
 
           **New in 0.3**
           - **ArtFreq FX**, a second plug-in installed alongside ArtFreq (listed under audio effects, category Fx / Filter): put it on an audio track, a bus or the master. **Mode**: Carve (the default) mutes the drawing's frequencies in the song so it shows as dark shapes, Carve + Draw plays the drawing in a hole carved a little wider, Stencil keeps only the drawing, Draw plays it on top; **Depth** (default -80 dB) is how far carved frequencies drop. It uses the same window, drawing tools, Length, Trigger, Repeat and start bar.
