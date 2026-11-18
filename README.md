@@ -200,8 +200,7 @@ For Windows 10 or 11, 64-bit. There is no installer yet: download `ArtFreq-VST3-
 
 1. Close your DAW.
 2. Unzip the zip and copy the folders `ArtFreq.vst3` and `ArtFreq FX.vst3`, whole, into `C:\Program Files\Common Files\VST3`. Windows asks for permission to copy there.
-3. If `FreqArt.vst3` or `FreqArt FX.vst3` (ArtFreq before 0.4) are in that folder, delete them.
-4. Open your DAW and rescan plug-ins. ArtFreq is listed under instruments, ArtFreq FX under audio effects.
+3. Open your DAW and rescan plug-ins. ArtFreq is listed under instruments, ArtFreq FX under audio effects.
 
 `How to install.txt` in the zip says the same. To remove ArtFreq, delete the two folders again.
 

@@ -14,10 +14,7 @@ you copy two folders by hand.
    Windows asks for permission to copy there: click Continue.
    Copy each .vst3 folder whole; do not open it or move what is inside.
 
-3. If that folder holds FreqArt.vst3 or FreqArt FX.vst3 (ArtFreq before 0.4),
-   delete them. Your old projects open with ArtFreq and ArtFreq FX instead.
-
-4. Open your DAW and rescan plug-ins (in its plug-in settings).
+3. Open your DAW and rescan plug-ins (in its plug-in settings).
    ArtFreq is listed under instruments: put it on an instrument (MIDI) track.
    ArtFreq FX is listed under audio effects: put it on an audio track, a bus
    or the master.

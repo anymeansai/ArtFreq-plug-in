@@ -57,7 +57,7 @@ jobs:
               {
                 "name": "Windows",
                 "os": "windows-2022",
-                "cmake_args": "-DCMAKE_GENERATOR_PLATFORM=x64",
+                "cmake_args": "-DCMAKE_GENERATOR_PLATFORM=x64 -DARTFREQ_BUILD_TOOLS=OFF",
                 "pluginval_zip": "pluginval_Windows.zip",
                 "pluginval_bin": "pluginval.exe"
               }
@@ -96,7 +96,7 @@ jobs:
       cancel-in-progress: true
     # Every target compiles all of ArtFreq's sources (both plug-ins, and the tests and the
     # tools, link the processor and the editor too): twice over for the universal macOS build,
-    # with link-time code generation for each target on Windows.
+    # with link-time code generation for each target, one at a time, on a 2-core runner on Windows.
     timeout-minutes: 90
     strategy:
       fail-fast: false
@@ -116,12 +116,15 @@ jobs:
 
       # Configuring downloads JUCE from GitHub, which occasionally fails: try three times. On
       # Windows CMake picks the Visual Studio generator (multi-config: the configuration is
-      # chosen when building, and CMAKE_BUILD_TYPE is ignored).
+      # chosen when building, and CMAKE_BUILD_TYPE is ignored). cmake_args holds one or more
+      # arguments, separated by spaces (none has a space in it).
       - name: Configure
         shell: bash
         run: |
           args=(-S . -B build -DCMAKE_BUILD_TYPE=Release)
-          if [ -n "${{ matrix.cmake_args }}" ]; then args+=("${{ matrix.cmake_args }}"); fi
+          read -r -a extra <<< "${{ matrix.cmake_args }}"
+          if [ "${#extra[@]}" -gt 0 ]; then args+=("${extra[@]}"); fi
+          echo "cmake ${args[*]}"
           for attempt in 1 2 3; do
             if cmake "${args[@]}"; then
               exit 0
@@ -134,20 +137,30 @@ jobs:
 
       # All targets: the two plug-ins (ArtFreq, the instrument, and ArtFreqFX, the effect "ArtFreq
       # FX": one code base, registered once as each), the tests (ArtFreqTests), the interface
-      # snapshot tool (ArtFreqSnapshot) and the labs.
+      # snapshot tool (ArtFreqSnapshot) and the labs. On Windows the plug-ins and the tests only
+      # (ARTFREQ_BUILD_TOOLS=OFF), one project at a time: a private repository's Windows runner
+      # has 2 cores and 7 GB, every target compiles all of JUCE and ArtFreq with link-time code
+      # generation (two such links at once could run out of memory), and each project already
+      # compiles on every core (/MP).
       - name: Build
         shell: bash
-        run: cmake --build build --config Release --parallel 4
+        run: |
+          parallel=4
+          if [ "$RUNNER_OS" = "Windows" ]; then parallel=1; fi
+          cmake --build build --config Release --parallel "$parallel"
 
       # ArtFreqTests links the processor and the editor as well as core and dsp, so a failure
       # here can come from any part of the plug-in, not only the engine. It opens no window,
       # but on Linux it runs under a virtual display all the same, as JUCE's GUI classes are
-      # linked in.
+      # linked in. On Windows a hung run (a crash dialog, say) is stopped after 15 minutes
+      # rather than the job's 90 (the whole suite takes about 30 seconds on the Linux box).
       - name: Tests
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            ctest --test-dir build -C Release --output-on-failure --timeout 900
           else
             ctest --test-dir build -C Release --output-on-failure
           fi
@@ -243,7 +256,7 @@ jobs:
       # Renders the editor in its main states to PNG files, to check the interface on a real
       # Mac (fonts, HiDPI): the instrument's (artfreq-*.png) and ArtFreq FX's in each of its
       # modes (artfreq-fx-*.png). It runs headless on the macOS runner; on Linux it needs a
-      # display (xvfb-run -a). Not run on Windows (the tool is built there all the same).
+      # display (xvfb-run -a). Not built on Windows (see Build).
       - name: Interface snapshots
         id: snapshots
         if: runner.os == 'macOS'
@@ -491,8 +504,14 @@ jobs:
           Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
 
           **New in 0.4**
-          - FreqArt is now called **ArtFreq** (and FreqArt FX **ArtFreq FX**). Old projects keep working: they open with the renamed plug-ins. The macOS installer removes the old FreqArt bundles; after a copy by hand (and on Windows), delete \`FreqArt.vst3\` and \`FreqArt FX.vst3\` from the VST3 folder yourself.
-          - **Windows**: both plug-ins for 64-bit Windows 10 and 11.
+          - FreqArt is now called **ArtFreq** (and FreqArt FX **ArtFreq FX**). Old projects keep working: they open with the renamed plug-ins, and the installer removes the old FreqArt bundles from \`/Library/Audio/Plug-Ins/VST3\`. Rescan plug-ins in your DAW after installing (after a manual install, delete \`FreqArt.vst3\` and \`FreqArt FX.vst3\` yourself).
+          - **Windows**: both plug-ins for 64-bit Windows 10 and 11 (a zip; no installer yet).
+
+          **New in 0.3**
+          - **ArtFreq FX**, a second plug-in installed alongside ArtFreq (listed under audio effects, category Fx / Filter): put it on an audio track, a bus or the master. **Mode**: Carve (the default) mutes the drawing's frequencies in the song so it shows as dark shapes, Carve + Draw plays the drawing in a hole carved a little wider, Stencil keeps only the drawing, Draw plays it on top; **Depth** (default -80 dB) is how far carved frequencies drop. It uses the same window, drawing tools, Length, Trigger, Repeat and start bar.
+          - ArtFreq FX delays the audio by **85 ms** (4096 samples at 48 kHz) in every mode and in bypass, and tells your DAW, which keeps the song in time. Put it before the master's final limiter (MiniMeters after both) or leave some headroom: carving and the sines can raise peaks above 0 dBFS.
+          - **Lows**: Smooth (new instances) fills shapes in the low end at every FFT size, with gliding sines; Stripes keeps the separate lines of 0.1 and 0.2. Projects saved with 0.1 or 0.2 open with Stripes, so they look and sound as before.
+          - ArtFreq and ArtFreq FX save the same state, but your DAW keeps presets and projects per plug-in, so a drawing does not move from one to the other by itself: redraw it, or re-add its pictures and text.
           EOF
 
           # Never take the existing download away before the new one is up. An existing

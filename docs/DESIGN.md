@@ -768,15 +768,17 @@ development box only (its matrix entry is gone, its steps are kept).
   interface snapshots; ad hoc signing again after JUCE writes moduleinfo.json; pluginval at
   strictness 10; the zip; the pkg installer, test-installed over stand-ins for the old FreqArt
   bundles, its copies validated at strictness 5.
-- **Windows** (windows-2022, Visual Studio 2022, x64): the same targets with the C runtime
-  linked statically (`CMAKE_MSVC_RUNTIME_LIBRARY`, set before any target) and `/utf-8`; ctest;
-  a check of the bundle layout (`<name>.vst3/Contents/x86_64-win/<name>.vst3`, moduleinfo.json)
-  and of the DLLs' imports (x64, no VCRUNTIME / MSVCP / api-ms-win-crt, with dumpbin); pluginval
-  at strictness 10. No installer yet: `ArtFreq-VST3-Windows.zip` holds both bundles and
+- **Windows** (windows-2022, Visual Studio 2022, x64): the plug-ins and the tests only
+  (`ARTFREQ_BUILD_TOOLS=OFF`, one project at a time: a private repository's Windows runner has
+  2 cores and 7 GB, and every target compiles all of JUCE with link-time code generation),
+  with the C runtime linked statically (`CMAKE_MSVC_RUNTIME_LIBRARY`, set before any target)
+  and `/utf-8`; ctest (stopped after 15 minutes); a check of the bundle layout
+  (`<name>.vst3/Contents/x86_64-win/<name>.vst3`, moduleinfo.json) and of the DLLs' imports
+  (x64, no VCRUNTIME / MSVCP / api-ms-win-crt, with dumpbin); pluginval at strictness 10. No installer yet: `ArtFreq-VST3-Windows.zip` holds both bundles and
   `How to install.txt` (installer/windows, CRLF). The zip is unzipped into a stand-in for
   `C:\Program Files\Common Files\VST3` (then into the real one when the runner may write there),
   its layout and text checked, its DLLs compared with the validated ones and validated again at
-  strictness 5. The snapshot tool is built but not run on Windows.
+  strictness 5.
 - **Release.** Needs every build; checks that every platform's files are present (its clean-up
   takes off the release whatever this build did not make), uploads them under temporary names,
   then swaps each in, and updates `v<version>` and its notes.
