@@ -1013,7 +1013,9 @@ shared `Licenses.json` and its watch, and every message. The plug-ins only wire 
   manager sees it within a second (its file watch), or at once (the one that activated), and sets
   its flag on the message thread. The next block follows.
 - **Locked, the instrument** fades its output out over 10 ms (`licenseFadeSeconds`: a gain after
-  the safety clipper, so it is a plain fade of whatever played), then `processLocked`: silence,
+  the safety clipper, so it is a plain fade of whatever played; with nothing sounding there is
+  nothing to fade, and it is locked at once, so a note during the fade plays nothing either),
+  then `processLocked`: silence,
   MIDI ignored, the engine and tracker reset once (new plans are still taken up, so the exchange
   can free the old ones). Preview is refused (`setPreview`), and one that was on stops.
   **Activated**, it starts afresh: the gain fades in over 10 ms and the tracker begins as when the
@@ -1071,7 +1073,10 @@ shared `Licenses.json` and its watch, and every message. The plug-ins only wire 
   another computer), with Cancel and Deactivate. While it runs: a spinner and "Deactivating...".
   If it fails nothing changes, and the card says why in place of the key (the core keeps the
   activation unless the server confirms). If it goes through, the plug-in is locked: the panel
-  closes and the activation screen shows the result. Not activated, the card says so and offers
+  closes and the activation screen shows the result. Closing the window does not stop a
+  deactivation, unlike an activation: the processor's manager finishes it (stopped after the
+  server had freed this computer's place, it would leave the computer activated with its place
+  free on the server, so the key could go to a third). Not activated, the card says so and offers
   Activate..., which puts the panel away and the typing in the key field. The card asks the panel
   to lay itself out again when its height changes; a message longer than its room (a long folder
   path) scrolls in place.
@@ -1096,7 +1101,8 @@ field's formatting; the screen covering a locked window (clicks, keys, the top b
 through it (the requests sent, the success, Continue, a new instance activated without the
 network); every failure (a typo, an unknown key, ArtFreq FX's wrong product, 409 with the support
 address selected by a double-click, no connection, an unsigned answer, a 502) leaving it locked,
-with retry possible; busy, and closing the window during a request; the Licence card (the
+with retry possible; busy, and closing the window during an activation (stopped) and during a
+deactivation (finished); the Licence card (the
 question, Cancel, failures keeping the activation, a deactivation locking it, Activate...), with
 the settings fitting the window in every state; state, parameters and latency while locked; and
 the keys through a real window (`uiKeysTheActivationScreen`). The snapshot tool renders the

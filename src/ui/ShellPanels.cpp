@@ -850,7 +850,6 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
 
             for (const auto& p : effectNotes())
                 paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 5.0f);
-
         }
 
         return result;
@@ -868,7 +867,6 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
 
         for (const auto& p : layerTips())
             paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 6.0f);
-
     }
     else
     {

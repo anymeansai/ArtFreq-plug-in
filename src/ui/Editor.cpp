@@ -298,12 +298,15 @@ namespace
 
         ~Content() override
         {
-            // Closing the window stops a request on its way (its result would go nowhere): what
-            // the server did before stands, and asking again later uses no other computer.
+            // Closing the window stops an activation on its way (its result would go nowhere):
+            // what the server did before stands, and activating again later uses no other
+            // computer. A deactivation is left to finish in the processor's manager: stopped
+            // after the server had freed this computer's place, it would leave the computer
+            // activated with its place free on the server.
             auto& license = processor.getLicense();
             license.removeListener (this);
 
-            if (license.isBusy())
+            if (license.getRequestInProgress() == anymeans::license::LicenseManager::Request::activating)
                 license.cancelRequest();
 
             stopTimer();

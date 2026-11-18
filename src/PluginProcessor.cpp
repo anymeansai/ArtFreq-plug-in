@@ -425,8 +425,11 @@ void ArtFreqProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     // up where the song is) as when the plug-in is first put on a playing track.
     licenseGain.setTargetValue (licensed ? 1.0f : 0.0f);
 
-    if (! licensed && ! licenseGain.isSmoothing())
+    // (With nothing sounding there is nothing to fade: locked at once, so not even a note that
+    // comes in during the fade is played.)
+    if (! licensed && (! licenseGain.isSmoothing() || ! engine.isSounding()))
     {
+        licenseGain.setCurrentAndTargetValue (0.0f);
         processLocked (buffer, midi);
         return;
     }

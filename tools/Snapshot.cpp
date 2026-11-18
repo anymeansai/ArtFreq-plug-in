@@ -2222,9 +2222,6 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 }
 
 //==============================================================================
-// The keyboard, the way the OS delivers it: through the window's peer.
-//
-//==============================================================================
 // Licensing: the activation screen of a plug-in that is not activated, in each of its states, and
 // the Licence card in the settings, for both plug-ins, through a fake server (nothing here
 // reaches the real one). Everything else in this tool runs activated (see main).
@@ -2294,7 +2291,6 @@ void checkActivationLayout (artfreq::ArtFreqEditor& editor, const juce::String& 
 
     inTopBar.sort (true);
     check (inTopBar.joinIntoString (",") == "help,settings", state + ": the top bar shows only help and settings (" + inTopBar.joinIntoString (",") + ")");
-
 }
 
 void checkLicensing (const juce::File& outputDir, float pixelScale)
@@ -2494,6 +2490,9 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
     }
 }
 
+//==============================================================================
+// The keyboard, the way the OS delivers it: through the window's peer.
+//
 // A plug-in cannot start the DAW's transport: it can only leave the DAW's play key (the space
 // bar, mostly) alone. On macOS JUCE hands a key on to the host's window when nothing used it
 // (juce_NSViewComponentPeer_mac.mm: keyDown -> sendEventToInputContextOrComponent, else

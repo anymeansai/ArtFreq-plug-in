@@ -1565,6 +1565,28 @@ ARTFREQ_TEST (processorLockedInstrumentIsSilentUntilActivated)
     // And Preview works now.
     processor->setPreview (true);
     CHECK (processor->isPreviewing());
+
+    // Locked again while nothing sounds (the DAW stopped, Preview off): silent at once, so a note
+    // in the very next block, inside the time a fade would take, plays nothing either.
+    processor->setPreview (false);
+    setParameter (*processor, params::id::trigger, 1.0f);
+
+    for (int i = 0; i < 40 && processor->isSounding(); ++i)
+    {
+        juce::MidiBuffer none;
+        processor->processBlock (buffer, none);
+    }
+
+    CHECK (! processor->isSounding());
+    CHECK (licensing.deactivate());
+    processor->getLicense().reload();
+    CHECK (! processor->isLicensed());
+
+    juce::MidiBuffer lateNote;
+    lateNote.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    processor->processBlock (buffer, lateNote);
+    CHECK (juce::exactlyEqual (buffer.getMagnitude (0, blockSize), 0.0f));
+    CHECK (! processor->isSounding());
 }
 
 ARTFREQ_TEST (processorLockingAndActivatingDoNotClick)

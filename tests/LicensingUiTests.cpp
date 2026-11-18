@@ -356,6 +356,26 @@ ARTFREQ_TEST (uiLicensingBusyAndClosingTheWindowDuringARequest)
     CHECK (instrument.settle ([&] { return instrument.screen().isShowingSuccess(); }));
     CHECK (instrument.processor->isLicensed());
     CHECK (instrument.message().contains ("unlocked for ArtFreq."));
+
+    // A deactivation, though, is not stopped by closing the window: stopped after the server had
+    // freed this computer's place, it would leave the computer activated with its place free. The
+    // processor finishes it, and the plug-in is locked.
+    instrument.content().keyPressed (returnKey);   // Continue
+    instrument.editor->showSettings (true);
+    pump (30);
+    server.replyAfter (deactivateArtFreq, 300);
+    instrument.button ("deactivate").onClick();
+    instrument.button ("deactivate-confirm").onClick();
+    CHECK (server.started.wait (3000));
+
+    instrument.editor.reset();
+    CHECK (instrument.processor->getLicense().getRequestInProgress() == anymeans::license::LicenseManager::Request::deactivating);
+    CHECK (pumpUntil ([&] { return ! instrument.processor->isLicensed(); }));
+    CHECK (server.cancelsSeen.load() == 1);
+    CHECK (anymeans::license::LicenseStore (licensing.folder.folder).read().activations.empty());
+
+    instrument.openEditor();
+    CHECK (instrument.screenShown() && ! instrument.screen().isBusy());
 }
 
 ARTFREQ_TEST (uiLicensingTheLicenceCardAndDeactivating)

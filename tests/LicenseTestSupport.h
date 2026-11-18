@@ -234,6 +234,18 @@ public:
         add (std::move (step));
     }
 
+    /** The next request is answered after `milliseconds` (a slow server), unless it is cancelled
+        first. `started` is signalled when it begins to wait. */
+    void replyAfter (const Reply& r, int milliseconds)
+    {
+        Step step;
+        step.reply.outcome = anymeans::license::HttpReply::Outcome::answered;
+        step.reply.statusCode = r.status;
+        step.reply.body = juce::String::fromUTF8 (r.body);
+        step.delayMs = milliseconds;
+        add (std::move (step));
+    }
+
     anymeans::license::HttpReply post (const juce::String& path, const juce::String& body, int timeoutMs,
                                        anymeans::license::CancelToken& token) override
     {
@@ -280,6 +292,26 @@ public:
             return cancelled;
         }
 
+        if (step.delayMs > 0)
+        {
+            juce::WaitableEvent wake;
+
+            if (token.setAbortAction ([&wake] { wake.signal(); }))
+            {
+                started.signal();
+                wake.wait (step.delayMs);
+                token.clearAbortAction();
+            }
+
+            if (token.isCancelled())
+            {
+                ++cancelsSeen;
+                anymeans::license::HttpReply cancelled;
+                cancelled.outcome = anymeans::license::HttpReply::Outcome::cancelled;
+                return cancelled;
+            }
+        }
+
         return step.reply;
     }
 
@@ -292,6 +324,7 @@ public:
     size_t numSent() const    { return sent().size(); }
 
     juce::WaitableEvent hanging;      // signalled when a hanging request starts waiting
+    juce::WaitableEvent started;      // signalled when a slow request (replyAfter) starts waiting
     std::atomic<int> cancelsSeen { 0 };
 
 private:
@@ -299,6 +332,7 @@ private:
     {
         anymeans::license::HttpReply reply;
         bool hang = false;
+        int delayMs = 0;
     };
 
     void add (Step step)

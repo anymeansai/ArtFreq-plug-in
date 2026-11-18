@@ -786,10 +786,9 @@ LicenceCard::LicenceCard (ArtFreqProcessor& p, bool isWide)
 
 LicenceCard::~LicenceCard()
 {
+    // A deactivation on its way is not stopped (see the editor's Content): the manager finishes
+    // it, and its result, which would come here, is dropped.
     license.removeListener (this);
-
-    if (waitingForResult && license.getRequestInProgress() == LicenseManager::Request::deactivating)
-        license.cancelRequest();
 }
 
 void LicenceCard::reset()
