@@ -31,9 +31,15 @@ namespace
         return c == '-' || (c >= 0x2010 && c <= 0x2015) || c == 0x2212 || juce::CharacterFunctions::isWhitespace (c);
     }
 
+    /** What findKeyIn looks for: a key whose checksum holds, or anything in a key's shape. */
+    enum class KeySearch { wellFormed, keyShaped };
+
     /** A key in pasted text that holds more than a key ("Your key: 8K3QX-7M2PD-..."): runs of
-        letters and digits joined only by dashes or blanks that make a well-formed key. */
-    juce::String findKeyIn (const juce::String& text)
+        letters and digits joined only by dashes or blanks that make a well-formed key. Or, with
+        `keyShaped`, that look like one (groups of five, or all twenty together) whatever its
+        checksum: a key with a typo, pasted with the email's words, is then shown as the key it
+        is, and the checksum says it has a typo. */
+    juce::String findKeyIn (const juce::String& text, KeySearch search = KeySearch::wellFormed)
     {
         struct Run
         {
@@ -76,18 +82,43 @@ namespace
                 if (last > first && ! runs[last].followsTheOneBefore)
                     break;
 
+                // In a key's shape, every run is a whole number of groups ("Key Y1F2F-..." is not
+                // a key starting with "KEY").
+                if (search == KeySearch::keyShaped && runs[last].characters.length() % 5 != 0)
+                    break;
+
                 candidate += runs[last].characters;
                 const auto key = LicenseKey::normalise (candidate);
 
                 if (key.length() > LicenseKey::length)
                     break;
 
-                if (key.length() == LicenseKey::length && LicenseKey::isWellFormed (key))
+                if (key.length() == LicenseKey::length && (search == KeySearch::keyShaped || LicenseKey::isWellFormed (key)))
                     return key;
             }
         }
 
         return {};
+    }
+
+    /** What the field holds after a paste. A paste is a key, or a piece of one: a key (or most
+        of one, or text with a key in it) replaces whatever the field held, so a key pasted after
+        a failed attempt is the one sent, never a mix of the two; a piece that completes the key
+        typed so far, or is too short to be a key by itself, goes where the caret is. */
+    juce::String textAfterPaste (const juce::String& current, juce::Range<int> replaced, const juce::String& pasted)
+    {
+        const auto inserted = current.replaceSection (replaced.getStart(), replaced.getLength(), pasted);
+
+        if (findKeyIn (pasted).isNotEmpty())
+            return pasted;
+
+        if (LicenseKey::isWellFormed (LicenseKey::normalise (inserted)))
+            return inserted;
+
+        if (findKeyIn (pasted, KeySearch::keyShaped).isNotEmpty() || LicenseKey::normalise (pasted).length() >= 15)
+            return pasted;
+
+        return inserted;
     }
 
     juce::Colour errorColour()     { return juce::Colour (0xffff8a95); }   // danger, lighter: text on the panel
@@ -165,16 +196,17 @@ juce::String formatTypedKey (const juce::String& typed)
 {
     auto key = LicenseKey::normalise (typed);
 
-    // More than a key: a key among other words, if there is one; else what was typed, cut to a
-    // key's length (the checksum then says whether it is one).
+    // More than a key: a key among other words, if there is one; else something in a key's
+    // shape among them (a key with a typo); else what was typed, cut to a key's length (the
+    // checksum then says whether it is one).
     if (key.length() > LicenseKey::length || (key.length() == LicenseKey::length && ! LicenseKey::isWellFormed (key)))
     {
-        const auto found = findKeyIn (typed);
+        auto found = findKeyIn (typed);
 
-        if (found.isNotEmpty())
-            key = found;
-        else
-            key = key.substring (0, LicenseKey::length);
+        if (found.isEmpty() && key.length() > LicenseKey::length)
+            found = findKeyIn (typed, KeySearch::keyShaped);
+
+        key = found.isNotEmpty() ? found : key.substring (0, LicenseKey::length);
     }
 
     juce::String shown;
@@ -254,6 +286,21 @@ bool KeyTextBox::keyPressed (const juce::KeyPress& key)
     const auto used = juce::TextEditor::keyPressed (key);
     reformat();
     return used;
+}
+
+void KeyTextBox::insertTextAtCaret (const juce::String& text)
+{
+    // Typing comes one character at a time; more at once is a paste (Cmd+V, Shift+Insert, the
+    // right-click menu), which may replace the whole key (see textAfterPaste).
+    if (text.length() > 1 && ! isReadOnly())
+    {
+        const auto selected = getHighlightedRegion();
+        const auto replaced = selected.isEmpty() ? juce::Range<int>::emptyRange (getCaretPosition()) : selected;
+        setKey (textAfterPaste (getText(), replaced, text));
+        return;
+    }
+
+    juce::TextEditor::insertTextAtCaret (text);
 }
 
 void KeyTextBox::performPopupMenuAction (int menuItemID)

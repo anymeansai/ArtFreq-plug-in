@@ -260,6 +260,10 @@ namespace
             };
             settings.onResetDrawing = [this]
             {
+                // (The row is not offered while locked; this is the backstop.)
+                if (! processor.isLicensed())
+                    return;
+
                 state.setSelected (juce::Uuid::null());
                 processor.setDocument (ArtDocument::createDefault());
             };
@@ -678,6 +682,11 @@ namespace
                 topBar->setLocked (locked);
             else
                 header->setLocked (locked);
+
+            // The settings stay open over the activation screen (for the Licence card), but the
+            // drawing behind it is out of reach: no Reset drawing, which undo (hidden) couldn't
+            // take back.
+            settings.setDrawingResettable (! locked);
 
             if (show == activation.isVisible())
                 return;

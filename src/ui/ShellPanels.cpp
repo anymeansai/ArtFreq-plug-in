@@ -292,11 +292,27 @@ void SettingsPanel::cancelReset()
 
 void SettingsPanel::showResetConfirmation (bool shouldShow)
 {
-    confirmingReset = shouldShow;
-    resetButton.setVisible (! shouldShow);
-    cancelButton.setVisible (shouldShow);
-    confirmButton.setVisible (shouldShow);
+    confirmingReset = shouldShow && drawingResettable;
+    resetButton.setVisible (drawingResettable && ! confirmingReset);
+    cancelButton.setVisible (confirmingReset);
+    confirmButton.setVisible (confirmingReset);
     repaint();
+}
+
+void SettingsPanel::setDrawingResettable (bool canReset)
+{
+    if (canReset == drawingResettable)
+        return;
+
+    drawingResettable = canReset;
+    showResetConfirmation (false);
+
+    const auto before = idealHeight;
+    resized();
+    repaint();
+
+    if (idealHeight != before && onIdealHeightChanged != nullptr)
+        onIdealHeightChanged();
 }
 
 void SettingsPanel::refresh()
@@ -368,6 +384,9 @@ void SettingsPanel::paint (juce::Graphics& g)
     g.drawText ("dB/oct", slopeUnitArea, juce::Justification::centredLeft, false);
 
     wrappedText (noteText(), static_cast<float> (noteArea.getWidth())).draw (g, noteArea.toFloat());
+
+    if (! drawingResettable)
+        return;
 
     juce::AttributedString confirmText;
     confirmText.setWordWrap (juce::AttributedString::byWord);
@@ -481,18 +500,23 @@ void SettingsPanel::layoutEffect()
     tempoSource->setBounds (controlX, y, 116, h);
     bpm->setBounds (tempoSource->getRight() + 8, y, controlWidth - 116 - 8, h);
     tempoTextArea = { bpm->getX() + 2, y, bpm->getWidth() - 2, h };
-    y += h + 12;
+    auto rightBottom = y + h;
 
-    caption ("Drawing", x, y);
+    if (drawingResettable)
+    {
+        y += h + 12;
+        caption ("Drawing", x, y);
 
-    const auto right = x + effectColumnWidth;
-    resetButton.setBounds (right - resetButton.getIdealWidth(), y, resetButton.getIdealWidth(), h);
-    confirmButton.setBounds (right - confirmButton.getIdealWidth(), y, confirmButton.getIdealWidth(), h);
-    cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
-    confirmTextArea = { x, y, cancelButton.getX() - 12 - x, h };
+        const auto right = x + effectColumnWidth;
+        resetButton.setBounds (right - resetButton.getIdealWidth(), y, resetButton.getIdealWidth(), h);
+        confirmButton.setBounds (right - confirmButton.getIdealWidth(), y, confirmButton.getIdealWidth(), h);
+        cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
+        confirmTextArea = { x, y, cancelButton.getX() - 12 - x, h };
+        rightBottom = y + h;
+    }
 
     // ---- across the foot: the licence ----
-    columnsBottom = juce::jmax (leftBottom, y + h);
+    columnsBottom = juce::jmax (leftBottom, rightBottom);
     y = columnsBottom + effectLicenceGap;
     dividers.push_back (y);
     y += effectLicenceGap;
@@ -560,19 +584,22 @@ void SettingsPanel::resized()
     dividers.push_back (y);
     y += sectionGap;
 
-    // Drawing
-    sectionCaptions.push_back ({ "Drawing", y, cardPad });
-    y += 12 + rowGap + 4;
+    // Drawing (not while the plug-in is locked: the drawing is out of reach then)
+    if (drawingResettable)
+    {
+        sectionCaptions.push_back ({ "Drawing", y, cardPad });
+        y += 12 + rowGap + 4;
 
-    const auto right = getWidth() - cardPad;
-    resetButton.setBounds (right - resetButton.getIdealWidth(), y, resetButton.getIdealWidth(), h);
-    confirmButton.setBounds (right - confirmButton.getIdealWidth(), y, confirmButton.getIdealWidth(), h);
-    cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
-    confirmTextArea = { cardPad, y, cancelButton.getX() - 12 - cardPad, h };
-    y += h + sectionGap - 4;
+        const auto right = getWidth() - cardPad;
+        resetButton.setBounds (right - resetButton.getIdealWidth(), y, resetButton.getIdealWidth(), h);
+        confirmButton.setBounds (right - confirmButton.getIdealWidth(), y, confirmButton.getIdealWidth(), h);
+        cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
+        confirmTextArea = { cardPad, y, cancelButton.getX() - 12 - cardPad, h };
+        y += h + sectionGap - 4;
 
-    dividers.push_back (y);
-    y += sectionGap - 4;
+        dividers.push_back (y);
+        y += sectionGap - 4;
+    }
 
     // Licence (a little tighter: with a message of why a deactivation failed, the panel still
     // has to fit the window)

@@ -23,7 +23,8 @@ namespace artfreq::ui
 /** A key as the field shows it: what a key can hold (digits and capitals; O read as 0, I and L as
     1, as the licence code reads them), in groups of five ("8K3QX-7M2PD-R9T4W-NV6ZH"), at most 20
     characters. Pasted text that holds a key among other words ("Your key: 8k3qx 7m2pd ...") gives
-    the key; anything else is kept as typed, up to 20 characters, for the checksum to judge. */
+    the key (or, if its checksum fails, what is in a key's shape there: the key with its typo);
+    anything else is kept as typed, up to 20 characters, for the checksum to judge. */
 juce::String formatTypedKey (const juce::String& typed);
 
 /** The number of key characters in a piece of typed text (the dashes, spaces and such not counted). */
@@ -34,7 +35,8 @@ int caretAfterKeyCharacters (int keyCharacters);
 
 //==============================================================================
 /** The text box the key is typed or pasted into. It shows the key in groups of five as it is
-    typed, whatever was typed or pasted (any case, with or without dashes or spaces). It has the
+    typed, whatever was typed or pasted (any case, with or without dashes or spaces); a key
+    pasted over what it holds replaces it (a piece of one goes in at the caret). It has the
     keyboard focus only while it is typed in (see ui/KeyFocus.h): Return activates, Esc and Tab
     end the typing, and the space bar, which no key holds, ends it and goes on to the DAW. Its keys
     come to it as key presses, not through the system's text input (a key needs no input method,
@@ -53,6 +55,7 @@ public:
     bool isTextInputActive() const override   { return false; }
     bool keyPressed (const juce::KeyPress&) override;
     bool keyStateChanged (bool) override      { return false; }
+    void insertTextAtCaret (const juce::String& text) override;
     void performPopupMenuAction (int menuItemID) override;
 
 private:

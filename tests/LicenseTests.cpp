@@ -127,6 +127,9 @@ juce::String serverErrorText (int code)
          + "). Try again in a minute, or write to support@anymeansaudio.com.";
 }
 
+/** What a refusal (403) ends with: a genuine key can be refused too. */
+const juce::String supportLine (" If you think this is wrong, write to support@anymeansaudio.com.");
+
 const juce::String notConfirmedText ("Activation couldn't be confirmed. Please try again later or write to support@anymeansaudio.com.");
 
 /** A listener that counts calls and checks they come on the message thread. */
@@ -939,7 +942,7 @@ ARTFREQ_TEST (licenseInstrumentRefusesAKeyForAnotherPlugin)
     const auto recorded = activateAndWait (instrument, keyCreme);
 
     CHECK (recorded.result.outcome == Outcome::refused);
-    CHECK (recorded.result.message == "That key is for a different AnyMeans Audio plug-in.");
+    CHECK (recorded.result.message == "That key is for a different AnyMeans Audio plug-in. If you think this is wrong, write to support@anymeansaudio.com.");
     CHECK (recorded.result.serverCode == "wrong_product" && recorded.result.statusCode == 403);
     CHECK (server->numSent() == 2);
     CHECK (! instrument.isActivated());
@@ -973,7 +976,7 @@ ARTFREQ_TEST (licenseEffectTakesOnlyArtFreqProKeys)
         LicenseManager effect (artFreqEffectLicensing(), makeEnvironment (temporary.folder, server));
         const auto recorded = activateAndWait (effect, keyArtFreq);
         CHECK (recorded.result.outcome == Outcome::refused);
-        CHECK (recorded.result.message == artFreqEffectLicensing().wrongProductMessage);
+        CHECK (recorded.result.message == artFreqEffectLicensing().wrongProductMessage + supportLine);
         CHECK (server->numSent() == 1);
         CHECK (! effect.isActivated());
     }
@@ -988,7 +991,7 @@ ARTFREQ_TEST (licenseEffectTakesOnlyArtFreqProKeys)
         LicenseManager effect (artFreqEffectLicensing(), makeEnvironment (temporary.folder, server));
         const auto recorded = activateAndWait (effect, LicenseKey::format (keyArtFreq).toLowerCase());
         CHECK (recorded.result.outcome == Outcome::refused);
-        CHECK (recorded.result.message == "That key is for ArtFreq (without FX). ArtFreq FX comes with ArtFreq Pro.");
+        CHECK (recorded.result.message == "That key is for ArtFreq (without FX). ArtFreq FX comes with ArtFreq Pro." + supportLine);
         CHECK (! effect.isActivated());
         CHECK (LicenseManager (artFreqInstrumentLicensing(), makeEnvironment (temporary.folder, server)).isActivated());
     }
@@ -1011,9 +1014,10 @@ ARTFREQ_TEST (licenseActivationReportsEveryServerAnswer)
         { activateLimit, Outcome::refused, "This key is already active on 2 machines. Deactivate it there first (or write to support@anymeansaudio.com)." },
         { { 409, "{\"ok\":false,\"code\":\"activation_limit\",\"error\":\"This key is already active on another machine.\"}" },
           Outcome::refused, "This key is already active on another machine. Deactivate it on your old computer, or write to support@anymeansaudio.com." },
-        { activateUnknownKey, Outcome::refused, utf8 ("That license key isn't valid \xe2\x80\x94" " check for typos and try again.") },
-        { activateInvalidKey, Outcome::refused, utf8 ("That license key isn't valid \xe2\x80\x94" " check for typos and try again.") },
-        { activateMissingMachine, Outcome::refused, "A machine id is required to activate." },
+        // A refusal adds the support address: a genuine key can be refused too.
+        { activateUnknownKey, Outcome::refused, utf8 ("That license key isn't valid \xe2\x80\x94" " check for typos and try again.") + supportLine },
+        { activateInvalidKey, Outcome::refused, utf8 ("That license key isn't valid \xe2\x80\x94" " check for typos and try again.") + supportLine },
+        { activateMissingMachine, Outcome::refused, "A machine id is required to activate." + supportLine },
         { activateNotJson, Outcome::serverError, serverErrorText (400) },
         { activateNoMachine, Outcome::serverError, serverErrorText (400) },
         { notFound, Outcome::serverError, serverErrorText (404) },
@@ -1178,7 +1182,7 @@ ARTFREQ_TEST (licenseDeactivationRemovesOnlyWhatTheServerFreed)
         { [] (FakeServer& s) { s.reply (deactivateArtFreqAgain); },   Outcome::deactivated, true, unknown },   // not_active_here
         { [] (FakeServer& s) { s.reply (deactivateUnknownKey); },     Outcome::deactivated, true, unknown },
         { [] (FakeServer& s) { s.reply (deactivateInvalidKey); },     Outcome::refused, false,
-          utf8 ("That license key isn't valid \xe2\x80\x94" " check for typos and try again.") + kept },
+          utf8 ("That license key isn't valid \xe2\x80\x94" " check for typos and try again.") + supportLine + kept },
         { [] (FakeServer& s) { s.reply (deactivateNotJson); },        Outcome::serverError, false, serverErrorText (400) + kept },
         { [] (FakeServer& s) { s.reply (cloudflare502); },            Outcome::serverError, false, serverErrorText (502) + kept },
         { [] (FakeServer& s) { s.reply (rateLimited); },              Outcome::serverError, false, serverErrorText (429) + kept },

@@ -390,11 +390,13 @@ ARTFREQ_TEST (licenseManagerHandlesTheWorkersOwnAnswers)
 
         const auto artFreqInEffect = activateNow (effect, run.keyArtFreq);
         CHECK (artFreqInEffect.outcome == Outcome::refused);
-        CHECK (artFreqInEffect.message == artFreqEffectLicensing().wrongProductMessage);
+        CHECK (artFreqInEffect.message.startsWith (artFreqEffectLicensing().wrongProductMessage));
+        CHECK (artFreqInEffect.message.contains (SUPPORT_EMAIL));
 
         const auto creme = activateNow (instrument, run.keyCreme);
         CHECK (creme.outcome == Outcome::refused);
-        CHECK (creme.message == "That key is for a different AnyMeans Audio plug-in.");
+        CHECK (creme.message == "That key is for a different AnyMeans Audio plug-in. If you think this is wrong, write to "
+                                + juce::String (SUPPORT_EMAIL) + ".");
 
         const auto unsignedReply = activateNow (instrument, run.keyArtFreq);
         CHECK (unsignedReply.outcome == Outcome::notConfirmed);

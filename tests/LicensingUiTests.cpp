@@ -255,10 +255,17 @@ ARTFREQ_TEST (uiLicensingEveryFailureSaysWhyAndLeavesItLocked)
 
     const auto attempt = [&] (const juce::String& key)
     {
+        // Done when the screen shows a new message, or the same one again for a request that
+        // went to the server (two keys can be refused in the same words).
         const auto before = effect.message();
+        const auto sentBefore = server.numSent();
         effect.field().setKey (key);
         effect.button ("activate").onClick();
-        return effect.settle ([&] { return ! effect.screen().isBusy() && effect.message().isNotEmpty() && effect.message() != before; });
+        return effect.settle ([&]
+        {
+            return ! effect.screen().isBusy() && effect.message().isNotEmpty()
+                && (effect.message() != before || server.numSent() > sentBefore);
+        });
     };
 
     // A typo: caught on the spot, nothing sent.
@@ -266,21 +273,31 @@ ARTFREQ_TEST (uiLicensingEveryFailureSaysWhyAndLeavesItLocked)
     CHECK (effect.message().contains ("typos"));
     CHECK (server.numSent() == 0);
 
+    // Every refusal names the support address: a genuine key can be refused too (a mix-up with
+    // the order), and "check for typos" is then no help.
+    const juce::String address (anymeans::license::SUPPORT_EMAIL);
+
     // An unknown key (403): the server's words.
     server.reply (activateUnknownKey);
     CHECK (attempt (keyUnknown));
     CHECK (effect.message().startsWith ("That license key isn't valid"));
+    CHECK (effect.message().contains (address));
 
     // A key for ArtFreq alone, in ArtFreq FX (403 wrong_product): ArtFreq FX's own words.
     server.reply (activateArtFreqAsPro);
     CHECK (attempt (keyArtFreq));
-    CHECK (effect.message() == anymeans::license::artFreqEffectLicensing().wrongProductMessage);
+    CHECK (effect.message().startsWith (anymeans::license::artFreqEffectLicensing().wrongProductMessage));
+    CHECK (effect.message().contains (address));
+
+    // A key for another AnyMeans plug-in altogether (Creme).
+    server.reply (activateCremeAsPro);
+    CHECK (attempt (keyCreme));
+    CHECK (effect.message().startsWith ("That key isn't for ArtFreq FX.") && effect.message().contains (address));
 
     // Two computers already (409): the server's words, with the support address, which a
     // double-click selects whole (the text box would stop at '@' and '.').
     server.reply (activateLimit);
     CHECK (attempt (keyFull));
-    const juce::String address (anymeans::license::SUPPORT_EMAIL);
     CHECK (effect.message().contains (address));
 
     auto& text = const_cast<ui::SelectableText&> (effect.screen().getMessageText());

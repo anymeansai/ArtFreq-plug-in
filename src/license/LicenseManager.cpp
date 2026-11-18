@@ -58,6 +58,16 @@ juce::String stillActivated()
     return " This computer stays activated.";
 }
 
+/** A refusal (403) with the support address: a genuine key can be refused too (a mix-up with the
+    order, a key from another purchase), and "check for typos" is then no help. */
+juce::String withSupportAddress (const juce::String& refusal)
+{
+    if (refusal.containsIgnoreCase (SUPPORT_EMAIL))
+        return refusal;
+
+    return refusal + " If you think this is wrong, " + supportSentenceEnd();
+}
+
 juce::String pluginsUnlockedBy (const juce::String& productId, const juce::String& fallback)
 {
     if (const auto* product = findProduct (productId))
@@ -345,11 +355,12 @@ Result interpretActivation (const RequestContext& context, const juce::String& k
                                                           key, context.machineId);
 
             return makeResult (Outcome::refused,
-                               knownProduct ? context.plugin.knownWrongProductMessage : context.plugin.wrongProductMessage,
+                               withSupportAddress (knownProduct ? context.plugin.knownWrongProductMessage
+                                                                : context.plugin.wrongProductMessage),
                                status, &parsed);
         }
 
-        return makeResult (Outcome::refused, parsed.error, status, &parsed);
+        return makeResult (Outcome::refused, withSupportAddress (parsed.error), status, &parsed);
     }
 
     // 400, 404, 405, 429, 5xx, a 200 that isn't ok, an answer that isn't the server's JSON
@@ -450,7 +461,7 @@ Result runDeactivation (const RequestContext& context, const LicenseManager::Act
     }
 
     if (status == 403 && parsed.isObject && parsed.error.isNotEmpty())
-        return makeResult (Outcome::refused, parsed.error + stillActivated(), status, &parsed);
+        return makeResult (Outcome::refused, withSupportAddress (parsed.error) + stillActivated(), status, &parsed);
 
     return makeResult (Outcome::serverError, serverErrorMessage (status) + stillActivated(), status, &parsed);
 }

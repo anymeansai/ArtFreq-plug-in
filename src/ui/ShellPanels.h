@@ -68,6 +68,12 @@ public:
         again). */
     void cancelReset();
 
+    /** Whether the drawing can be reset from here: not while the plug-in is locked, when the
+        drawing is out of reach (and undo with it). The row is then not there at all (nothing is
+        greyed). The editor calls this whenever the licence changes. */
+    void setDrawingResettable (bool canReset);
+    bool isDrawingResettable() const noexcept   { return drawingResettable; }
+
     std::function<void()> onClose;
     std::function<void (float)> onWindowScaleChosen;
     std::function<void()> onResetDrawing;
@@ -104,6 +110,7 @@ private:
     std::unique_ptr<ChoiceSegments> scaleAttachment, slopeAttachment;
     std::unique_ptr<LicenceCard> licence;
     bool confirmingReset = false;
+    bool drawingResettable = true;
     int idealHeight = 456;
 
     // ArtFreq FX only: the timing its window has no bar for.
