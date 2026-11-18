@@ -1,64 +1,53 @@
 # Signed licence: what the Worker sends, what the plug-ins check
 
-For Nova (Worker side). The plug-ins verify this offline; nothing else about the Worker changes.
+This is the contract as deployed: Nova's version, Nov 18 2026, read from the Worker's code.
 
-## 1. Signing key
-
-- Algorithm: **Ed25519** (RFC 8032, pure Ed25519 with SHA-512). In Workers: `crypto.subtle` with `{ name: "Ed25519" }`.
-- Keep the private key as a Worker secret, `LICENSE_SIGNING_KEY` (PKCS#8, base64). Never put it in code or logs, and keep a backup offline. If it is lost, shipped plug-ins cannot verify new activations until they are updated.
-- Put the **public key** in the activation spec as the raw 32 bytes in **64 lowercase hex characters**. It gets built into the plug-ins.
-
-## 2. Activate reply
-
-Every successful `POST /api/activate` reply (including `alreadyActive`) adds two fields; everything else stays as it is:
+## Activate reply (200)
 
 ```json
 {
   "ok": true,
-  "activationToken": "...",
-  "license": "AMLIC1|prod_Ve87k69rq5fkZN|AF8JBEA2A0X5ZPJN6W6C|<machineId>|2026-11-18T12:00:00.000Z",
-  "signature": "<base64>"
+  "activationToken": "<64 hex>",
+  "license": { "payload": "anymeans-license-v1|<KEY>|<machineId>|<productId>", "signature": "<base64>", "alg": "Ed25519" },
+  "activationsUsed": 1, "maxActivations": 1, "alreadyActive": false
 }
 ```
 
-- `license` is the exact string that was signed, with fields joined by `|`:
-  1. `AMLIC1`: the format version.
-  2. The license record's `productId` (the product the key was bought for).
-  3. The key, normalised: 20 characters, uppercase, no dashes.
-  4. The `machineId` exactly as received, trimmed.
-  5. The time of signing, ISO 8601 UTC.
-- `signature`: standard base64, with padding, of the 64-byte Ed25519 signature over the UTF-8 bytes of `license`.
-- Error replies carry no `license` or `signature`.
+- `KEY` is 20 characters: uppercase, no dashes.
+- `machineId` is exactly what the plug-in sent.
+- `productId` is the product the licence record belongs to, so for an ArtFreq Pro key it is the Pro product.
+- `signature` is standard base64 of the 64-byte Ed25519 signature over the UTF-8 bytes of `payload`.
+- `license` is `null` when the Worker has no signing key. The plug-in then does not activate.
 
-## 3. What the plug-in checks
+## Public key (built into the plug-ins)
 
-A plug-in counts as activated only when all of these hold:
+`7acdbd078095b8d36a9c91dfaa2166c820fbb382bc71d8659bfd1153231e2307`: raw 32 bytes, hex.
 
-1. The signature verifies against the built-in public key.
-2. The version is `AMLIC1`.
-3. The product is one this plug-in accepts:
+The private key stays a Worker secret (`LICENSE_SIGNING_KEY`). Keep a backup offline: if it is lost, shipped plug-ins cannot verify new activations until they are updated.
+
+## What the plug-in checks, offline, on every launch
+
+1. It rebuilds the payload from the stored key, this computer's hashed machine ID and the stored product ID.
+2. The product must be one the plug-in accepts:
    - ArtFreq accepts ArtFreq and ArtFreq Pro.
    - ArtFreq FX accepts ArtFreq Pro only.
    - Crème and Vocalyst each accept their own product.
-4. The key matches the stored key.
-5. The machine ID matches this computer's hashed ID.
+3. The signature must verify against the public key above.
 
-It stores `license` and `signature` and re-checks them on every launch, offline. Copying the file to another computer fails check 5; editing it fails check 1.
+If any check fails, the plug-in is not activated. Deactivating deletes the key, token, payload and signature.
 
-## 4. Test key (Nova adds it to the `LICENSES` KV namespace)
+## Test key
 
-Key: **AF8JB-EA2A0-X5ZPJ-N6W6C** (ArtFreq Pro, so it unlocks ArtFreq and ArtFreq FX). It was made with the Worker's own `generateLicenseKey`, so its checksum is valid.
-
-KV entry, name `AF8JBEA2A0X5ZPJN6W6C`, value:
+**AF8JB-EA2A0-X5ZPJ-N6W6C** (ArtFreq Pro). It needs this KV entry in `LICENSES`, under the name `AF8JBEA2A0X5ZPJN6W6C`:
 
 ```json
 {"key":"AF8JBEA2A0X5ZPJN6W6C","productId":"prod_Ve87k69rq5fkZN","buyerEmail":"support@anymeansaudio.com","sessionId":null,"status":"unused","activations":[],"maxActivations":2,"createdAt":"2026-11-18T00:00:00.000Z"}
 ```
 
-This is a real, free licence in the live store. Delete the entry when testing is done, or keep it as your own copy.
+Delete it when testing is done, or keep it as your own copy.
 
-## 5. Also on the Worker (from the review)
+## Still open on the Worker
 
-- Set `maxActivations` to 2 for every product (two computers per key).
-- Map "ArtFreq Pro" to its own download URL in the purchase email.
-- Change the email's wording from "activates on one machine" to two.
+- `maxActivations` is 1 for every product; the agreed number is 2.
+- "ArtFreq Pro" has no download URL of its own in the purchase email.
+- The email says "activates on one machine".
