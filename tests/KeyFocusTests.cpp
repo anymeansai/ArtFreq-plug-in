@@ -1127,3 +1127,63 @@ ARTFREQ_TEST (uiKeysTheActivationScreen)
         CHECK (! rig.uses (space));
     }
 }
+
+ARTFREQ_TEST (uiKeysPastingAKeyReplacesWhatTheFieldHolds)
+{
+    // After a failed attempt the field still holds the key that failed. The right key, copied
+    // from the email and pasted (Cmd+V, wherever the caret is), must replace it, not go in
+    // beside it: otherwise Activate sends the old key, or a mix of the two. A piece of a key that
+    // completes what was typed goes in at the caret.
+    if (! canDriveAWindow())
+        return;
+
+    const licensetest::ScopedLockedLicensing licensing;
+    Rig rig (ArtFreqProcessor::Variant::effect);
+    CHECK (rig.valid());
+
+    if (! rig.valid())
+        return;
+
+    auto& field = dynamic_cast<juce::TextEditor&> (rig.get ("licence-key"));
+    const juce::KeyPress paste ('v', juce::ModifierKeys::commandModifier, 0);
+    const juce::String typo ("Y1F2F-JVXBX-WCNVB-VCZKK"), right ("Y1F2F-JVXBX-WCNVB-VCZKJ");
+
+    const auto pasteInto = [&] (const juce::String& held, int caret, const juce::String& clipboard)
+    {
+        rig.click ("licence-key");
+        field.setText (held, false);
+        field.setCaretPosition (caret < 0 ? held.length() : caret);
+        juce::SystemClipboard::copyTextToClipboard (clipboard);
+        CHECK (rig.uses (paste));
+        return field.getText();
+    };
+
+    // The typo was refused ("check for typos"); the right key pasted after it, the caret at the end.
+    rig.click ("licence-key");
+    rig.type (typo.removeCharacters ("-"));
+    CHECK (rig.uses (returnKey));
+    CHECK (licensetest::pumpUntil ([&] { return field.getText() == typo && ! rig.processor->getLicense().isBusy(); }));
+    CHECK (pasteInto (typo, -1, right) == right);
+
+    // The caret where the click left it, in the middle; the key with the email's words.
+    CHECK (pasteInto (typo, 11, "Your license key: " + right) == right);
+
+    // Part of the key typed, then the whole key pasted.
+    CHECK (pasteInto ("Y1F2F-JV", -1, right) == right);
+
+    // Into an empty field, a mistyped key with the email's words: the mistyped key, as it is.
+    CHECK (pasteInto ({}, -1, "Your license key: y1f2f-jvxbx-wcnvb-vczkk") == typo);
+
+    // The last group, pasted after the first three: it completes the key.
+    CHECK (pasteInto ("Y1F2F-JVXBX-WCNVB-", -1, "VCZKJ") == right);
+
+    // And what is pasted is what is sent (the typo was caught here, without the server).
+    CHECK (licensing.server->numSent() == 0);
+
+    licensing.server->reply (licensetest::activateProFresh);
+    pasteInto (typo, 3, right);
+    CHECK (rig.uses (returnKey));
+    CHECK (licensetest::pumpUntil ([&] { return rig.processor->isLicensed(); }));
+    CHECK (licensing.server->numSent() == 1
+           && licensing.server->sent().front().json.getProperty ("key", {}).toString() == right);
+}

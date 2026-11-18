@@ -108,6 +108,11 @@ ARTFREQ_TEST (uiLicensingTheKeyFieldShowsAnyFormAsAKey)
     CHECK (ui::formatTypedKey (juce::String::fromUTF8 ("Key \xe2\x80\x93 y1f2f\xe2\x80\x93jvxbx\xe2\x80\x93wcnvb\xe2\x80\x93vczkj"))
            == "Y1F2F-JVXBX-WCNVB-VCZKJ");                                                       // typographic dashes from a mail
     CHECK (ui::formatTypedKey ("") == "");
+
+    // A key with a typo, pasted with the email's words: the key as typed, not the words' first
+    // twenty characters ("Y0UR1-1CENS-..."), so the typo is there to be seen.
+    CHECK (ui::formatTypedKey ("Your license key: y1f2f-jvxbx-wcnvb-vczkk") == "Y1F2F-JVXBX-WCNVB-VCZKK");
+    CHECK (ui::formatTypedKey ("Key Y1F2F JVXBX WCNVB VCZKK") == "Y1F2F-JVXBX-WCNVB-VCZKK");
     CHECK (ui::countKeyCharacters ("Y1F2F-JV") == 7);
     CHECK (ui::caretAfterKeyCharacters (0) == 0 && ui::caretAfterKeyCharacters (5) == 5 && ui::caretAfterKeyCharacters (6) == 7
            && ui::caretAfterKeyCharacters (20) == 23);
@@ -545,4 +550,143 @@ ARTFREQ_TEST (uiLicensingStateAutomationAndScansWorkWhileLocked)
     }
 
     CHECK (licensing.server->numSent() == 0);
+}
+
+ARTFREQ_TEST (uiLicensingTwoKeysDeactivatingTheNewerKeepsTheOlder)
+{
+    // A buyer of ArtFreq who later bought ArtFreq Pro (for ArtFreq FX) has both keys activated.
+    // Deactivate in the instrument frees the Pro key, which is the one in use: the question says
+    // ArtFreq FX will be locked and ArtFreq stays, and afterwards the instrument is still
+    // activated (by the ArtFreq key), so the settings stay open and the card says what went and
+    // what stays; ArtFreq FX, open beside it, locks and shows the activation screen.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const ScopedLockedLicensing licensing;
+    auto& server = *licensing.server;
+    CHECK (licensing.activateArtFreqThenPro());
+
+    Instance instrument (Variant::instrument);
+    Instance effect (Variant::effect);
+    CHECK (instrument.processor->isLicensed() && effect.processor->isLicensed());
+
+    auto& editor = *instrument.editor;
+    editor.showSettings (true);
+    pump (30);
+
+    instrument.button ("deactivate").onClick();
+    const auto warning = instrument.processor->getLicense().getDeactivationWarning();
+    CHECK (warning.contains ("ArtFreq FX will be locked") && warning.contains ("ArtFreq stays activated with your ArtFreq key"));
+
+    server.reply (deactivateArtFreq);
+    instrument.button ("deactivate-confirm").onClick();
+    CHECK (instrument.settle ([&] { return instrument.card().getMessageText().getMessage().isNotEmpty(); }));
+
+    const auto said = instrument.card().getMessageText().getMessage();
+    CHECK_MSG (said.startsWith ("Deactivated. Your ArtFreq Pro key can now be activated on another computer.")
+               && said.endsWith ("ArtFreq FX is now locked on this computer; ArtFreq stays activated with your ArtFreq key."), said);
+    CHECK (instrument.processor->isLicensed() && ! instrument.screenShown());
+    CHECK (isShown (editor, "settings-panel") && isShown (editor, "licence-message") && isShown (editor, "deactivate"));
+    CHECK (instrument.processor->getLicense().getActivation()->productId == anymeans::license::PRODUCT_ID_ARTFREQ);
+
+    CHECK (pumpUntil ([&] { return ! effect.processor->isLicensed() && effect.screenShown(); }));
+
+    // The ArtFreq key next: now the instrument locks too, and the activation screen says so.
+    server.reply (deactivateArtFreq);
+    instrument.button ("deactivate").onClick();
+    CHECK (instrument.processor->getLicense().getDeactivationWarning().contains ("ArtFreq will be locked"));
+    instrument.button ("deactivate-confirm").onClick();
+    CHECK (instrument.settle ([&] { return ! instrument.processor->isLicensed(); }));
+    CHECK (instrument.screenShown() && ! isShown (editor, "settings-panel"));
+    CHECK (instrument.message().endsWith ("ArtFreq is now locked on this computer."));
+}
+
+ARTFREQ_TEST (uiLicensingAProjectClosedDuringADeactivation)
+{
+    // Deactivate, and the project is closed (the processor goes) before the server's answer
+    // comes: the server may have freed this computer, so it must not stay activated. Once the
+    // request could have ended it is locked, the activation screen says why, and the Licence card
+    // offers Deactivate to finish (or Activate... to use it here again).
+    const juce::ScopedJuceInitialiser_GUI gui;
+    ScopedLockedLicensing licensing;
+    licensing.setRequestTimeout (300);
+    auto& server = *licensing.server;
+    CHECK (licensing.activatePro());
+
+    {
+        Instance closing (Variant::instrument);
+        closing.editor->showSettings (true);
+        pump (30);
+        server.replyAfter (deactivateArtFreq, 250);
+        closing.button ("deactivate").onClick();
+        closing.button ("deactivate-confirm").onClick();
+        CHECK (server.started.wait (3000));
+        closing.editor.reset();
+        closing.processor.reset();
+    }
+
+    CHECK (server.cancelsSeen.load() == 1);
+
+    // Opened again: locked (at once, or as soon as the request could have ended).
+    Instance reopened (Variant::effect);
+    CHECK (pumpUntil ([&] { return ! reopened.processor->isLicensed() && reopened.screenShown(); }, 3000));
+    CHECK (reopened.processor->getLicense().getInterruptedDeactivation().has_value());
+
+    auto& editor = *reopened.editor;
+    editor.showSettings (true);
+    pump (30);
+    CHECK (isShown (editor, "deactivate-confirm") && isShown (editor, "licence-activate") && ! isShown (editor, "deactivate"));
+
+    auto* panel = findComponent (editor, "settings-panel");
+    CHECK (panel != nullptr && panel->getBottom() <= editor.getBaseHeight() - 6);
+
+    // Finish it: the server had freed this computer already.
+    server.reply (deactivateArtFreqAgain);
+    reopened.button ("deactivate-confirm").onClick();
+    CHECK (reopened.settle ([&] { return ! reopened.processor->getLicense().getInterruptedDeactivation().has_value()
+                                         && ! reopened.processor->getLicense().isBusy(); }));
+    CHECK (pumpUntil ([&] { return ! isShown (editor, "settings-panel"); }));
+    CHECK (reopened.screenShown() && reopened.message().startsWith ("Deactivated here"));
+    CHECK (anymeans::license::LicenseStore (licensing.folder.folder).read().activations.empty());
+}
+
+ARTFREQ_TEST (uiLicensingNoResetDrawingWhileLocked)
+{
+    // Locked, the drawing is out of reach and undo is hidden, so the settings (open for the
+    // Licence card) offer no Reset drawing: the row is not there. Activated, it is back.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    for (const auto variant : { Variant::instrument, Variant::effect })
+    {
+        const ScopedLockedLicensing licensing;
+        Instance instance (variant);
+
+        ArtDocument document;
+        document.objects.push_back (ArtDocument::makeTextObject ("HELLO", 3500.0f, 16000.0f));
+        instance.processor->setDocument (document);
+
+        auto& editor = *instance.editor;
+        editor.showSettings (true);
+        pump (30);
+
+        auto* panel = dynamic_cast<ui::shell::SettingsPanel*> (findComponent (editor, "settings-panel"));
+        CHECK (panel != nullptr && isShown (editor, "licence-card"));
+        CHECK (! isShown (editor, "reset-drawing") && ! isShown (editor, "reset-confirm"));
+        CHECK (panel != nullptr && ! panel->isDrawingResettable());
+
+        // (Even asked directly, the editor keeps the drawing.)
+        if (panel != nullptr && panel->onResetDrawing != nullptr)
+            panel->onResetDrawing();
+
+        CHECK (instance.processor->getDocument().objects.size() == 1
+               && instance.processor->getDocument().objects.front().text == "HELLO");
+
+        // Activated (here or anywhere): the row is back, and the panel still fits.
+        CHECK (licensing.activatePro());
+        CHECK (pumpUntil ([&] { return isShown (editor, "reset-drawing"); }));
+        CHECK (panel != nullptr && panel->getY() >= 0 && panel->getBottom() <= editor.getBaseHeight() - 6);
+        CHECK (panel != nullptr && panel->getLocalBounds().contains (instance.card().getBounds()));
+
+        instance.button ("reset-drawing").onClick();
+        instance.button ("reset-confirm").onClick();
+        CHECK (instance.processor->getDocument().objects.front().text != "HELLO");
+    }
 }

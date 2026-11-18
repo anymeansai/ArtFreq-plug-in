@@ -19,6 +19,10 @@
 
 #include <juce_events/juce_events.h>
 
+#if ! JUCE_WINDOWS
+ #include <sys/stat.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -1253,6 +1257,296 @@ ARTFREQ_TEST (licenseDeactivatingProLocksBothPlugins)
     CHECK (server->numSent() == 1);
 }
 
+ARTFREQ_TEST (licenseTwoKeysOnOneComputerDeactivateOneAtATime)
+{
+    // A buyer of ArtFreq who later bought ArtFreq Pro (for ArtFreq FX) has both keys activated on
+    // this computer. Deactivating frees the newer key, ArtFreq Pro: that locks ArtFreq FX, and
+    // the ArtFreq key keeps ArtFreq. Both the question and the result say so; then the ArtFreq
+    // key can be deactivated in turn.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const TemporaryFolder temporary;
+    const auto server = std::make_shared<FakeServer>();
+    const LicenseStore store (temporary.folder);
+
+    auto artFreq = storedActivationFrom (activateArtFreqFresh, keyArtFreq);
+    auto pro = storedActivationFrom (activateProFresh, keyPro, "ArtFreq FX");
+    pro.activatedAt = "2021-01-01T00:00:00.000Z";   // the newer one
+    CHECK (store.put (artFreq) && store.put (pro));
+
+    LicenseManager instrument (artFreqInstrumentLicensing(), makeEnvironment (temporary.folder, server));
+    LicenseManager effect (artFreqEffectLicensing(), makeEnvironment (temporary.folder, server));
+    CHECK (instrument.isActivated() && effect.isActivated());
+
+    if (const auto& activation = instrument.getActivation())
+    {
+        CHECK (activation->productId == PRODUCT_ID_ARTFREQ_PRO);
+        CHECK (activation->pluginsKeptByAnotherKey == juce::StringArray { "ArtFreq" });
+        CHECK (activation->anotherKeyProduct == "ArtFreq");
+    }
+
+    const juce::String warning ("Deactivating frees your ArtFreq Pro key for another computer. ArtFreq FX will be locked on "
+                                "this computer until you activate again; ArtFreq stays activated with your ArtFreq key.");
+    CHECK_MSG (instrument.getDeactivationWarning() == warning, instrument.getDeactivationWarning());
+    CHECK (effect.getDeactivationWarning() == warning);
+
+    server->reply (deactivateArtFreq);
+    const auto recorded = deactivateAndWait (instrument);
+    CHECK (recorded.result.outcome == Outcome::deactivated);
+    CHECK_MSG (recorded.result.message == "Deactivated. Your ArtFreq Pro key can now be activated on another computer. ArtFreq FX "
+                                          "is now locked on this computer; ArtFreq stays activated with your ArtFreq key.",
+               recorded.result.message);
+    CHECK (jsonField (server->sent().back(), "key") == LicenseKey::format (keyPro));
+
+    CHECK (instrument.isActivated() && instrument.getActivation()->productId == PRODUCT_ID_ARTFREQ);
+    CHECK (pumpUntil ([&] { return ! effect.isActivated(); }));
+
+    // The ArtFreq key alone now: the plain question, and the instrument locks once it goes.
+    CHECK (instrument.getDeactivationWarning() == "Deactivating frees your key for another computer. ArtFreq will be locked "
+                                                  "on this computer until you activate again.");
+    server->reply (deactivateArtFreq);
+    CHECK (deactivateAndWait (instrument).result.message.endsWith ("ArtFreq is now locked on this computer."));
+    CHECK (! instrument.isActivated() && store.read().activations.empty());
+}
+
+ARTFREQ_TEST (licenseADeactivationCutOffLeavesTheComputerLocked)
+{
+    // The project closes (or the DAW quits) while a deactivation is with the server: the request
+    // is cut off and its answer never arrives. The server may have freed this computer, so the
+    // activation must not go on counting here (with its place free, the key could go to a third
+    // computer). It was marked before the request was sent, and the mark stays: once the request
+    // could have ended, the computer is locked everywhere, and deactivating finishes the job.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const TemporaryFolder temporary;
+    const auto server = std::make_shared<FakeServer>();
+    const LicenseStore store (temporary.folder);
+    CHECK (store.put (storedActivationFrom (activateProFresh, keyPro)));
+
+    auto environment = makeEnvironment (temporary.folder, server);
+    environment.requestTimeoutMs = 300;   // a request may take 1.25 of these: the mark counts after 2
+
+    LicenseManager other (artFreqInstrumentLicensing(), environment);   // another instance, open all along
+
+    {
+        LicenseManager effect (artFreqEffectLicensing(), environment);
+        server->replyAfter (deactivateArtFreq, 250);
+        Recorded never;
+        CHECK (effect.deactivate (recordInto (never)));
+        CHECK (server->started.wait (3000));
+
+        // On its way: marked in the file, and still activated everywhere (the request may fail
+        // and change nothing).
+        const auto marked = store.read().activations;
+        CHECK (marked.size() == 1 && marked[0].deactivatingSince.isNotEmpty());
+        pump (60);
+        CHECK (effect.isActivated() && other.isActivated());
+    }   // the project closes: the request is cut off
+
+    CHECK (server->cancelsSeen.load() == 1);
+    CHECK (store.read().activations.size() == 1 && store.read().activations[0].deactivatingSince.isNotEmpty());
+
+    // Once the request could have ended, the open instance locks by itself, and a new one is
+    // locked from the start; both know why.
+    CHECK (pumpUntil ([&] { return ! other.isActivated(); }, 3000));
+    CHECK (other.getInterruptedDeactivation().has_value() && ! other.getActivation().has_value());
+    CHECK (other.getStatusText().startsWith ("Deactivating your ArtFreq Pro key didn't finish, so this computer is locked."));
+
+    {
+        LicenseManager later (artFreqEffectLicensing(), environment);
+        CHECK (! later.isActivated() && later.getInterruptedDeactivation().has_value());
+    }
+
+    // Deactivating finishes it: the server had freed this computer already (not_active_here).
+    // Nothing is marked again meanwhile, so nothing unlocks while it runs.
+    server->replyAfter (deactivateArtFreqAgain, 100);
+    Recorded finished;
+    CHECK (other.deactivate (recordInto (finished)));
+    CHECK (server->started.wait (3000));
+    CHECK (! other.isActivated());
+    CHECK (pumpUntil ([&] { return finished.calls > 0; }));
+    CHECK (finished.result.outcome == Outcome::deactivated);
+    CHECK (finished.result.message.startsWith ("Deactivated here (the server no longer counted this computer for that key)."));
+    CHECK (store.read().activations.empty());
+    CHECK (! other.getInterruptedDeactivation().has_value());
+    CHECK (other.getStatusText() == "Not activated. Enter the license key from your purchase email.");
+
+    // Or, cut off again, activating again with the key replaces it (the server answers as for a
+    // computer it knows, or gives back the place it freed).
+    auto cutOff = storedActivationFrom (activateProFresh, keyPro);
+    cutOff.deactivatingSince = "2021-01-01T00:00:00.000Z";
+    CHECK (store.put (cutOff));
+    CHECK (pumpUntil ([&] { return other.getInterruptedDeactivation().has_value(); }));
+    CHECK (! other.isActivated());
+
+    server->reply (activateProAsArtFreq);   // (the instrument tries an ArtFreq key first)
+    server->reply (activateProFresh);
+    CHECK (activateAndWait (other, keyPro).result.outcome == Outcome::activated);
+    CHECK (other.isActivated() && ! other.getInterruptedDeactivation().has_value());
+    CHECK (store.read().activations.size() == 1 && store.read().activations[0].deactivatingSince.isEmpty());
+}
+
+ARTFREQ_TEST (licenseADeactivationTheServerDidNotDoChangesNothing)
+{
+    // A deactivation the server refuses or fails, or that gets no answer (no connection, or none
+    // in time), takes its mark off again: the computer stays activated, and another open
+    // instance never locked meanwhile.
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    for (const auto failure : { 0, 1, 2 })
+    {
+        const TemporaryFolder temporary;
+        const auto server = std::make_shared<FakeServer>();
+        const LicenseStore store (temporary.folder);
+        CHECK (store.put (storedActivationFrom (activateProFresh, keyPro)));
+
+        auto environment = makeEnvironment (temporary.folder, server);
+        environment.requestTimeoutMs = 300;
+        LicenseManager effect (artFreqEffectLicensing(), environment);
+        LicenseManager other (artFreqInstrumentLicensing(), environment);
+
+        if (failure == 0)
+            server->replyAfter (cloudflare502, 150);
+        else if (failure == 1)
+            server->noConnection();
+        else
+            server->replyAfter (cloudflare502, 3000);   // past the deadline (and the mark's grace)
+
+        Recorded recorded;
+        CHECK (effect.deactivate (recordInto (recorded)));
+
+        auto otherStayed = true;
+        CHECK (pumpUntil ([&] { otherStayed = otherStayed && other.isActivated() && effect.isActivated(); return recorded.calls > 0; }));
+        CHECK (otherStayed);
+        CHECK (recorded.result.message.endsWith ("This computer stays activated."));
+        CHECK (store.read().activations.size() == 1 && store.read().activations[0].deactivatingSince.isEmpty());
+
+        pump (700);
+        CHECK (effect.isActivated() && other.isActivated() && ! other.getInterruptedDeactivation().has_value());
+    }
+}
+
+//==============================================================================
+// One file for the computer
+//==============================================================================
+
+ARTFREQ_TEST (licenseOneActivationForEveryAccountOnTheComputer)
+{
+    // The server counts computers, not accounts. Two accounts of one computer share its folder
+    // (each also has its own, where the file was kept before): an activation made in one
+    // counts in the other at once, without asking again, and deactivating in the other locks
+    // both (before, the second account was asked for the key again, and its deactivation freed
+    // the computer's place while the first stayed unlocked).
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const TemporaryFolder computer, accountA, accountB;
+    const auto server = std::make_shared<FakeServer>();
+
+    auto environmentA = makeEnvironment (computer.folder, server);
+    auto environmentB = makeEnvironment (computer.folder, server);
+    environmentA.userFolder = accountA.folder;
+    environmentB.userFolder = accountB.folder;
+
+    LicenseManager a (artFreqEffectLicensing(), environmentA);
+    LicenseManager b (artFreqEffectLicensing(), environmentB);
+    CHECK (a.getStores().size() == 2 && a.getStore().getDirectory() == computer.folder);
+
+    server->reply (activateProFresh);
+    CHECK (activateAndWait (a, keyPro).result.outcome == Outcome::activated);
+    CHECK (pumpUntil ([&] { return b.isActivated(); }));
+    CHECK (b.getStatusText().startsWith ("Activated with your ArtFreq Pro key"));
+    CHECK (LicenseStore (computer.folder).read().activations.size() == 1);
+    CHECK (! LicenseStore (accountA.folder).getFile().exists());
+
+    server->reply (deactivateArtFreq);
+    CHECK (deactivateAndWait (b).result.outcome == Outcome::deactivated);
+    CHECK (pumpUntil ([&] { return ! a.isActivated(); }));
+    CHECK (LicenseStore (computer.folder).read().activations.empty());
+    CHECK (server->numSent() == 2);
+
+    // An activation in an account's own folder (where earlier versions kept it): it counts in
+    // that account, and deactivating takes it from there.
+    CHECK (LicenseStore (accountA.folder).put (storedActivationFrom (activateProFresh, keyPro)));
+    CHECK (pumpUntil ([&] { return a.isActivated(); }));
+    CHECK (! b.isActivated());
+    server->reply (deactivateArtFreq);
+    CHECK (deactivateAndWait (a).result.outcome == Outcome::deactivated);
+    CHECK (! a.isActivated() && LicenseStore (accountA.folder).read().activations.empty());
+
+    // Activated again: into the computer's folder, and the account's own copy goes.
+    CHECK (LicenseStore (accountA.folder).put (storedActivationFrom (activateProFresh, keyPro)));
+    server->reply (activateProFresh);
+    CHECK (activateAndWait (a, keyPro).result.outcome == Outcome::activated);
+    CHECK (LicenseStore (computer.folder).read().activations.size() == 1);
+    CHECK (LicenseStore (accountA.folder).read().activations.empty());
+    CHECK (pumpUntil ([&] { return b.isActivated(); }));
+}
+
+ARTFREQ_TEST (licenseTheAccountsOwnFolderWhenTheComputersCantBeWritten)
+{
+    // The computer's folder can't be written to (another account made it and couldn't open it
+    // to the others, or the system won't let anyone): the activation goes into this account's
+    // own folder rather than fail. With neither, it says where it couldn't be saved.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const TemporaryFolder parent, account;
+    const auto server = std::make_shared<FakeServer>();
+    const auto blocked = parent.folder.getChildFile ("AnyMeans");
+    CHECK (blocked.replaceWithText ("a file where the folder would be"));
+
+    auto environment = makeEnvironment (blocked, server);
+    environment.userFolder = account.folder;
+    LicenseManager effect (artFreqEffectLicensing(), environment);
+
+    server->reply (activateProFresh);
+    CHECK (activateAndWait (effect, keyPro).result.outcome == Outcome::activated);
+    CHECK (effect.isActivated());
+    CHECK (LicenseStore (account.folder).read().activations.size() == 1);
+
+    LicenseManager alone (artFreqEffectLicensing(), makeEnvironment (blocked, server));
+    server->reply (activateProFresh);
+    const auto recorded = activateAndWait (alone, keyPro);
+    CHECK (recorded.result.outcome == Outcome::notSaved);
+    CHECK (recorded.result.message.contains (blocked.getFullPathName()));
+}
+
+ARTFREQ_TEST (licenseTheComputersFolderIsOpenToEveryAccount)
+{
+    // The computer's folder is made so that every account can replace the file another wrote
+    // (each write replaces it whole): rwxrwxrwx, no sticky bit, and files readable by all
+    // whatever the umask. (Windows: an access list giving Users Modify, which this can't check
+    // on Linux.) A folder for one account is left as the umask makes it.
+   #if JUCE_WINDOWS
+    std::printf ("    (Windows: the access list is not checked here)\n");
+   #else
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const TemporaryFolder temporary;
+    const auto shared = temporary.folder.getChildFile ("Computer").getChildFile ("AnyMeans");
+    const auto own = temporary.folder.getChildFile ("Account").getChildFile ("AnyMeans");
+
+    const auto modeOf = [] (const juce::File& file)
+    {
+        struct stat info {};
+        return ::stat (file.getFullPathName().toRawUTF8(), &info) == 0 ? static_cast<int> (info.st_mode & 07777) : -1;
+    };
+
+    const auto previousMask = ::umask (077);   // the strictest a user might have
+    const LicenseStore store (shared, LicenseStore::Sharing::everyAccount);
+    const LicenseStore ownStore (own);
+    const auto written = store.put (storedActivationFrom (activateProFresh, keyPro)) && ownStore.put (storedActivationFrom (activateProFresh, keyPro));
+    const auto fallbackId = store.readOrCreateFallbackMachineIdentifier();
+    ::umask (previousMask);
+
+    CHECK (written && fallbackId.length() == 32);
+    CHECK (store.getSharing() == LicenseStore::Sharing::everyAccount && ownStore.getSharing() == LicenseStore::Sharing::thisAccount);
+    CHECK_MSG (modeOf (shared) == 0777, modeOf (shared));
+    CHECK_MSG (modeOf (store.getFile()) == 0644, modeOf (store.getFile()));
+    CHECK (modeOf (shared.getChildFile ("MachineId.txt")) == 0644);
+    CHECK (shared.getChildFile (LicenseStore::FolderLock::lockFileName).existsAsFile());
+    CHECK (modeOf (own) == 0700 && modeOf (ownStore.getFile()) == 0600);
+
+    // A second write (another account's, say) keeps it so.
+    CHECK (store.remove (PRODUCT_ID_ARTFREQ_PRO, keyPro, machineHere));
+    CHECK (modeOf (shared) == 0777 && modeOf (store.getFile()) == 0644);
+   #endif
+}
+
 //==============================================================================
 // The manager: threads and other instances
 //==============================================================================
@@ -1415,10 +1709,27 @@ ARTFREQ_TEST (licenseDefaultEnvironmentCanBeReplacedByTests)
     // Back to the runner's own (the plug-in instances of later tests are activated in it).
     restoreRunnerLicensing();
 
-    // The real folder: the user's application data, in an AnyMeans folder.
+    // The real folders: the computer's AnyMeans folder (on Linux, which ships nothing, the
+    // user's), and the user's own in their application data, where the file was kept before.
     const auto real = LicenseStore::defaultDirectory();
-    CHECK (real.getFileName() == "AnyMeans");
-    CHECK (real.isAChildOf (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)));
+    const auto user = LicenseStore::userDirectory();
+    CHECK (real.getFileName() == "AnyMeans" && user.getFileName() == "AnyMeans");
+    CHECK (user.isAChildOf (juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)));
+
+   #if JUCE_MAC
+    CHECK (real == juce::File ("/Users/Shared/AnyMeans"));
+   #elif JUCE_WINDOWS
+    CHECK (real.getParentDirectory() == juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory));
+   #else
+    CHECK (real == user);
+   #endif
+
+   #if JUCE_MAC || JUCE_WINDOWS
+    CHECK (! real.isAChildOf (juce::File::getSpecialLocation (juce::File::userHomeDirectory)));
+    CHECK (LicenseStore (real).getSharing() == LicenseStore::Sharing::everyAccount);
+   #endif
+
+    CHECK (LicenseStore (user).getSharing() == LicenseStore::Sharing::thisAccount || real == user);
 }
 
 //==============================================================================

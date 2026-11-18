@@ -510,6 +510,24 @@ struct ScopedLockedLicensing
         return anymeans::license::LicenseStore (folder.folder).put (storedActivationFrom (activateArtFreqFresh, keyArtFreq));
     }
 
+    /** An ArtFreq activation, then a newer ArtFreq Pro one (a buyer of ArtFreq who later bought
+        ArtFreq Pro for ArtFreq FX): both plug-ins unlock, with the Pro key in use. */
+    bool activateArtFreqThenPro() const
+    {
+        auto pro = storedActivationFrom (activateProFresh, keyPro, "ArtFreq FX");
+        pro.activatedAt = "2021-01-01T00:00:00.000Z";
+        const anymeans::license::LicenseStore store (folder.folder);
+        return activateArtFreq() && store.put (pro);
+    }
+
+    /** Instances made from now on give a request this long (and a deactivation's mark twice
+        that, see LicenseManager::deactivate): for tests that wait for one to run out. */
+    void setRequestTimeout (int milliseconds)
+    {
+        environment.requestTimeoutMs = milliseconds;
+        anymeans::license::LicenseManager::setDefaultEnvironmentForTesting (environment);
+    }
+
     /** Removes every activation (as deactivating elsewhere does). */
     bool deactivate() const
     {
