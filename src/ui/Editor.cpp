@@ -688,8 +688,6 @@ namespace
                 takeKeyFocusBack();
         }
 
-        bool isActivationShown() const noexcept   { return activation.isVisible(); }
-
         /** Called when the window's scale changes, so the settings show it. */
         void windowScaleChanged (float scale)
         {

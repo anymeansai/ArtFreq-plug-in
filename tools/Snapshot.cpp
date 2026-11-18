@@ -102,6 +102,26 @@
 //   artfreq-fx-drawer-left.png   ArtFreq FX: a text on the right clicked, its settings on the left
 //   artfreq-fx-typing.png        ArtFreq FX: the drawer's text box while it is typed in
 //
+// And, for both plug-ins (the instrument's as artfreq-*, ArtFreq FX's as artfreq-fx-*), a plug-in
+// that is not activated, against a fake server (every other state here is rendered activated):
+//
+//   artfreq-activate.png              the activation screen over the dimmed window
+//   artfreq-activate-75.png ... -200.png   the same at 75, 100, 150 and 200 %, one image pixel
+//                                     per logical pixel
+//   artfreq-activate-typing.png       part of a key typed in lower case, shown in groups of five
+//   artfreq-activate-busy.png         the request on its way (the server does not answer)
+//   artfreq-activate-error.png        a 409: the server's words, with the support address
+//   artfreq-activate-success.png      activated in this window: what is unlocked, and Continue
+//   artfreq-activate-deactivated.png  deactivated from the settings: locked again, and why
+//   artfreq-licence.png               the settings' Licence card, activated (and -75, -200)
+//   artfreq-licence-confirm.png       Deactivate... asking first
+//   artfreq-licence-error.png         a deactivation that failed (no connection): still activated
+//   artfreq-licence-locked.png        not activated: the card offers the activation screen
+//
+// checking in each that the screen's card fits the window with room around it, that nothing in it
+// overlaps or is cut off, that nothing shown is greyed, that the top bar shows only the name, help
+// and settings while locked, and that the settings with the card fit the window.
+//
 // On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
 
 #include "LicenseTestSupport.h"

@@ -501,7 +501,7 @@ jobs:
 
           **Windows** (10 or 11, 64-bit; no installer yet): download \`ArtFreq-VST3-Windows.zip\`, unzip it, close your DAW and copy \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`C:\Program Files\Common Files\VST3\` (Windows asks for permission). \`How to install.txt\` in the zip says the same.
 
-          Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
+          Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
 
           **New in 0.4**
           - FreqArt is now called **ArtFreq** (and FreqArt FX **ArtFreq FX**). Old projects keep working: they open with the renamed plug-ins, and the installer removes the old FreqArt bundles from \`/Library/Audio/Plug-Ins/VST3\`. Rescan plug-ins in your DAW after installing (after a manual install, delete \`FreqArt.vst3\` and \`FreqArt FX.vst3\` yourself).

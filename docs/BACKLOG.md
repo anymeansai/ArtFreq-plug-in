@@ -12,6 +12,11 @@ Collected with the customer; to be done together in one release.
 
 ## 2. License activation
 
+**Status: done.** The licence code (`src/license/`) and the server are built; both plug-ins are wired to them (the
+activation screen, the Licence card, the locked sound: see DESIGN.md, "Licensing"). The store sells ArtFreq (the
+instrument) and ArtFreq Pro (ArtFreq and ArtFreq FX), each with its own product ID. The notes below are kept as they
+were decided.
+
 **Decisions (customer):** our own server, on Cloudflare (free: Workers + D1; the website anymeansaudio.com moves there from Vercel too, keeping the support@ email's MX records); 2 activations (computers) per key; the plug-ins must run offline
 after activation; the SAME licensing code, server and flow in all three AnyMeans plug-ins (ArtFreq + ArtFreq FX, Crème,
 Vocalyst; each product its own product ID; one shared AnyMeans app-data folder), so Crème and Vocalyst get changed too.

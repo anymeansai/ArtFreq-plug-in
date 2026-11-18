@@ -133,7 +133,7 @@ namespace
     //==============================================================================
     // The activation screen's card, at the interface's design size. It fits ArtFreq FX's window
     // (720 x 396 under its top bar) with room around it, with a message of up to six lines.
-    namespace card
+    namespace cardMetrics
     {
         constexpr int width = 400;
         constexpr int pad = 24;
@@ -147,7 +147,7 @@ namespace
         constexpr int linksHeight = 16;
         constexpr int minMessageLines = 2;
         constexpr int maxMessageLines = 6;
-    } // namespace card
+    } // namespace cardMetrics
 
     juce::Font titleFont()      { return fonts::ui (18.0f, fonts::UiWeight::semiBold); }
     juce::Font subtitleFont()   { return fonts::ui (theme::controlSize); }
@@ -590,30 +590,30 @@ void ActivationScreen::timerCallback()
 
 void ActivationScreen::resized()
 {
-    const auto inner = card::width - 2 * card::pad;
-    const auto lines = juce::jlimit (card::minMessageLines, card::maxMessageLines,
+    const auto inner = cardMetrics::width - 2 * cardMetrics::pad;
+    const auto lines = juce::jlimit (cardMetrics::minMessageLines, cardMetrics::maxMessageLines,
                                      messageText.getHeightFor (inner) / messageLineHeight());
     const auto messageHeight = lines * messageLineHeight();
 
-    auto height = card::top + card::emblemHeight + 10 + card::titleHeight;
+    auto height = cardMetrics::top + cardMetrics::emblemHeight + 10 + cardMetrics::titleHeight;
 
     if (showingSuccess)
-        height += 12 + messageHeight + 12 + card::buttonHeight;
+        height += 12 + messageHeight + 12 + cardMetrics::buttonHeight;
     else
-        height += 2 + card::subtitleHeight + 16 + card::fieldHeight + 10 + card::buttonHeight + 12 + messageHeight + 6 + card::linksHeight;
+        height += 2 + cardMetrics::subtitleHeight + 16 + cardMetrics::fieldHeight + 10 + cardMetrics::buttonHeight + 12 + messageHeight + 6 + cardMetrics::linksHeight;
 
-    height += card::bottom;
+    height += cardMetrics::bottom;
 
-    card = juce::Rectangle<int> (card::width, height).withCentre (getLocalBounds().getCentre());
+    card = juce::Rectangle<int> (cardMetrics::width, height).withCentre (getLocalBounds().getCentre());
     card.setY (juce::jmax (8, card.getY()));
 
-    const auto x = card.getX() + card::pad;
-    auto y = card.getY() + card::top;
+    const auto x = card.getX() + cardMetrics::pad;
+    auto y = card.getY() + cardMetrics::top;
 
-    emblemArea = { card.getCentreX() - 26, y, 52, card::emblemHeight };
-    y += card::emblemHeight + 10;
-    titleArea = { x, y, inner, card::titleHeight };
-    y += card::titleHeight;
+    emblemArea = { card.getCentreX() - 26, y, 52, cardMetrics::emblemHeight };
+    y += cardMetrics::emblemHeight + 10;
+    titleArea = { x, y, inner, cardMetrics::titleHeight };
+    y += cardMetrics::titleHeight;
 
     if (showingSuccess)
     {
@@ -621,31 +621,31 @@ void ActivationScreen::resized()
         y += 12;
         messageText.setBounds (x, y, inner, messageHeight);
         y += messageHeight + 12;
-        activateButton.setBounds (card.getCentreX() - 80, y, 160, card::buttonHeight);
+        activateButton.setBounds (card.getCentreX() - 80, y, 160, cardMetrics::buttonHeight);
         linksArea = {};
         return;
     }
 
     y += 2;
-    subtitleArea = { x, y, inner, card::subtitleHeight };
-    y += card::subtitleHeight + 16;
+    subtitleArea = { x, y, inner, cardMetrics::subtitleHeight };
+    y += cardMetrics::subtitleHeight + 16;
 
-    keyField.setBounds (x, y, inner, card::fieldHeight);
-    y += card::fieldHeight + 10;
+    keyField.setBounds (x, y, inner, cardMetrics::fieldHeight);
+    y += cardMetrics::fieldHeight + 10;
 
-    activateButton.setBounds (x, y, inner, card::buttonHeight);
-    y += card::buttonHeight + 12;
+    activateButton.setBounds (x, y, inner, cardMetrics::buttonHeight);
+    y += cardMetrics::buttonHeight + 12;
 
     messageText.setBounds (x, y, inner, messageHeight);
     y += messageHeight + 6;
 
-    // "Where's my key? · Buy ArtFreq", centred.
-    linksArea = { x, y, inner, card::linksHeight };
+    // "Where's my key?", a dot, "Buy ArtFreq": centred.
+    linksArea = { x, y, inner, cardMetrics::linksHeight };
     const auto dotWidth = 18;
     const auto total = keyLink.getIdealWidth() + dotWidth + buyLink.getIdealWidth();
     const auto linksX = card.getCentreX() - total / 2;
-    keyLink.setBounds (linksX, y, keyLink.getIdealWidth(), card::linksHeight);
-    buyLink.setBounds (keyLink.getRight() + dotWidth, y, buyLink.getIdealWidth(), card::linksHeight);
+    keyLink.setBounds (linksX, y, keyLink.getIdealWidth(), cardMetrics::linksHeight);
+    buyLink.setBounds (keyLink.getRight() + dotWidth, y, buyLink.getIdealWidth(), cardMetrics::linksHeight);
 }
 
 void ActivationScreen::paint (juce::Graphics& g)
