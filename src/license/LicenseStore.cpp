@@ -3,6 +3,15 @@
 #include "LicenseConfig.h"
 #include "LicenseKey.h"
 
+#include <utility>
+
+#if ! JUCE_WINDOWS
+ #include <cerrno>
+ #include <fcntl.h>
+ #include <sys/file.h>
+ #include <unistd.h>
+#endif
+
 namespace anymeans::license
 {
 
@@ -74,30 +83,77 @@ bool replaceFileAtomically (const juce::File& target, const juce::String& textTo
 } // namespace
 
 //==============================================================================
-/** Serialises writers: a lock across processes (plug-ins in other hosts, or hosts that run plug-ins
-    in separate processes), plus one inside this process, because on macOS and Linux an
-    inter-process lock does not exclude another thread of the same process.
+LicenseStore::FolderLock::FolderLock (const juce::File& folder, int timeoutMs)
+   #if JUCE_WINDOWS
+    // Named after the folder, so tests working in folders of their own never wait for real plug-ins.
+    : mutex ("AnyMeansLicenses-" + juce::String::toHexString (folder.getFullPathName().hashCode64()))
+   #endif
+{
+   #if JUCE_WINDOWS
+    locked = mutex.enter (timeoutMs);
+   #else
+    if (folder.createDirectory().failed())
+        return;
 
-    The inter-process lock is named after the folder, so tests working in their own folders never
-    wait for real plug-ins. If another process holds it for seconds something is wrong there; the
-    write then goes ahead rather than hang the plug-in (each write still replaces the file whole).
+    const auto path = folder.getChildFile (lockFileName).getFullPathName();
+    fileDescriptor = ::open (path.toRawUTF8(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+
+    if (fileDescriptor < 0)
+        return;
+
+    const auto deadline = juce::Time::getMillisecondCounter() + static_cast<juce::uint32> (juce::jmax (0, timeoutMs));
+
+    for (;;)
+    {
+        if (::flock (fileDescriptor, LOCK_EX | LOCK_NB) == 0)
+        {
+            locked = true;
+            return;
+        }
+
+        // Anything but "someone else has it" (no locks on this file system, say): go ahead unlocked.
+        if (errno != EWOULDBLOCK && errno != EINTR)
+            return;
+
+        if (juce::Time::getMillisecondCounter() >= deadline)
+            return;
+
+        juce::Thread::sleep (5);
+    }
+   #endif
+}
+
+LicenseStore::FolderLock::~FolderLock()
+{
+   #if JUCE_WINDOWS
+    if (locked)
+        mutex.exit();
+   #else
+    // The lock file stays: deleting it would let a writer that opened it a moment ago lock a file
+    // the next writer can no longer see.
+    if (fileDescriptor >= 0)
+    {
+        if (locked)
+            ::flock (fileDescriptor, LOCK_UN);
+
+        ::close (fileDescriptor);
+    }
+   #endif
+}
+
+//==============================================================================
+/** Serialises writers: the folder's lock (other plug-in modules in this process, other processes),
+    plus a lock inside this module, which keeps its own threads in order even where the file system
+    has no locks. If another writer holds the folder for seconds something is wrong there; the write
+    then goes ahead rather than hang the plug-in (each write still replaces the file whole).
 */
 class LicenseStore::WriteLock
 {
 public:
     explicit WriteLock (const juce::File& folder)
-        : interProcessLock ("AnyMeansLicenses-" + juce::String::toHexString (folder.getFullPathName().hashCode64()))
+        : moduleLock (processLock()),
+          folderLock (folder, 3000)
     {
-        processLock().enter();
-        holdsInterProcessLock = interProcessLock.enter (3000);
-    }
-
-    ~WriteLock()
-    {
-        if (holdsInterProcessLock)
-            interProcessLock.exit();
-
-        processLock().exit();
     }
 
 private:
@@ -107,8 +163,8 @@ private:
         return lock;
     }
 
-    juce::InterProcessLock interProcessLock;
-    bool holdsInterProcessLock = false;
+    const juce::ScopedLock moduleLock;
+    const FolderLock folderLock;
 
     JUCE_DECLARE_NON_COPYABLE (WriteLock)
 };

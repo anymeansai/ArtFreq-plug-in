@@ -1,5 +1,7 @@
 #include "LicenseTransport.h"
 
+#include <utility>
+
 namespace anymeans::license
 {
 
@@ -77,8 +79,15 @@ public:
 
             reply.outcome = HttpReply::Outcome::answered;
             reply.statusCode = stream.getStatusCode();
-            reply.body = juce::String::fromUTF8 (static_cast<const char*> (received.getData()),
-                                                 static_cast<int> (received.getDataSize()));
+
+            // The server's answers are UTF-8 JSON. Anything else (a portal's Latin-1 page, or a
+            // reply cut short in the middle of a character) can't be one of them, and JUCE asserts
+            // on it in debug builds: keep just the status, which is what gets reported.
+            const auto* bytes = static_cast<const char*> (received.getData());
+            const auto numBytes = static_cast<int> (received.getDataSize());
+
+            if (numBytes > 0 && juce::CharPointer_UTF8::isValidString (bytes, numBytes))
+                reply.body = juce::String::fromUTF8 (bytes, numBytes);
         }
 
         token.clearAbortAction();

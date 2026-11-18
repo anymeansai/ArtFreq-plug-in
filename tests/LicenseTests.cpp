@@ -23,9 +23,13 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace anymeans::license;
@@ -1361,7 +1365,13 @@ namespace
 class LocalHttpServer
 {
 public:
-    LocalHttpServer (int statusToSend, juce::String bodyToSend, bool answer)
+    LocalHttpServer (int statusToSend, const juce::String& bodyToSend, bool answer)
+        : LocalHttpServer (statusToSend, juce::MemoryBlock (bodyToSend.toRawUTF8(), bodyToSend.getNumBytesAsUTF8()), answer)
+    {
+    }
+
+    /** Any bytes at all as the body, UTF-8 or not. */
+    LocalHttpServer (int statusToSend, juce::MemoryBlock bodyToSend, bool answer)
         : status (statusToSend), body (std::move (bodyToSend))
     {
         listening = listener.createListener (0, "127.0.0.1");
@@ -1409,20 +1419,19 @@ private:
             received = in.toString();
         }
 
-        const auto bodyUtf8 = body.toUTF8();
-        const auto bodySize = static_cast<int> (bodyUtf8.sizeInBytes() - 1);
-        const auto reply = "HTTP/1.1 " + juce::String (status) + " Status\r\nContent-Type: application/json\r\nContent-Length: "
-                         + juce::String (bodySize) + "\r\nConnection: close\r\n\r\n" + body;
+        const auto head = "HTTP/1.1 " + juce::String (status) + " Status\r\nContent-Type: application/json\r\nContent-Length: "
+                        + juce::String (body.getSize()) + "\r\nConnection: close\r\n\r\n";
 
-        const auto replyUtf8 = reply.toUTF8();
-        connection->write (replyUtf8.getAddress(), static_cast<int> (replyUtf8.sizeInBytes() - 1));
+        juce::MemoryBlock reply (head.toRawUTF8(), head.getNumBytesAsUTF8());
+        reply.append (body.getData(), body.getSize());
+        connection->write (reply.getData(), static_cast<int> (reply.getSize()));
         connection->close();
     }
 
     juce::StreamingSocket listener;
     bool listening = false;
     const int status;
-    const juce::String body;
+    const juce::MemoryBlock body;
     std::thread thread;
     mutable std::mutex mutex;
     juce::String received;
@@ -1450,6 +1459,20 @@ ARTFREQ_TEST (licenseHttpsTransportPostsJsonAndReadsAnswers)
         CHECK (request.endsWith ("{\"key\":\"A\"}"));
     }
 
+    // Bytes that aren't UTF-8 (a portal's Latin-1 page): the status comes back, the body doesn't
+    // (and JUCE's debug assertion on such text isn't reached).
+    {
+        const unsigned char latin1[] = { '<', 'p', '>', 'C', 'r', 0xe8, 'm', 'e', '<', '/', 'p', '>' };
+        LocalHttpServer local (200, juce::MemoryBlock (latin1, sizeof (latin1)), true);
+        CHECK (local.isListening());
+
+        CancelToken token;
+        const auto reply = makeHttpsTransport (local.baseUrl())->post ("/api/activate", "{}", 5000, token);
+        CHECK (reply.outcome == HttpReply::Outcome::answered);
+        CHECK (reply.statusCode == 200);
+        CHECK (reply.body.isEmpty());
+    }
+
     // Nobody listening: no connection, quickly.
     {
         juce::StreamingSocket probe;
@@ -1466,7 +1489,7 @@ ARTFREQ_TEST (licenseHttpsTransportPostsJsonAndReadsAnswers)
 
     // A server that accepts and never answers: cancelled from another thread.
     {
-        LocalHttpServer silent (200, {}, false);
+        LocalHttpServer silent (200, juce::String(), false);
         CHECK (silent.isListening());
 
         CancelToken token;

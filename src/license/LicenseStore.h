@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 
 #include <functional>
+#include <utility>
 #include <vector>
 
 namespace anymeans::license
@@ -52,8 +53,8 @@ struct StoredActivation
     later version can add to the format without breaking this one.
 
     Writes go to a temporary file in the same folder that then replaces the file, so a reader
-    sees the old file or the new one, never half of one; a lock (inter-process, plus one inside
-    this process) keeps two plug-ins from writing at the same moment. Reads tolerate a missing,
+    sees the old file or the new one, never half of one; a lock on the folder (FolderLock) keeps
+    two writers, in this process or another, from writing at the same moment. Reads tolerate a missing,
     unreadable, half-written or corrupt file: it just has no activations in it.
 
     The file proves nothing by itself: an activation counts only if its signed licence checks out
@@ -129,6 +130,42 @@ public:
         can be neither read nor written.
     */
     juce::String readOrCreateFallbackMachineIdentifier() const;
+
+    //==============================================================================
+    /** The lock every writer of a folder's files takes, held for as long as it exists.
+
+        It has to keep out every other writer: other threads, other processes, and, the common
+        case, the other AnyMeans plug-ins loaded into the same host process (ArtFreq and ArtFreq FX
+        on one song). Those are separate modules with their own copies of every static, so an
+        in-process mutex can't see them, and on macOS and Linux JUCE's InterProcessLock can't
+        either: its fcntl() locks belong to the process, so a second module gets the lock at once
+        (and drops the first one's when it lets go). So on macOS and Linux this is flock() on a
+        hidden file in the folder, which excludes every other open of the file, in this process or
+        any other; on Windows a named mutex, which excludes every other thread. If the lock can't be
+        had in time (or the file system has no locks), isLocked() is false and the writer goes
+        ahead: each write still replaces the file whole, so the worst case is a lost update, never
+        a damaged file.
+    */
+    class FolderLock
+    {
+    public:
+        FolderLock (const juce::File& folder, int timeoutMs);
+        ~FolderLock();
+
+        bool isLocked() const noexcept   { return locked; }
+
+        static constexpr const char* lockFileName = ".Licenses.lock";
+
+    private:
+       #if JUCE_WINDOWS
+        juce::InterProcessLock mutex;
+       #else
+        int fileDescriptor = -1;
+       #endif
+        bool locked = false;
+
+        JUCE_DECLARE_NON_COPYABLE (FolderLock)
+    };
 
 private:
     class WriteLock;

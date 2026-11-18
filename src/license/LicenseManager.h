@@ -144,8 +144,10 @@ public:
 
     /** Frees this computer's place on the server and removes the activation here (the way to move
         to a new computer). The activation is kept unless the server confirms (or no longer knows
-        this computer for the key): otherwise the key would stay taken on the server with no way
-        to free it from here. Returns false, and does nothing, if a request is in progress.
+        this computer for the key, and the activation is over two minutes old: a younger one may
+        just not have reached every copy of the server's records yet): otherwise the key would
+        stay taken on the server with no way to free it from here. Returns false, and does
+        nothing, if a request is in progress.
     */
     bool deactivate (Callback onDone);
 

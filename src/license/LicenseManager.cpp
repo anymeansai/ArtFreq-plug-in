@@ -187,6 +187,12 @@ juce::int64 timeOf (const juce::String& iso8601)
     return iso8601.isEmpty() ? 0 : juce::Time::fromISO8601 (iso8601).toMilliseconds();
 }
 
+/** How long the server's records may take to show an activation everywhere (Cloudflare KV says
+    "up to 60 seconds or more"), with room to spare. Measured with this computer's clock against the
+    time this computer stored the activation, so no clock but this one is involved.
+*/
+constexpr juce::int64 serverCatchUpMs = 2 * 60 * 1000;
+
 } // namespace
 
 //==============================================================================
@@ -392,6 +398,22 @@ Result runDeactivation (const RequestContext& context, const LicenseManager::Act
     const auto status = reply.statusCode;
 
     const auto freedOnServer = status == 200 && parsed.ok;
+
+    // The server keeps its records in Cloudflare KV, which is eventually consistent: for about a
+    // minute after an activation, a request that reaches another copy of the record may not see
+    // it yet and answer not_active_here. Removing the activation then would leave the computer
+    // counted on the server once the record catches up, with nothing left here to free it. So a
+    // not_active_here about an activation this young is taken as "not yet", not as "already free".
+    if (status == 403 && parsed.code == "not_active_here")
+    {
+        const auto age = juce::Time::currentTimeMillis() - timeOf (activation.activatedAt);
+
+        if (age >= 0 && age < serverCatchUpMs)
+            return makeResult (Outcome::serverError,
+                               "The server hasn't caught up with this activation yet. Please try again in a minute."
+                                 + stillActivated(),
+                               status, &parsed);
+    }
 
     // The server no longer counts this computer for the key (already freed, by support for
     // instance): keeping the activation would leave nothing to deactivate it with.

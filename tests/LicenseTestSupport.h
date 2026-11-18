@@ -17,12 +17,14 @@
 
 #include <juce_events/juce_events.h>
 
+#include <atomic>
 #include <chrono>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace licensetest
@@ -360,7 +362,9 @@ inline anymeans::license::StoredActivation storedActivationFrom (const Reply& re
     activation.token = json.getProperty ("activationToken", {}).toString();
     activation.license = license;
     activation.signature = json.getProperty ("signature", {}).toString();
-    activation.activatedAt = "2026-11-18T05:00:00.000Z";
+    // Long ago: deactivating treats an activation of the last two minutes differently (the
+    // server's records may not show it yet), and these stand for settled ones.
+    activation.activatedAt = "2020-01-01T00:00:00.000Z";
     activation.activatedIn = activatedIn;
     return activation;
 }

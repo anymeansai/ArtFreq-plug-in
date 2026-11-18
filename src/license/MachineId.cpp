@@ -17,15 +17,25 @@ bool MachineId::looksValid (const juce::String& machineId)
     return machineId.length() == 64 && machineId.containsOnly ("0123456789abcdef");
 }
 
+bool MachineId::isUsableHardwareIdentifier (const juce::String& identifier)
+{
+    // On Windows and Linux JUCE's ID is String (hashCode64 (description)), and the hash of an
+    // empty description is 0: a system that describes nothing (no SMBIOS tables JUCE reads, no
+    // /sys/class/dmi and no lscpu) gets "0", the same on every such computer. Taken as an ID, one
+    // key would unlock all of them as one computer, so it counts as no ID at all.
+    const auto trimmed = identifier.trim();
+    return trimmed.isNotEmpty() && trimmed != "0";
+}
+
 juce::String MachineId::chooseIdentifier (const juce::StringArray& machineIdentifiers,
                                           const juce::String& uniqueDeviceId,
                                           const juce::File& sharedFolder)
 {
     for (const auto& id : machineIdentifiers)
-        if (id.trim().isNotEmpty())
+        if (isUsableHardwareIdentifier (id))
             return id.trim();
 
-    if (uniqueDeviceId.trim().isNotEmpty())
+    if (isUsableHardwareIdentifier (uniqueDeviceId))
         return uniqueDeviceId.trim();
 
     // No hardware ID at all (JUCE couldn't read one): a random ID, made once and kept in the
@@ -43,12 +53,13 @@ juce::String MachineId::get (const juce::File& sharedFolder)
         const auto identifiers = juce::SystemStats::getMachineIdentifiers (juce::SystemStats::MachineIdFlags::uniqueId);
 
         for (const auto& id : identifiers)
-            if (id.trim().isNotEmpty())
+            if (isUsableHardwareIdentifier (id))
                 return id.trim();
 
         // In JUCE 8 this is where the list above comes from; asked again in case a later JUCE
         // stops listing it.
-        return juce::SystemStats::getUniqueDeviceID().trim();
+        const auto deviceId = juce::SystemStats::getUniqueDeviceID();
+        return isUsableHardwareIdentifier (deviceId) ? deviceId.trim() : juce::String();
     }();
 
     const auto identifier = chooseIdentifier ({ hardwareId }, {}, sharedFolder);
