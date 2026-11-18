@@ -2,6 +2,8 @@
 
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <vector>
 
 namespace anymeans::brand
 {
@@ -21,7 +23,11 @@ namespace
     constexpr float vertexX    = 0.5f * (stemLeft + stem2Right);
     constexpr float barTopShare = 0.53f;    // the A's crossbar, as in the emblem
     constexpr float barShare    = 0.13f;
-    constexpr float tinyHeight  = 16.0f;    // physical pixels: below it the V is drawn in steps
+
+    // At favicon size (this many lines or fewer) the letters stay whole and the colour alone
+    // carries the dissolve: gaps there are a pixel in a letter twelve pixels tall, and they
+    // break the M into dots rather than lines.
+    constexpr int solidRows = 5;
 
     // The dissolve, as shares of the glyph's width: solid up to fadeStart, all lines by fadeEnd.
     // The A's leg stays whole; the lines take over across the M. Small, the gaps open within a
@@ -31,6 +37,9 @@ namespace
     constexpr float fadeEnd   = 1.0f;
     constexpr float smallFadeStart = 0.4f;
     constexpr float smallFadeEnd   = 0.48f;
+
+    // Vector files have no pixel size: their lines open like a large render's.
+    constexpr float vectorGapShare = 0.4f;
 
     // The spectrogram colour map (ArtFreq's theme::spectrum, copied): 0 silent, 1 loudest.
     juce::Colour spectrum (float t) noexcept
@@ -47,8 +56,6 @@ namespace
         return juce::Colour (stops[static_cast<size_t> (index)])
             .interpolatedWith (juce::Colour (stops[static_cast<size_t> (index + 1)]), frac);
     }
-
-    const juce::Colour ink { 0xff0b0d12 };  // ArtFreq's background, the letters on light grounds
 
     float smoothStep (float edge0, float edge1, float x)
     {
@@ -75,6 +82,7 @@ namespace
         float y (float v) const noexcept { return top + v * unit; }
         float snap (float v) const noexcept { return std::round (v * scale) / scale; }
         bool small() const noexcept { return pitch * scale < 5.0f; }
+        bool solid() const noexcept { return small() && rows <= solidRows; }
     };
 
     float physicalScale (juce::Graphics& g)
@@ -97,6 +105,20 @@ namespace
         l.gapShare = juce::jlimit (0.3f, 0.48f, 0.22f + 0.018f * pitchPx);
         l.left = l.snap (area.getCentreX() - glyphWidth * l.unit * 0.5f);
         l.top = l.snap (area.getCentreY() - l.unit * 0.5f);
+        return l;
+    }
+
+    /** A layout for a vector file: a fixed number of lines filling area, no pixel snapping. */
+    Layout makeVectorLayout (juce::Rectangle<float> area, int rows)
+    {
+        Layout l {};
+        l.scale = 1000.0f;      // snaps to a thousandth of a unit, i.e. not at all
+        l.rows = juce::jmax (4, rows);
+        l.unit = juce::jmin (area.getHeight(), area.getWidth() / glyphWidth);
+        l.pitch = l.unit / static_cast<float> (l.rows);
+        l.gapShare = vectorGapShare;
+        l.left = area.getCentreX() - glyphWidth * l.unit * 0.5f;
+        l.top = area.getCentreY() - l.unit * 0.5f;
         return l;
     }
 
@@ -137,34 +159,8 @@ namespace
         const auto half = 0.5f * diagWidth * l.unit;
         const auto diag = diagWidth * l.unit;
 
-        if (l.unit * l.scale >= tinyHeight)
-        {
-            addQuad (p, { vx - half, vy }, { stemL, l.top }, { stemL + diag, l.top }, { vx + half, vy });
-            addQuad (p, { vx - half, vy }, { stem2R - diag, l.top }, { stem2R, l.top }, { vx + half, vy });
-        }
-        else
-        {
-            // Tiny (a favicon), the diagonals are whole-pixel steps, one per line, mirrored so
-            // the V is symmetric: the first step just clear of the stems (the M's shoulders),
-            // the last one in the middle. Slanted edges a few pixels long would only blur. They
-            // thin to leave a notch of at least three pixels between them on the first line.
-            const auto stemPx = std::round (stemWidth * l.scale);
-            const auto innerPx = std::round ((stem2L - stemR) * l.scale);
-            const auto spanPx = std::round ((stem2R - stemL) * l.scale);
-            const auto w = juce::jlimit (1.0f, juce::jmax (1.0f, std::floor ((innerPx - 3.0f) * 0.5f)),
-                                         std::round (diag * l.scale));
-            const auto travel = std::ceil ((spanPx - 2.0f * w) * 0.5f);
-            const auto steps = juce::jmax (2, juce::roundToInt (vertexY * static_cast<float> (l.rows)) - 1);
-
-            for (int row = 0; row < steps; ++row)
-            {
-                const auto offset = stemPx + std::round ((travel - stemPx) * static_cast<float> (row)
-                                                         / static_cast<float> (steps - 1));
-                const auto y0 = l.top + static_cast<float> (row) * l.pitch;
-                p.addRectangle (stemL + offset / l.scale, y0, w / l.scale, l.pitch);
-                p.addRectangle (stem2R - (offset + w) / l.scale, y0, w / l.scale, l.pitch);
-            }
-        }
+        addQuad (p, { vx - half, vy }, { stemL, l.top }, { stemL + diag, l.top }, { vx + half, vy });
+        addQuad (p, { vx - half, vy }, { stem2R - diag, l.top }, { stem2R, l.top }, { vx + half, vy });
 
         // The A's crossbar, whole lines, from inside the leg to the stem.
         const auto barRows = juce::jmax (1, juce::roundToInt (barShare * static_cast<float> (l.rows)));
@@ -229,40 +225,129 @@ namespace
     juce::ColourGradient across (const Layout& l, std::initializer_list<std::pair<double, juce::Colour>> stops)
     {
         juce::ColourGradient grad;
-        grad.point1 = { l.x (0.0f), 0.0f };
-        grad.point2 = { l.x (glyphWidth), 0.0f };
+        grad.point1 = { l.x (0.0f), l.top };
+        grad.point2 = { l.x (glyphWidth), l.top };
         grad.isRadial = false;
         for (const auto& [position, colour] : stops)
             grad.addColour (position, colour);
         return grad;
     }
 
-    /** The three layers of a line, outermost first, and the one colour per line when small. */
-    struct Palette
+    /** What the mark is made of: the letters (a clip region) and the lines filled inside them,
+        bottom layer first. Drawn by JUCE, or written out as SVG. */
+    struct Scene
     {
-        std::array<juce::ColourGradient, 3> layers;
-        juce::ColourGradient small;
+        struct Fill
+        {
+            juce::Path path;
+            juce::ColourGradient gradient;
+        };
+
+        juce::Path clip;
+        std::vector<Fill> fills;
     };
 
-    Palette makePalette (const Layout& l, Variant variant)
+    Scene makeScene (const Layout& l, Variant variant)
     {
-        if (variant == Variant::onLight)
+        Scene scene;
+        scene.clip = makeGlyph (l);
+
+        // Small: one colour per line and the gap a whole pixel at the right-hand end (none at
+        // favicon size). Large: three layers per line, outermost first.
+        const auto small = l.small();
+        const auto smallShare = l.solid() ? 1.04f : 1.0f - 1.0f / (l.pitch * l.scale);
+        const auto lineShare = 1.0f - l.gapShare;
+        const float shares[] = { 1.0f, 0.7f, 0.38f };
+        const auto white = colours::paper;
+        const auto ink = colours::ink;
+
+        if (variant == Variant::whiteOnly || variant == Variant::inkOnly)
         {
-            // The same colour map from its dark end: ink cores inside purple, magenta and
-            // orange edges, the way a loud line reads printed on paper.
-            return { { across (l, { { 0.0, ink }, { 0.3, ink }, { 0.6, spectrum (0.55f) }, { 1.0, spectrum (0.74f) } }),
-                       across (l, { { 0.0, ink }, { 0.35, ink }, { 0.65, spectrum (0.4f) }, { 1.0, spectrum (0.53f) } }),
-                       across (l, { { 0.0, ink }, { 0.45, ink }, { 0.8, spectrum (0.2f) }, { 1.0, spectrum (0.3f) } }) },
-                     across (l, { { 0.0, ink }, { 0.5, ink }, { 0.75, spectrum (0.32f) }, { 1.0, spectrum (0.46f) } }) };
+            // One colour: the lines as wide as the coloured ones look.
+            const auto c = variant == Variant::whiteOnly ? white : ink;
+            scene.fills.push_back ({ makeLines (l, small ? smallShare : lineShare * 0.8f),
+                                     across (l, { { 0.0, c }, { 1.0, c } }) });
+            return scene;
         }
 
-        // As the emblem: white-hot cores inside yellow / orange and magenta edges, as the
-        // spectrogram shows a loud sine line.
-        const auto white = juce::Colours::white;
-        return { { across (l, { { 0.0, spectrum (0.85f) }, { 0.5, spectrum (0.66f) }, { 1.0, spectrum (0.48f) } }),
-                   across (l, { { 0.0, spectrum (0.96f) }, { 0.5, spectrum (0.8f) }, { 1.0, spectrum (0.68f) } }),
-                   across (l, { { 0.0, white }, { 0.42, white }, { 0.75, spectrum (0.93f) }, { 1.0, spectrum (0.85f) } }) },
-                 across (l, { { 0.0, white }, { 0.45, white }, { 0.75, spectrum (0.88f) }, { 1.0, spectrum (0.8f) } }) };
+        if (variant == Variant::onLight)
+        {
+            // The same colour map from its dark end: ink cores warming to plum inside magenta
+            // and coral edges, the way a loud line reads printed on paper. No pale orange or
+            // yellow here: on white they only wash the lines out.
+            if (small)
+            {
+                scene.fills.push_back ({ makeLines (l, smallShare),
+                                         across (l, { { 0.0, ink }, { 0.4, ink }, { 0.7, spectrum (0.42f) },
+                                                      { 1.0, spectrum (0.55f) } }) });
+                return scene;
+            }
+
+            const std::array<juce::ColourGradient, 3> layers {
+                across (l, { { 0.0, spectrum (0.45f) }, { 0.5, spectrum (0.55f) }, { 1.0, spectrum (0.62f) } }),
+                across (l, { { 0.0, spectrum (0.33f) }, { 0.5, spectrum (0.44f) }, { 1.0, spectrum (0.53f) } }),
+                across (l, { { 0.0, ink }, { 0.42, ink }, { 0.75, spectrum (0.3f) }, { 1.0, spectrum (0.42f) } })
+            };
+            for (size_t i = 0; i < layers.size(); ++i)
+                scene.fills.push_back ({ makeLines (l, lineShare * shares[i]), layers[i] });
+            return scene;
+        }
+
+        // On dark, as the emblem: white-hot cores inside yellow / orange and magenta edges, as
+        // the spectrogram shows a loud sine line.
+        if (small)
+        {
+            scene.fills.push_back ({ makeLines (l, smallShare),
+                                     across (l, { { 0.0, white }, { 0.45, white }, { 0.75, spectrum (0.88f) },
+                                                  { 1.0, spectrum (0.8f) } }) });
+            return scene;
+        }
+
+        const std::array<juce::ColourGradient, 3> layers {
+            across (l, { { 0.0, spectrum (0.85f) }, { 0.5, spectrum (0.66f) }, { 1.0, spectrum (0.48f) } }),
+            across (l, { { 0.0, spectrum (0.96f) }, { 0.5, spectrum (0.8f) }, { 1.0, spectrum (0.68f) } }),
+            across (l, { { 0.0, white }, { 0.42, white }, { 0.75, spectrum (0.93f) }, { 1.0, spectrum (0.85f) } })
+        };
+        for (size_t i = 0; i < layers.size(); ++i)
+            scene.fills.push_back ({ makeLines (l, lineShare * shares[i]), layers[i] });
+        return scene;
+    }
+
+    juce::String number (float v, int decimals = 2)
+    {
+        char buffer[48];
+        std::snprintf (buffer, sizeof (buffer), "%.*f", decimals, static_cast<double> (v));
+        auto s = juce::String (buffer);
+        if (s.containsChar ('.'))
+            s = s.trimCharactersAtEnd ("0").trimCharactersAtEnd (".");
+        return s == "-0" ? juce::String ("0") : s;
+    }
+
+    bool isOneColour (const juce::ColourGradient& g)
+    {
+        for (int i = 1; i < g.getNumColours(); ++i)
+            if (g.getColour (i) != g.getColour (0))
+                return false;
+        return true;
+    }
+
+    juce::String svgGradient (const juce::ColourGradient& g, const juce::String& id)
+    {
+        juce::String s;
+        s << "<linearGradient id=\"" << id << "\" gradientUnits=\"userSpaceOnUse\" x1=\""
+          << number (g.point1.x) << "\" y1=\"" << number (g.point1.y) << "\" x2=\"" << number (g.point2.x)
+          << "\" y2=\"" << number (g.point2.y) << "\">";
+        for (int i = 0; i < g.getNumColours(); ++i)
+        {
+            const auto c = g.getColour (i);
+            s << "<stop offset=\"" << number (static_cast<float> (g.getColourPosition (i)), 3)
+              << "\" stop-color=\"" << svgColour (c) << "\"";
+            if (! c.isOpaque())
+                s << " stop-opacity=\"" << number (c.getFloatAlpha(), 3) << "\"";
+            s << "/>";
+        }
+        s << "</linearGradient>\n";
+        return s;
     }
 } // namespace
 
@@ -282,27 +367,99 @@ void drawAnyMeansMark (juce::Graphics& g, juce::Rectangle<float> area, Variant v
     if (area.isEmpty())
         return;
 
-    const auto l = makeLayout (physicalScale (g), area);
-    const auto palette = makePalette (l, variant);
+    const auto scene = makeScene (makeLayout (physicalScale (g), area), variant);
 
     juce::Graphics::ScopedSaveState state (g);
-    g.reduceClipRegion (makeGlyph (l));
+    g.reduceClipRegion (scene.clip);
 
-    if (l.small())
+    for (const auto& fill : scene.fills)
     {
-        // Small: one colour per line; the gap is a whole pixel at the right-hand end.
-        g.setGradientFill (palette.small);
-        g.fillPath (makeLines (l, 1.0f - 1.0f / (l.pitch * l.scale)));
-        return;
+        g.setGradientFill (fill.gradient);
+        g.fillPath (fill.path);
+    }
+}
+
+juce::String svgColour (juce::Colour colour)
+{
+    return "#" + colour.toDisplayString (false).toLowerCase();
+}
+
+juce::String svgPathData (const juce::Path& path, const juce::AffineTransform& transform)
+{
+    juce::String d;
+    auto point = [&] (float x, float y)
+    {
+        transform.transformPoint (x, y);
+        return number (x) + " " + number (y);
+    };
+
+    for (juce::Path::Iterator it (path); it.next();)
+    {
+        switch (it.elementType)
+        {
+            case juce::Path::Iterator::startNewSubPath: d << "M" << point (it.x1, it.y1); break;
+            case juce::Path::Iterator::lineTo:          d << "L" << point (it.x1, it.y1); break;
+            case juce::Path::Iterator::quadraticTo:     d << "Q" << point (it.x1, it.y1) << " " << point (it.x2, it.y2); break;
+            case juce::Path::Iterator::cubicTo:
+                d << "C" << point (it.x1, it.y1) << " " << point (it.x2, it.y2) << " " << point (it.x3, it.y3);
+                break;
+            case juce::Path::Iterator::closePath:       d << "Z"; break;
+            default: break;
+        }
     }
 
-    const auto lineShare = 1.0f - l.gapShare;
-    const float shares[] = { 1.0f, 0.7f, 0.38f };
-    for (size_t i = 0; i < palette.layers.size(); ++i)
+    return d;
+}
+
+SvgMark markSvg (juce::Rectangle<float> area, Variant variant, int lines, const juce::String& idPrefix)
+{
+    const auto l = makeVectorLayout (area, lines);
+    const auto scene = makeScene (l, variant);
+
+    SvgMark mark;
+    mark.bounds = { l.left, l.top, glyphWidth * l.unit, l.unit };
+    mark.defs << "<clipPath id=\"" << idPrefix << "letters\"><path d=\"" << svgPathData (scene.clip)
+              << "\"/></clipPath>\n";
+    mark.body << "<g clip-path=\"url(#" << idPrefix << "letters)\">\n";
+
+    for (size_t i = 0; i < scene.fills.size(); ++i)
     {
-        g.setGradientFill (palette.layers[i]);
-        g.fillPath (makeLines (l, lineShare * shares[i]));
+        const auto& fill = scene.fills[i];
+        juce::String paint;
+
+        if (isOneColour (fill.gradient))
+        {
+            paint = svgColour (fill.gradient.getColour (0));
+        }
+        else
+        {
+            const auto id = idPrefix + "line" + juce::String (static_cast<int> (i));
+            mark.defs << svgGradient (fill.gradient, id);
+            paint = "url(#" + id + ")";
+        }
+
+        mark.body << "<path fill=\"" << paint << "\" d=\"" << svgPathData (fill.path) << "\"/>\n";
     }
+
+    mark.body << "</g>\n";
+    return mark;
+}
+
+juce::String markSvgFile (Variant variant, int lines)
+{
+    const auto width = glyphWidth * 100.0f;
+    const char* names[] = { "dark", "light", "white", "ink" };
+    const auto mark = markSvg ({ 0.0f, 0.0f, width, 100.0f }, variant, lines,
+                               juce::String ("am-mark-") + names[static_cast<int> (variant)] + "-");
+
+    juce::String s;
+    s << "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 " << number (width) << " 100\" width=\""
+      << number (width) << "\" height=\"100\">\n"
+      << "<title>AnyMeans</title>\n"
+      << "<defs>\n" << mark.defs << "</defs>\n"
+      << mark.body
+      << "</svg>\n";
+    return s;
 }
 
 } // namespace anymeans::brand

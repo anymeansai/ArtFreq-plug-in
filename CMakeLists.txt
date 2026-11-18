@@ -285,8 +285,8 @@ if(ARTFREQ_BUILD_TOOLS)
         PUBLIC
             ArtFreqBuildFlags)
 
-    # The AnyMeans logo lab: renders the company mark (src/brand/AnyMeansMark.h), its lockup
-    # with the wordmark and the ArtFreq emblem beside it to PNG files. Not part of the plug-ins.
+    # The AnyMeans logo lab: renders the company mark (src/brand/AnyMeansMark.h) for review and
+    # exports the brand files in docs/brand (PNG and SVG). Not part of the plug-ins.
     juce_add_console_app(AnyMeansLogoLab PRODUCT_NAME "AnyMeansLogoLab")
     target_sources(AnyMeansLogoLab PRIVATE
         tools/AnyMeansLogoLab.cpp
