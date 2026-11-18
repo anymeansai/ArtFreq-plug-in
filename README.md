@@ -2,7 +2,7 @@
 
 **by AnyMeans**
 
-A plug-in (VST3, macOS) that turns text, pictures and brush strokes into sound whose **spectrogram shows them**. Put it on an instrument track, open a spectrogram such as MiniMeters on its output, press play, and your drawing scrolls past.
+A plug-in (VST3, for macOS and Windows) that turns text, pictures and brush strokes into sound whose **spectrogram shows them**. Put it on an instrument track, open a spectrogram such as MiniMeters on its output, press play, and your drawing scrolls past.
 
 **Renamed in 0.4:** ArtFreq and ArtFreq FX were called FreqArt and FreqArt FX before. Old projects keep working (they open with the renamed plug-ins); after updating, rescan plug-ins in your DAW.
 
@@ -23,7 +23,7 @@ The canvas is a picture of your spectrogram: left to right is time across the dr
 4. **Press play in your DAW.** With the default trigger (Transport, Repeat off), ArtFreq plays the drawing once, from bar 1, as the DAW plays through it. The drawing scrolls through the spectrogram; ArtFreq's own **Live** view (the Canvas | Live switch at the top of the window) shows the same thing.
 5. **Make it yours.**
    - **+ Text** adds a text box in the mid band across the whole length (or, if something is already there, in a free band), ready for typing. Pick a font and Solid or Outline letters in the inspector on the right.
-   - **+ Image** adds a picture (PNG, JPEG, GIF, HEIC, WebP, TIFF or BMP), placed like new text, or drop an image file straight onto the canvas: it lands in the band under the cursor. A file that cannot be read is reported at the bottom of the canvas. **Mode** decides what in the picture becomes sound; **Auto** usually gets it right (on a white background it draws the dark parts).
+   - **+ Image** adds a picture (PNG, JPEG or GIF; on a Mac also HEIC, WebP, TIFF or BMP, which macOS reads), placed like new text, or drop an image file straight onto the canvas: it lands in the band under the cursor. A file that cannot be read is reported at the bottom of the canvas. **Mode** decides what in the picture becomes sound; **Auto** usually gets it right (on a white background it draws the dark parts).
    - **Brush** and **Erase** paint on the canvas, with Size, Soft and Strength in the toolbar.
    - **Layers.** With nothing selected, the panel on the right lists every text and picture, front first, and the paint layer last. Click a row to select it (handy when a picture covers some text), double-click it (or click its **›**) for its settings, drag rows to reorder, and click the eye to hide one: a hidden layer stays in the drawing, and in your saved session, but makes no sound. **‹ Layers** at the top of an object's settings goes back to the list.
 6. **Place it with the bands.** Select an object and choose a **Band** in the inspector: **Low** (40–250 Hz), **Mid** (300 Hz–3 kHz), **High** (3.5–16 kHz) or **Full** (the whole visible range). Or drag it to move it, and drag its handles to resize it. **Fill length** stretches it across the drawing.
@@ -91,7 +91,7 @@ ArtFreq and ArtFreq FX save their state in the same format, with ArtFreq FX addi
 | **Mode** (ArtFreq FX) | **Carve**, **Carve + Draw**, **Stencil** or **Draw**: what happens to the audio passing through (see [ArtFreq FX](#artfreq-fx-the-drawing-in-a-song)). Automatable. |
 | **Depth** (ArtFreq FX) | −120 to 0 dB, default −80 dB: how far carved frequencies drop. Click to type, drag to change. Automatable. |
 | **Canvas / Live** | **Canvas** shows the drawing as your analyser will show it, with frequency labels on the left and bars and beats (in the song's time signature) along the bottom: the song's own bar numbers when it plays once at a bar (Transport, Repeat off). **Live** shows a scrolling spectrogram of ArtFreq's own output, on the same scale, wide enough for a whole pass of the drawing (a quarter more than one pass, from 4 to 20 seconds). |
-| **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z. A whole brush stroke, a drag, a scroll over a bar, holding down an arrow key, or one session of typing in a text box is one step. |
+| **Undo / Redo** | Also Cmd+Z and Cmd+Shift+Z (on Windows Ctrl+Z, and Ctrl+Shift+Z or Ctrl+Y). A whole brush stroke, a drag, a scroll over a bar, holding down an arrow key, or one session of typing in a text box is one step. |
 | **?** | The how-to, inside the window. |
 | **Gear** | Settings: match your analyser (Scale, Low, High, Slope), window size, and Reset drawing. |
 | **Select** | Click an object to select it (a click inside the selected object keeps it, even where another lies over it). Where objects overlap, Option-click (Alt-click), or click again on the same spot, to pick the one underneath. Right-click an object for **Bring to front**, **Send to back**, **Hide** and **Delete**. Drag inside it to move it, drag a handle to resize it. Delete or Backspace removes it; the arrow keys nudge it (Shift: 10 times as far). Click empty canvas to deselect. |
@@ -171,7 +171,7 @@ Projects saved before Lows existed (ArtFreq 0.1 and 0.2) open with Lows on **Str
 
 ## Install
 
-Downloads are on the repository's **Releases** page, under **Assets**. Every successful build replaces the release for the current version.
+Downloads are on the repository's **Releases** page, under **Assets**. Every successful build replaces the release for the current version. Both plug-ins are VST3 only, for 64-bit DAWs.
 
 ### macOS: installer
 
@@ -184,7 +184,7 @@ The installer is not notarised by Apple, so macOS will not open it with a double
 
 At the end the installer offers to move itself to the Trash.
 
-### Manual install
+### macOS: by hand
 
 Download `ArtFreq-VST3-macOS.zip`, unzip it, and copy `ArtFreq.vst3` and `ArtFreq FX.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (just for you) or `/Library/Audio/Plug-Ins/VST3/` (every user). Then rescan plug-ins in your DAW.
 
@@ -194,24 +194,40 @@ A manually copied plug-in keeps the download quarantine flag. If the DAW refuses
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 "$HOME/Library/Audio/Plug-Ins/VST3/ArtFreq FX.vst3"
 ```
 
-Windows and Linux builds are paused until the macOS version is finished.
+### Install on Windows
+
+For Windows 10 or 11, 64-bit. There is no installer yet: download `ArtFreq-VST3-Windows.zip`, then
+
+1. Close your DAW.
+2. Unzip the zip and copy the folders `ArtFreq.vst3` and `ArtFreq FX.vst3`, whole, into `C:\Program Files\Common Files\VST3`. Windows asks for permission to copy there.
+3. If `FreqArt.vst3` or `FreqArt FX.vst3` (ArtFreq before 0.4) are in that folder, delete them.
+4. Open your DAW and rescan plug-ins. ArtFreq is listed under instruments, ArtFreq FX under audio effects.
+
+`How to install.txt` in the zip says the same. To remove ArtFreq, delete the two folders again.
+
+### Windows and macOS differences
+
+- **Pictures:** on Windows ArtFreq reads PNG, JPEG and GIF. On a Mac, macOS also reads HEIC, WebP, TIFF and BMP for it. **+ Image** and dropping a file offer only what the computer can read.
+- **Keys:** Ctrl where a Mac uses Cmd (undo Ctrl+Z, redo Ctrl+Shift+Z or Ctrl+Y), Alt where it uses Option.
+- **Bounce WAV:** the files go to the system's temporary folder (on Windows `%TEMP%\ArtFreq`). Drag the chip into your DAW in the same way, or use **Save...**.
+- **ArtFreq FX** uses more CPU on Windows: a Mac does its frequency analysis with Apple's fast built-in maths library, Windows with JUCE's own. If it crackles at a high sample rate, raise your DAW's buffer size.
 
 ## Build from source
 
-Requirements: CMake 3.22 or newer and a C++17 compiler (Xcode on macOS). JUCE 8.0.15 is downloaded automatically.
+Requirements: CMake 3.22 or newer and a C++17 compiler (Xcode on macOS, Visual Studio 2022 with the C++ desktop workload on Windows). JUCE 8.0.15 is downloaded automatically.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
 ```
 
-The plug-ins are written to `build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3` (target `ArtFreq`) and `build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3` (target `ArtFreqFX`; mind the space when you script it). For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring.
+The plug-ins are written to `build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3` (target `ArtFreq`) and `build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3` (target `ArtFreqFX`; mind the space when you script it). For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring. On Windows the same two commands use Visual Studio's generator (add `-A x64` when configuring to be sure of a 64-bit build); each `.vst3` is a folder with the plug-in itself at `Contents/x86_64-win/<name>.vst3`, and the C runtime is linked in, so it needs no Visual C++ redistributable.
 
 | CMake option | Default | Purpose |
 | --- | --- | --- |
 | `ARTFREQ_BUILD_TESTS` | ON | Build `ArtFreqTests`. |
 | `ARTFREQ_BUILD_TOOLS` | ON | Build the `ArtFreqSnapshot` interface snapshot tool, the `ArtFreqLab` lows lab and the `ArtFreqCarveLab` carving lab. |
-| `ARTFREQ_COPY_PLUGIN_AFTER_BUILD` | OFF | Copy the plug-ins into your VST3 folder after each build. |
+| `ARTFREQ_COPY_PLUGIN_AFTER_BUILD` | OFF | Copy the plug-ins into your VST3 folder after each build (on Windows `C:\Program Files\Common Files\VST3`, which needs a build run as administrator). |
 | `ARTFREQ_ENABLE_LTO` | ON | Link-time optimisation in Release builds (turn it off for faster development builds). |
 | `FETCHCONTENT_SOURCE_DIR_JUCE` | *(download)* | Use a local JUCE checkout instead of downloading it. |
 
@@ -244,7 +260,12 @@ or run `build/ArtFreqTests_artefacts/Release/ArtFreqTests [filter]` to run only 
 
 ### Continuous integration
 
-Every push builds both universal macOS plug-ins on GitHub Actions, runs the tests natively and again on the Intel half under Rosetta, renders the interface snapshots of both (artifact **ArtFreq-Snapshots**), validates both plug-ins with pluginval at strictness 10, builds the installer and test-installs it, then publishes everything as the release `v<version>`.
+Every push builds both platforms on GitHub Actions (`.github/workflows/build.yml`):
+
+- **macOS:** both universal plug-ins; the tests, natively and again on the Intel half under Rosetta; the interface snapshots of both (artifact **ArtFreq-Snapshots**); pluginval at strictness 10; the installer, test-installed.
+- **Windows** (64-bit, Visual Studio 2022): both plug-ins, checked to need no Visual C++ redistributable; the tests; pluginval at strictness 10; the zip with `How to install.txt`, unzipped again and its copies validated.
+
+When every build succeeds, all the downloads are published as the release `v<version>`. To build one platform only (macOS minutes cost ten times as much), run the workflow by hand (**Actions > Build > Run workflow**) and choose **platform** macOS or Windows: that run publishes no release, and its downloads stay on the run's page. A manual run of **all** builds both and publishes, like a push.
 
 ## Layout
 
@@ -260,6 +281,7 @@ Every push builds both universal macOS plug-ins on GitHub Actions, runs the test
 | `tools/` | The interface snapshot tool, the lows lab (`ArtFreqLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage) and the carving lab (`ArtFreqCarveLab`: plays songs through a carving engine with test drawings and measures what an analyser shows). |
 | `assets/fonts/` | The embedded fonts and their licences. |
 | `installer/macos/` | The macOS installer (both plug-ins): `build-pkg.sh`, its distribution file, pages and postinstall script. |
+| `installer/windows/` | `How to install.txt`, which goes into the Windows zip (there is no Windows installer yet). |
 | `docs/DESIGN.md` | The design. |
 
 ## Licences

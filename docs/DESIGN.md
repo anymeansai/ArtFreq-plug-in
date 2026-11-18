@@ -1,6 +1,6 @@
 # ArtFreq: design
 
-ArtFreq is an AnyMeans instrument plug-in (VST3, macOS first) that turns text, pictures and
+ArtFreq is an AnyMeans instrument plug-in (VST3, macOS and Windows) that turns text, pictures and
 brush strokes into sound whose **spectrogram shows them**. Open a spectrogram (MiniMeters, or
 any analyser with a scrolling spectrogram) on the output and the drawing scrolls past. The same
 code is also built as **ArtFreq FX**, an audio effect that carves the drawing into a song (see
@@ -753,3 +753,37 @@ on: it renders four drawings through the real plan and engine, analyses them lik
 (Hann and Blackman-Harris, 4096 to 32768 points, interpolated and nearest-bin) and measures, over
 30 Hz - 2 kHz, fidelity, fill, gap depth, flicker, regular pulsing and leakage, with PNG sheets
 and a comparison against an earlier run (`--baseline`).
+
+## Builds and releases (CI)
+
+GitHub Actions (`.github/workflows/build.yml`) builds macOS and Windows; Linux is the
+development box only (its matrix entry is gone, its steps are kept).
+
+- **Plan.** A first, small job writes the build matrix and whether to publish (a job-level `if`
+  cannot read the matrix). Pushes, pull requests and manual runs with platform **all** build
+  both; a manual run of **macOS** or **Windows** builds that one and never publishes (its
+  artifacts stay on the run), which saves macOS minutes (billed ten times) while working on one
+  platform. Only a push to a branch or a manual run of **all** publishes.
+- **macOS** (macos-15): universal (arm64 + x86_64); tests natively and under Rosetta; the
+  interface snapshots; ad hoc signing again after JUCE writes moduleinfo.json; pluginval at
+  strictness 10; the zip; the pkg installer, test-installed over stand-ins for the old FreqArt
+  bundles, its copies validated at strictness 5.
+- **Windows** (windows-2022, Visual Studio 2022, x64): the same targets with the C runtime
+  linked statically (`CMAKE_MSVC_RUNTIME_LIBRARY`, set before any target) and `/utf-8`; ctest;
+  a check of the bundle layout (`<name>.vst3/Contents/x86_64-win/<name>.vst3`, moduleinfo.json)
+  and of the DLLs' imports (x64, no VCRUNTIME / MSVCP / api-ms-win-crt, with dumpbin); pluginval
+  at strictness 10. No installer yet: `ArtFreq-VST3-Windows.zip` holds both bundles and
+  `How to install.txt` (installer/windows, CRLF). The zip is unzipped into a stand-in for
+  `C:\Program Files\Common Files\VST3` (then into the real one when the runner may write there),
+  its layout and text checked, its DLLs compared with the validated ones and validated again at
+  strictness 5. The snapshot tool is built but not run on Windows.
+- **Release.** Needs every build; checks that every platform's files are present (its clean-up
+  takes off the release whatever this build did not make), uploads them under temporary names,
+  then swaps each in, and updates `v<version>` and its notes.
+- **Platform differences in the code.** Pictures: macOS decodes HEIC, WebP, TIFF and BMP too
+  (`ARTFREQ_READS_PICTURES_WITH_MACOS` in Actions.cpp sets the chooser's and the drop's
+  filters); Windows and Linux read PNG, JPEG and GIF. Shortcuts read Cmd / Option on a Mac, Ctrl /
+  Alt elsewhere, and Ctrl+Y also redoes off the Mac. The bounce folder is JUCE's temporary
+  folder (`%TEMP%\ArtFreq` on Windows); the WAV chip is dragged out with JUCE's external
+  file drag (OLE on Windows, on a thread of its own). JUCE's FFT is vDSP on the Mac and JUCE's
+  portable one on Windows and Linux, so ArtFreq FX costs more there (see Carving).
