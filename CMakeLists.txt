@@ -85,6 +85,13 @@ set(ARTFREQ_JUCE_MODULES
     juce::juce_gui_basics
     juce::juce_gui_extra)
 
+# license: activation and the signed licence (src/license/README.md). Self-contained, it needs only
+# JUCE (juce_cryptography for SHA-256), so the same folder goes into the other AnyMeans plug-ins.
+# Everything that builds the processor builds it: both plug-ins, the tests and the tools.
+file(GLOB ARTFREQ_LICENSE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/license/*.cpp")
+list(APPEND ARTFREQ_PLUGIN_SOURCES ${ARTFREQ_LICENSE_SOURCES})
+list(APPEND ARTFREQ_JUCE_MODULES juce::juce_cryptography)
+
 # ---------------------------------------------------------------------------
 # The plug-ins: one code base, registered twice, because hosts decide from a VST3's category
 # where it may go (Ableton Live, FL Studio and Cubase offer instruments only on MIDI /
