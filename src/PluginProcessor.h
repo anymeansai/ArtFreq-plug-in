@@ -26,6 +26,7 @@
 
 #include <atomic>
 #include <functional>
+#include <limits>
 #include <memory>
 
 namespace artfreq
@@ -67,13 +68,15 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    // The effect always has one frame of audio in flight (and its sines in the Draw modes), so a
-    // host that stops calling it on silent input must keep going that long; the instrument fades
-    // within a block.
+    // The effect's tail is infinite (VST3: kInfiniteTail), so a host never stops calling it
+    // over silent input (Cubase's "suspend VST3 plug-in processing when no audio signals are
+    // received", Reaper's auto-bypass on silence). A finite one let such a host skip a gap and
+    // resume at the next audio region, which the tracker cannot tell from a relocation: a single
+    // pass on play began again there. And the effect makes sound of its own over silence: the
+    // sines of the Draw modes. The instrument fades within a block.
     double getTailLengthSeconds() const override
     {
-        const auto rate = getSampleRate();
-        return isEffect() && rate > 0.0 ? getLatencySamples() / rate + 0.05 : 0.0;
+        return isEffect() ? std::numeric_limits<double>::infinity() : 0.0;
     }
 
     int getNumPrograms() override { return 1; }
@@ -130,6 +133,14 @@ public:
     double getPlayPosition() const noexcept { return playPosition.load(); }  // 0..1
     bool isSounding() const noexcept { return sounding.load(); }
 
+    /** ArtFreq FX in Carve or Stencil, On play: the DAW plays, and the pass waits for the track's
+        audio to come in (see TrackerSettings::waitForSound). */
+    bool isWaitingForSound() const noexcept { return waitingForSound.load(); }
+
+    /** The length of the DAW's loop in quarter notes while it loops (0: it does not, or does not
+        say), as the audio thread last saw it. */
+    double getHostLoopQuarterNotes() const noexcept { return hostLoopQuarterNotes.load(); }
+
     /** Plays the drawing from its start, whatever the trigger mode (an audition while the DAW
         is stopped): on a loop with Repeat, else once, after which the preview turns itself off
         (isPreviewing() turns false). Turning it on while it is on changes nothing. */
@@ -140,9 +151,9 @@ public:
     double getEffectiveTempo() const noexcept;
     double getLengthSeconds() const noexcept;
 
-    /** The bar a single pass on the DAW's timeline starts on (Transport without Repeat; 1 is the
-        song start), or 0 when the drawing does not play at one place in the song (Repeat, MIDI).
-        The canvas numbers its bars from it. */
+    /** The bar a single pass on the DAW's timeline starts on (Transport without Repeat, At bar;
+        1 is the song start), or 0 when the drawing does not play at one place in the song (On
+        play, Repeat, MIDI). The canvas numbers its bars from it. */
     int getSinglePassStartBar() const noexcept;
 
     /** The host's time signature as the audio thread last saw it (4/4 until a host gives one):
@@ -240,6 +251,8 @@ private:
     std::atomic<juce::uint32> previewPresses { 0 };
     std::atomic<double> playPosition { 0.0 };
     std::atomic<bool> sounding { false };
+    std::atomic<bool> waitingForSound { false };
+    std::atomic<double> hostLoopQuarterNotes { 0.0 };
     std::atomic<double> effectiveTempo { 120.0 };
     std::atomic<juce::AudioPlayHead::TimeSignature> timeSignature { juce::AudioPlayHead::TimeSignature {} };
     static_assert (std::atomic<juce::AudioPlayHead::TimeSignature>::is_always_lock_free,
@@ -272,6 +285,7 @@ private:
     std::atomic<float>* lengthParam = nullptr;
     std::atomic<float>* triggerParam = nullptr;
     std::atomic<float>* repeatParam = nullptr;
+    std::atomic<float>* startAtParam = nullptr;
     std::atomic<float>* startBarParam = nullptr;
     std::atomic<float>* tempoSourceParam = nullptr;
     std::atomic<float>* bpmParam = nullptr;

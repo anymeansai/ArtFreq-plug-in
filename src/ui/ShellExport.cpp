@@ -498,7 +498,6 @@ juce::String ExportPanel::getChipText() const
         case Look::ready:    return bounceFile.getFileName();
         case Look::updating: return "Updating" + ellipsis();
         case Look::empty:    return "Nothing drawn";
-        case Look::daw:
         case Look::button:   break;
     }
 
@@ -517,11 +516,6 @@ bool ExportPanel::waitForBounce (int timeoutMilliseconds)
 
     refresh();
     return true;
-}
-
-bool ExportPanel::needsTheSong() const
-{
-    return processor.isEffect() && ! playsSines (processor.getEffectMode());
 }
 
 bool ExportPanel::isOnShow() const
@@ -568,7 +562,7 @@ void ExportPanel::refresh()
 
     // Following the drawing: once it has stayed the same for a moment, render it (but not
     // again something that has just failed: it would fail again, over and over).
-    if (following && job == nullptr && settled && ! settledSilent && ! fileReady && ! needsTheSong()
+    if (following && job == nullptr && settled && ! settledSilent && ! fileReady
         && ! (failedTake.has_value() && failedTake->sameAs (wanted))
         && now - lastChange >= static_cast<juce::uint32> (updateDelayMilliseconds)
         && isOnShow())
@@ -589,10 +583,6 @@ void ExportPanel::updateLook()
     if (following && lastError.isEmpty() && bounceFile != juce::File())
         newLook = fileReady ? Look::ready : settledSilent ? Look::empty : Look::updating;
 
-    // Carving needs the song: whatever was bounced before waits for a Draw mode.
-    if (needsTheSong())
-        newLook = Look::daw;
-
     const auto plan = processor.getCurrentPlan();
     const auto canBounce = plan != nullptr && ! plan->silent && job == nullptr;
     const auto changed = newLook != look || bounceButton.isEnabled() != canBounce;
@@ -602,8 +592,8 @@ void ExportPanel::updateLook()
     {
         bounceButton.setEnabled (canBounce);
         bounceButton.setVisible (look == Look::button);
-        chip->setVisible (look != Look::button && look != Look::daw);
-        saveButton.setVisible (look != Look::button && look != Look::daw);
+        chip->setVisible (look != Look::button);
+        saveButton.setVisible (look != Look::button);
         repaint();
     }
 
@@ -640,7 +630,6 @@ juce::String ExportPanel::hintText() const
         case Look::ready:    return "Drag into your DAW";
         case Look::empty:    return "Draw something first";
         case Look::updating: return "Rendering " + secondsText (job != nullptr ? job->settings.seconds : processor.getLengthSeconds()) + ellipsis();
-        case Look::daw:      return "Carving needs the song";
         case Look::button:   break;
     }
 
@@ -655,8 +644,7 @@ juce::String ExportPanel::hintText() const
     if (plan == nullptr || plan->silent)
         return "Draw something first";
 
-    // The effect bounces the drawing's sines, not the song.
-    return (processor.isEffect() ? "The sines, one pass, " : "One pass, ") + secondsText (processor.getLengthSeconds());
+    return "One pass, " + secondsText (processor.getLengthSeconds());
 }
 
 void ExportPanel::saveTo (const juce::File& target)
@@ -721,18 +709,6 @@ void ExportPanel::paint (juce::Graphics& g)
     g.setFont (fonts::ui (theme::labelSize));
     g.setColour (isError ? theme::danger : look == Look::ready ? theme::accent2 : theme::textFaint);
     g.drawText (hintText(), 0, hintTop, getWidth(), hintHeight, juce::Justification::centredLeft, true);
-
-    // ArtFreq FX carving: where the bounce happens instead, in a quiet box where the button was.
-    if (look == Look::daw)
-    {
-        const auto row = juce::Rectangle<int> (0, rowTop, getWidth(), metrics::controlHeight).toFloat().reduced (0.5f);
-        g.setColour (theme::line);
-        g.drawRoundedRectangle (row, theme::controlCorner, 1.0f);
-
-        g.setColour (theme::textDim);
-        g.setFont (fonts::ui (12.0f, fonts::UiWeight::medium));
-        g.drawFittedText (dawBounceText, row.reduced (8.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1, minimumTextScale);
-    }
 }
 
 void ExportPanel::resized()

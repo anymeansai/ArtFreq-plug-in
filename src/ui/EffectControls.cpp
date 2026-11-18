@@ -6,10 +6,9 @@ namespace artfreq::ui::shell
 {
 namespace
 {
-    constexpr int captionGap = 10;   // between a caption and its control
-    constexpr int groupGap = 16;     // between Mode and Depth
+    constexpr int captionGap = 6;   // between Depth's caption and its field
+    constexpr int groupGap = 10;    // between Mode and Depth
 
-    constexpr const char* modeCaptionText = "Mode";
     constexpr const char* depthCaptionText = "Depth";
 
     juce::RangedAudioParameter& parameter (ArtFreqProcessor& processor, const char* id)
@@ -25,6 +24,7 @@ EffectControls::EffectControls (ArtFreqProcessor& p)
 {
     setComponentID ("effect-controls");
 
+    // Mode names itself: its four choices are its label.
     mode.setComponentID ("mode");
     mode.setTitle ("Mode");
     mode.setTooltip ("Carve mutes the drawing's frequencies in the audio. Carve + Draw plays the drawing in a hole "
@@ -52,36 +52,35 @@ EffectControls::~EffectControls() = default;
 
 int EffectControls::getIdealWidth()
 {
-    return capsWidth (modeCaptionText) + captionGap + modeWidth + groupGap
-         + capsWidth (depthCaptionText) + captionGap + depthWidth;
+    return modeWidth + groupGap + capsWidth (depthCaptionText) + captionGap + depthWidth;
 }
 
 void EffectControls::refresh()
 {
+    // Nothing is greyed in ArtFreq FX: what a mode has no use for is not there.
     const auto carves = carvesAudio (processor.getEffectMode());
 
-    if (depth->isEnabled() != carves)
-        depth->setEnabled (carves);
+    if (depth->isVisible() != carves)
+    {
+        depth->setVisible (carves);
+        repaint();
+    }
 }
 
 void EffectControls::paint (juce::Graphics& g)
 {
-    drawCaps (g, modeCaptionText, modeCaption, juce::Justification::centredLeft, theme::textDim);
-    drawCaps (g, depthCaptionText, depthCaption, juce::Justification::centredLeft,
-              depth->isEnabled() ? theme::textDim : theme::textFaint);
+    if (depth->isVisible())
+        drawCaps (g, depthCaptionText, depthCaption, juce::Justification::centredLeft, theme::textDim);
 }
 
 void EffectControls::resized()
 {
     const auto height = metrics::controlHeight;
     const auto y = (getHeight() - height) / 2;
-    auto x = 0;
 
-    modeCaption = { x, 0, capsWidth (modeCaptionText), getHeight() };
-    x = modeCaption.getRight() + captionGap;
-    mode.setBounds (x, y, modeWidth, height);
-    x = mode.getRight() + groupGap;
+    mode.setBounds (0, y, modeWidth, height);
 
+    auto x = mode.getRight() + groupGap;
     depthCaption = { x, 0, capsWidth (depthCaptionText), getHeight() };
     x = depthCaption.getRight() + captionGap;
     depth->setBounds (x, y, depthWidth, height);

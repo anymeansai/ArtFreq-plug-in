@@ -1,5 +1,6 @@
 #include "ShellControls.h"
 
+#include "KeyFocus.h"
 #include "LookAndFeel.h"
 
 #include <cmath>
@@ -134,7 +135,24 @@ double parseNumber (const juce::String& text, double fallback)
 }
 
 //==============================================================================
-ValueLabel::ValueLabel()
+bool NumberTextBox::keyPressed (const juce::KeyPress& key)
+{
+    if (key.getKeyCode() == juce::KeyPress::spaceKey && onSpace != nullptr)
+    {
+        // Ended here and now: a label being typed into is modal, and macOS passes no key on to
+        // the host while anything is. Ending the typing deletes this text box, so nothing of it
+        // is touched after the call (JUCE's peer sees it gone and asks no one else).
+        const auto finish = onSpace;
+        finish();
+        return false;
+    }
+
+    return juce::TextEditor::keyPressed (key);
+}
+
+//==============================================================================
+ValueLabel::ValueLabel (bool forSlider)
+    : slider (forSlider)
 {
     setJustificationType (juce::Justification::centred);
     setKeyboardType (juce::TextInputTarget::decimalKeyboard);
@@ -145,20 +163,73 @@ ValueLabel::ValueLabel()
     setColour (juce::Label::textWhenEditingColourId, theme::text);
 }
 
-void ValueLabel::mouseUp (const juce::MouseEvent&)
+void ValueLabel::mouseUp (const juce::MouseEvent& e)
 {
-    // The slider makes its text box editable on a single click; a double-click is wanted.
+    // A knob's slider makes its text box editable on a single click; a double-click is wanted.
+    if (slider)
+        juce::Label::mouseUp (e);
 }
 
 void ValueLabel::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    if (isEditable() && isEnabled() && ! e.mods.isPopupMenu())
+    if (slider)
+        juce::Label::mouseDoubleClick (e);
+    else if (isEditable() && isEnabled() && ! e.mods.isPopupMenu())
         showEditor();
+}
+
+void ValueLabel::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
+{
+    // A bar listens to its value box's mouse itself: passed on as well, the wheel would turn it
+    // twice. (A knob's value passes it on to the knob.)
+    if (! slider)
+        juce::Label::mouseWheelMove (e, wheel);
+}
+
+std::unique_ptr<juce::AccessibilityHandler> ValueLabel::createAccessibilityHandler()
+{
+    return slider ? createIgnoredAccessibilityHandler (*this) : juce::Label::createAccessibilityHandler();
+}
+
+void ValueLabel::textEditorReturnKeyPressed (juce::TextEditor& textEditor)
+{
+    // The value is set (or, with Esc, left) and the typing is over: the focus goes back to the
+    // canvas rather than to whichever control JUCE finds next.
+    const juce::Component::SafePointer<juce::Component> safe (this);
+    juce::Label::textEditorReturnKeyPressed (textEditor);
+
+    if (safe != nullptr)
+        handKeyFocusBack (*this);
+}
+
+void ValueLabel::textEditorEscapeKeyPressed (juce::TextEditor& textEditor)
+{
+    const juce::Component::SafePointer<juce::Component> safe (this);
+    juce::Label::textEditorEscapeKeyPressed (textEditor);
+
+    if (safe != nullptr)
+        handKeyFocusBack (*this);
 }
 
 juce::TextEditor* ValueLabel::createEditorComponent()
 {
-    auto* textEditor = juce::Label::createEditorComponent();
+    // As juce::Label sets up its own text box, in a NumberTextBox.
+    auto* textEditor = new NumberTextBox();
+    textEditor->applyFontToAllText (getLookAndFeel().getLabelFont (*this));
+    copyAllExplicitColoursTo (*textEditor);
+
+    for (const auto& [from, to] : { std::pair { juce::Label::textWhenEditingColourId, juce::TextEditor::textColourId },
+                                    std::pair { juce::Label::backgroundWhenEditingColourId, juce::TextEditor::backgroundColourId },
+                                    std::pair { juce::Label::outlineWhenEditingColourId, juce::TextEditor::focusedOutlineColourId } })
+        if (isColourSpecified (from))
+            textEditor->setColour (to, findColour (from));
+
+    // The space bar sets the value, as Return does, and goes on to the DAW.
+    textEditor->onSpace = [this]
+    {
+        hideEditor (false);
+        handKeyFocusBack (*this);
+    };
 
     textEditor->setJustification (juce::Justification::centred);
     textEditor->setPopupMenuEnabled (false);
@@ -422,7 +493,8 @@ void NumberField::showEditor()
     if (! canEdit() || editor != nullptr)
         return;
 
-    editor = std::make_unique<juce::TextEditor>();
+    editor = std::make_unique<NumberTextBox>();
+    editor->onSpace = [this] { closeEditor (true); };
     editor->setFont (fonts::mono (options.textSize));
     editor->setJustification (juce::Justification::centred);
     editor->setIndents (0, 0);
@@ -455,6 +527,11 @@ void NumberField::closeEditor (bool commit)
     auto outgoing = std::move (editor);
     outgoing->removeListener (this);
 
+    // Closed while typing (Return, Esc): the typing is over, and the focus goes back to the
+    // canvas rather than to whichever control JUCE finds next. (Closed because the focus went
+    // elsewhere, it stays where it went.)
+    const auto wasTyping = outgoing->hasKeyboardFocus (true);
+
     if (commit)
     {
         const auto range = parameter.getNormalisableRange();
@@ -470,6 +547,9 @@ void NumberField::closeEditor (bool commit)
     removeChildComponent (outgoing.get());
     outgoing.reset();
     repaint();
+
+    if (wasTyping)
+        handKeyFocusBack (*this);
 }
 
 void NumberField::textEditorReturnKeyPressed (juce::TextEditor&)   { closeEditor (true); }

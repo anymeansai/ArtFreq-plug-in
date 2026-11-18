@@ -31,7 +31,10 @@
 //   artfreq-lows-brush.png       Lows (Smooth) at the foot of the panel, under the brush settings
 //   artfreq-lows-stripes.png     the rich drawing with Lows on Stripes (the layers PNGs are Smooth)
 //   artfreq-linear.png           the Linear analyser scale and a 1 bar length (beat labels)
-//   artfreq-repeat.png           Transport with Repeat on ("Repeats every 4 bars from bar 1")
+//   artfreq-repeat.png           Transport with Repeat on ("Repeats every 4 bars")
+//   artfreq-on-play.png          the default: "Plays once when you press play", bars 1 to 4 on the axis
+//   artfreq-start-menu.png       the start choice's menu (When you press play / From a bar of the song)
+//   artfreq-footer-*.png         the footer alone, On play and At bar, at 75, 100, 150 and 200 %
 //   artfreq-midi-repeat.png      MIDI note with Repeat on ("Loops while a note is held")
 //   artfreq-start-bar.png        a single pass from bar 9: the start bar field, bars 9 to 12 on
 //                                the canvas
@@ -41,22 +44,36 @@
 //   artfreq-150.png              window at 150 %, one image pixel per logical pixel
 //   artfreq-200.png              window at 200 %, one image pixel per logical pixel
 //
-// and for ArtFreq FX (the effect variant: the same editor with Mode and Depth in the header)
+// and for ArtFreq FX (the effect variant: a small window of its own, 720 x 440)
 //
-//   artfreq-fx-default.png       a fresh ArtFreq FX (Carve: the default drawing dark in the song)
-//   artfreq-fx-carve.png         the rich drawing in Carve: dark shapes on the stand-in song, the
-//                                export saying "Bounce the track in your DAW"
-//   artfreq-fx-carve-draw.png    Carve + Draw: the sines bright in a hole a little wider than them
-//   artfreq-fx-stencil.png       Stencil: the drawing filled with the song, the rest dark
-//   artfreq-fx-draw.png          Draw: the sines on top of the song, Depth greyed, Bounce WAV back
-//   artfreq-fx-shallow.png       Carve at a Depth of -24 dB, typed into the field
-//   artfreq-fx-live.png          the live view: a stand-in song carved by the real processor
-//   artfreq-fx-help.png          ArtFreq FX's help panel
-//   artfreq-fx-tooltip.png       the Mode control's tooltip
-//   artfreq-fx-75.png, -100.png, -200.png   window sizes, one image pixel per logical pixel
+//   artfreq-fx-default.png        a fresh ArtFreq FX (Carve: the default drawing dark in the song)
+//   artfreq-fx-wide-selected.png  its "ArtFreq" (4 - 96 %) selected: the canvas beside the drawer
+//   artfreq-fx-new-text.png       + Text, "HELLO WORLD" typed: all of it in view while it is typed
+//   artfreq-fx-carve.png          the rich drawing in Carve: dark shapes on the stand-in song
+//   artfreq-fx-carve-draw.png     Carve + Draw: the sines bright in a hole a little wider than
+//                                 them; the Sound strip under the top bar
+//   artfreq-fx-stencil.png        Stencil: the drawing filled with the song, the rest dark
+//   artfreq-fx-draw.png           Draw: the sines on top of the song; no Depth, the Sound strip
+//   artfreq-fx-shallow.png        Carve at a Depth of -24 dB, typed into the field
+//   artfreq-fx-tooltip.png        the Mode control's tooltip
+//   artfreq-fx-text-selected.png  a text selected: its settings in the drawer, on the right
+//   artfreq-fx-menu.png           its right-click menu (only what would change something)
+//   artfreq-fx-image-selected.png a picture on the right selected: the drawer on the left
+//   artfreq-fx-layers.png         the Layers button: the layer list in the drawer
+//   artfreq-fx-brush.png          the Brush tool: its settings in a strip over the bottom bar
+//   artfreq-fx-draw-brush.png     Draw, the eraser and the layer list: both strips and the drawer
+//   artfreq-fx-repeat.png         Repeat on ("Repeats every 4 bars")
+//   artfreq-fx-length-menu.png    the Length menu, open over the bottom bar
+//   artfreq-fx-settings.png       the settings: the analyser match, the window, Trigger, Start, Tempo
+//   artfreq-fx-settings-timing.png  the same with At bar 9 and a typed tempo
+//   artfreq-fx-live.png           the live view: a stand-in song carved by the real processor
+//   artfreq-fx-help.png           ArtFreq FX's help panel
+//   artfreq-fx-empty.png          nothing drawn: the stand-in song and the canvas's hint
+//   artfreq-fx-75.png, -100.png, -150.png, -200.png   window sizes (Carve + Draw, a text's
+//                                 settings), one image pixel per logical pixel
 //
-// All but the last two are rendered at <pixel-scale> image pixels per logical pixel (default 2, as
-// on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
+// All but the window sizes are rendered at <pixel-scale> image pixels per logical pixel (default
+// 2, as on a HiDPI display). Along the way it checks keyboard shortcuts, undo / redo, the bounce (a
 // WAV file of the right length, named on the chip, which says "Updating..." after a change until
 // a new file takes its place), that the window size is remembered, and drives the editor with
 // synthetic mouse events (select, move, resize, nudge, paint, erase, the inspector, the toolbar,
@@ -66,9 +83,24 @@
 // the (virtual) desktop to check the live view's own timer: the analyser on while shown,
 // scrolling, off when hidden.
 //
-// For ArtFreq FX it checks the header's layout at every size, Mode and Depth driven with the
-// mouse and the keyboard (and what they grey and show), the export's hint, Preview and a carve
-// through the processor.
+// For ArtFreq FX it checks, in every state and at every size, that the bars, the strips and the
+// canvas share the window, that nothing overlaps or is cut off and that nothing shown is greyed;
+// and, driven with the mouse, Mode and Depth and what each mode shows, the Sound strip, the
+// drawer (an object's settings, the layer list, the side it opens on, closing it), the brush,
+// the bottom bar's line, the timing in the settings, a size saved with the old large window,
+// and a carve through the processor.
+//
+// Last, for both plug-ins, it proves that the DAW's play key gets through: with the editor's
+// window on the (virtual) desktop and the keyboard in it, it clicks its way through every place
+// the focus can be (through the window's peer, as the OS does), presses the space bar through
+// ComponentPeer::handleKeyUpOrDown and handleKeyPress each time, and checks that it comes back
+// unused, and that it is typed where text is being typed (see checkKeys; on Linux only, where a
+// virtual display gives the window the keyboard). It writes
+//
+//   artfreq-keys-typing.png      the text box while it is typed in (focus ring, caret, the hint)
+//   artfreq-keys-add-text.png    just after Add text: the new object's text box has the focus
+//   artfreq-fx-drawer-left.png   ArtFreq FX: a text on the right clicked, its settings on the left
+//   artfreq-fx-typing.png        ArtFreq FX: the drawer's text box while it is typed in
 //
 // On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
 
@@ -80,6 +112,9 @@
 #include "ui/CanvasView.h"
 #include "ui/Editor.h"
 #include "ui/CanvasAxes.h"
+#include "ui/EffectShell.h"
+#include "ui/Inspector.h"
+#include "ui/KeyFocus.h"
 #include "ui/LayerList.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
@@ -153,8 +188,8 @@ Type* find (juce::Component& root, const juce::String& id)
 
 void setWindowScale (artfreq::ArtFreqEditor& editor, float scale)
 {
-    editor.setSize (juce::roundToInt (static_cast<float> (artfreq::ArtFreqEditor::baseWidth) * scale),
-                    juce::roundToInt (static_cast<float> (artfreq::ArtFreqEditor::baseHeight) * scale));
+    editor.setSize (juce::roundToInt (static_cast<float> (editor.getBaseWidth()) * scale),
+                    juce::roundToInt (static_cast<float> (editor.getBaseHeight()) * scale));
 }
 
 /** A stand-in for an imported picture: a shaded disc and a frame on a white background, the
@@ -651,9 +686,23 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
     pump (30);
 }
 
-/** The footer's timing controls, as a person would use them: Trigger, Repeat, the start bar
-    field (drag, type, Enter, Esc) and what the hint line under them says; Preview following
-    Repeat; the canvas numbering the song's bars. Puts the settings back as they were. */
+/** The canvas's bar labels for the default length, as the processor's settings number them. */
+juce::String canvasBarLabels (const artfreq::ArtFreqProcessor& processor)
+{
+    using namespace artfreq;
+    juce::StringArray labels;
+
+    for (const auto& mark : ui::axes::timeMarks (params::defaultLengthIndex, 4, 4, 600.0f, processor.getSinglePassStartBar()))
+        if (mark.label.isNotEmpty())
+            labels.add (mark.label);
+
+    return labels.joinIntoString (" ");
+}
+
+/** The footer's timing controls, as a person would use them: Trigger, Repeat, where a single
+    pass starts (the choice in the hint line, its menu, and the start bar field: drag, type,
+    Enter, Esc) and what the hint line under them says; Preview following Repeat; the canvas
+    numbering the drawing's own bars, or the song's. Puts the settings back as they were. */
 void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor,
                   const std::function<void (const juce::String&, bool)>& save)
 {
@@ -662,10 +711,13 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     auto* footer = find<ui::shell::Footer> (editor, "footer");
     auto* trigger = find<ui::SegmentedControl> (editor, "trigger");
     auto* repeat = find<juce::Button> (editor, "repeat");
+    auto* startChoice = find<ui::shell::StartChoice> (editor, "start-choice");
     auto* startBar = find<ui::shell::NumberField> (editor, "start-bar");
     auto* preview = find<juce::Button> (editor, "preview");
+    auto* tempo = findComponentWithId (editor, "tempo-source");
 
-    if (footer == nullptr || trigger == nullptr || repeat == nullptr || startBar == nullptr || preview == nullptr)
+    if (footer == nullptr || trigger == nullptr || repeat == nullptr || startChoice == nullptr || startBar == nullptr
+        || preview == nullptr || tempo == nullptr)
         return;
 
     const auto value = [&] (const char* id) { return processor.getParameters().getRawParameterValue (id)->load(); };
@@ -674,10 +726,68 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
                                                                                                static_cast<float> (c.getHeight()) * 0.5f); };
     settle();
 
-    // ---- the defaults: a single pass from bar 1 ----------------------------------------------
+    // ---- the defaults: a single pass from where the DAW starts playing ---------------------------
+    const auto onPlay = [&] { return juce::roundToInt (value (params::id::startAt)) == params::onPlayStartIndex; };
+
     check (trigger->getOptions() == juce::StringArray { "Transport", "MIDI" }, "Trigger offers Transport and MIDI (no Loop)");
-    check (! repeat->getToggleState() && startBar->isVisible() && footer->getTriggerHint() == "Plays once from bar 1",
-           "by default the drawing plays once from bar 1, and the footer says so, with the bar as a field");
+    check (! repeat->getToggleState() && onPlay() && footer->getTriggerHint() == "Plays once when you press play"
+           && startChoice->isVisible() && startChoice->getWords() == "when you press play" && ! startBar->isVisible(),
+           "by default the drawing plays once when the DAW starts playing, and the footer says so (no bar to set)");
+    check (processor.getSinglePassStartBar() == 0 && canvasBarLabels (processor) == "1 2 3 4",
+           "... and the canvas numbers the drawing's own bars, 1 to 4 (" + canvasBarLabels (processor) + ")");
+    save ("on-play", true);
+
+    // The words of the choice carry on from the hint's, on its line, and end before Tempo's hint.
+    const auto inHintLine = [&] (juce::Component& c)
+    {
+        return c.getY() > trigger->getBottom() + 6 && c.getBottom() < footer->getHeight() - 8
+            && c.getX() > trigger->getX() + 40 && c.getRight() <= repeat->getRight() + 8 && c.getRight() < tempo->getX();
+    };
+
+    check (inHintLine (*startChoice), "the start choice sits in the hint line under Trigger, after \"Plays once\" ("
+                                      + startChoice->getBounds().toString() + ", Repeat ends at " + juce::String (repeat->getRight()) + ")");
+
+    // ---- the start choice: a menu of the two, the current one ticked -------------------------------
+    {
+        const auto ticked = [&]
+        {
+            juce::StringArray items;
+            const auto menu = footer->startMenu();
+
+            for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+                items.add ((it.getItem().isTicked ? "+" : "-") + it.getItem().text);
+
+            return items.joinIntoString (" | ");
+        };
+
+        check (ticked() == "+When you press play | -From a bar of the song", "the start choice offers the two, On play ticked: " + ticked());
+
+        // Drawn at once (off screen, an open menu closes itself at its first timer tick).
+        clickOn (*startChoice, middleOf (*startChoice, 0.5f));
+        save ("start-menu", false);
+
+        auto menuShown = false;
+
+        if (auto* content = findComponentWithId (editor, "content"))
+            for (auto* child : content->getChildren())
+                menuShown = menuShown || (child->getName() == "menu" && child->isVisible());
+
+        check (menuShown, "a click on the start choice opens its menu");
+        juce::PopupMenu::dismissAllActiveMenus();
+        pump (30);
+
+        // What its second item does.
+        footer->setStartAt (StartAt::bar);
+        settle();
+        check (! onPlay() && footer->getTriggerHint() == "Plays once from bar 1" && startChoice->getWords() == "from bar"
+               && startBar->isVisible() && processor.getSinglePassStartBar() == 1,
+               "From a bar of the song: once from bar 1, with the bar as a field");
+        check (ticked() == "-When you press play | +From a bar of the song", "... and the menu ticks it: " + ticked());
+        check (inHintLine (*startChoice) && inHintLine (*startBar) && startBar->getX() >= startChoice->getRight()
+               && startBar->getX() <= startChoice->getRight() + 6
+               && startBar->getY() == startChoice->getY() && startBar->getHeight() == startChoice->getHeight(),
+               "the start bar field follows the choice's words, on the same line");
+    }
 
     // ---- the layout: in line, inside the footer, nothing overlapping ------------------------------
     {
@@ -717,17 +827,8 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
            "... and the hint says where it now plays");
     save ("start-bar", true);
 
-    {
-        const auto marks = ui::axes::timeMarks (params::defaultLengthIndex, 4, 4, 600.0f, processor.getSinglePassStartBar());
-        juce::StringArray labels;
-
-        for (const auto& mark : marks)
-            if (mark.label.isNotEmpty())
-                labels.add (mark.label);
-
-        check (labels == juce::StringArray { "9", "10", "11", "12" }, "the canvas numbers the song's bars: 9 to 12 ("
-                                                                       + labels.joinIntoString (" ") + ")");
-    }
+    check (canvasBarLabels (processor) == "9 10 11 12", "the canvas numbers the song's bars: 9 to 12 ("
+                                                         + canvasBarLabels (processor) + ")");
 
     const auto typeInto = [&] (const juce::String& text, const juce::KeyPress& key, const juce::String& snapshot)
     {
@@ -764,33 +865,55 @@ void checkFooter (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     // ---- Repeat and Trigger ----------------------------------------------------------------------
     clickOn (*repeat, middleOf (*repeat, 0.5f));
     settle();
-    check (value (params::id::repeat) > 0.5f && repeat->getToggleState() && ! startBar->isVisible()
-           && footer->getTriggerHint() == "Repeats every 4 bars from bar 1" && processor.getSinglePassStartBar() == 0,
-           "Repeat loops the drawing every Length from bar 1 (no start bar to set then)");
+    check (value (params::id::repeat) > 0.5f && repeat->getToggleState() && ! startBar->isVisible() && ! startChoice->isVisible()
+           && footer->getTriggerHint() == "Repeats every 4 bars" && processor.getSinglePassStartBar() == 0,
+           "Repeat loops the drawing every Length (nothing to choose about its start then)");
     save ("repeat", true);
 
     clickOn (*trigger, middleOf (*trigger, 0.85f));
     settle();
     check (juce::approximatelyEqual (value (params::id::trigger), 1.0f) && footer->getTriggerHint() == "Loops while a note is held"
-           && ! startBar->isVisible(), "MIDI with Repeat loops while a note is held");
+           && ! startBar->isVisible() && ! startChoice->isVisible(), "MIDI with Repeat loops while a note is held");
     save ("midi-repeat", true);
 
     clickOn (*repeat, middleOf (*repeat, 0.5f));
     settle();
-    check (value (params::id::repeat) < 0.5f && footer->getTriggerHint() == "Each note plays it once" && ! startBar->isVisible(),
-           "MIDI without Repeat plays it once per note");
+    check (value (params::id::repeat) < 0.5f && footer->getTriggerHint() == "Each note plays it once" && ! startBar->isVisible()
+           && ! startChoice->isVisible(), "MIDI without Repeat plays it once per note");
 
     clickOn (*trigger, middleOf (*trigger, 0.2f));
     settle();
-    check (juce::approximatelyEqual (value (params::id::trigger), 0.0f) && startBar->isVisible()
-           && footer->getTriggerHint() == "Plays once from bar 1", "back to Transport: once from bar 1, the field back");
+    check (juce::approximatelyEqual (value (params::id::trigger), 0.0f) && startBar->isVisible() && startChoice->isVisible()
+           && footer->getTriggerHint() == "Plays once from bar 1", "back to Transport: once from bar 1, the choice and the field back");
+
+    // Back to On play: the bar is kept for next time, but no longer shown or used.
+    setParameter (processor, params::id::startBar, 9.0f);
+    footer->setStartAt (StartAt::play);
+    settle();
+    check (onPlay() && footer->getTriggerHint() == "Plays once when you press play" && ! startBar->isVisible()
+           && processor.getSinglePassStartBar() == 0 && canvasBarLabels (processor) == "1 2 3 4",
+           "When you press play: the field goes, and the canvas numbers its own bars again");
+    footer->setStartAt (StartAt::bar);
+    settle();
+    check (footer->getTriggerHint() == "Plays once from bar 9", "... and At bar finds the bar it had");
+    setParameter (processor, params::id::startBar, 1.0f);
+    footer->setStartAt (StartAt::play);
+    settle();
 
     // Automation (or the host) changing Repeat moves the switch too.
     setParameter (processor, params::id::repeat, 1.0f);
     settle();
-    check (repeat->getToggleState() && ! startBar->isVisible(), "the Repeat switch follows the parameter");
+    check (repeat->getToggleState() && ! startChoice->isVisible(), "the Repeat switch follows the parameter");
     setParameter (processor, params::id::repeat, 0.0f);
     settle();
+
+    // ... and the host changing where the pass starts moves the choice and the field.
+    setParameter (processor, params::id::startAt, static_cast<float> (params::atBarStartIndex));
+    settle();
+    check (startChoice->getWords() == "from bar" && startBar->isVisible(), "the start choice follows the parameter");
+    setParameter (processor, params::id::startAt, static_cast<float> (params::onPlayStartIndex));
+    settle();
+    check (startChoice->getWords() == "when you press play" && ! startBar->isVisible(), "... both ways");
 
     // ---- Preview follows Repeat: once, then the button turns itself off; or on a loop ------------
     setParameter (processor, params::id::length, 2.0f);   // 1 bar: 2 s
@@ -1253,8 +1376,165 @@ std::vector<float> carveSong (artfreq::ArtFreqProcessor& effect, const std::vect
     return out;
 }
 
-/** ArtFreq FX's editor: the header's Mode and Depth, what they show and grey, the canvas in each
-    mode, the export's hint, the live view of a carved song, the help, the window sizes. */
+/** A showing component that is disabled, by name (ArtFreq FX shows nothing it would have to
+    grey: what does not apply is not there). */
+void collectDisabled (juce::Component& component, juce::StringArray& names)
+{
+    if (! component.isVisible())
+        return;
+
+    if (! component.isEnabled())
+    {
+        names.add (component.getComponentID().isNotEmpty() ? component.getComponentID()
+                 : component.getName().isNotEmpty() ? component.getName() : juce::String ("(unnamed)"));
+        return;
+    }
+
+    for (auto* child : component.getChildren())
+        collectDisabled (*child, names);
+}
+
+juce::String nameOf (const juce::Component& component)
+{
+    return component.getComponentID().isNotEmpty() ? component.getComponentID()
+         : component.getName().isNotEmpty() ? component.getName() : juce::String ("(unnamed)");
+}
+
+/** The visible children of `parent` lie inside it and none overlaps another. */
+void checkNoOverlap (juce::Component& parent, const juce::String& state)
+{
+    std::vector<juce::Component*> shown;
+
+    for (auto* child : parent.getChildren())
+        if (child->isVisible() && ! child->getBounds().isEmpty())
+            shown.push_back (child);
+
+    juce::StringArray problems;
+
+    for (size_t i = 0; i < shown.size(); ++i)
+    {
+        if (! parent.getLocalBounds().contains (shown[i]->getBounds()))
+            problems.add (nameOf (*shown[i]) + " leaves " + nameOf (parent));
+
+        for (size_t j = i + 1; j < shown.size(); ++j)
+            if (shown[i]->getBounds().intersects (shown[j]->getBounds()))
+                problems.add (nameOf (*shown[i]) + " overlaps " + nameOf (*shown[j]));
+    }
+
+    check (problems.isEmpty(), "ArtFreq FX, " + state + ": in " + nameOf (parent) + " nothing overlaps or is cut off"
+                                   + (problems.isEmpty() ? juce::String() : " (" + problems.joinIntoString ("; ") + ")"));
+}
+
+/** ArtFreq FX's window holds together in the state it is in: the bars, the strips that are
+    there and the canvas tile the window without overlapping, the drawer stays over the canvas,
+    inside every bar, strip and the drawer nothing overlaps, the line in the bottom bar fits, and
+    nothing that is shown is disabled. */
+void checkEffectLayout (artfreq::ArtFreqEditor& editor, const juce::String& state)
+{
+    using namespace artfreq;
+
+    auto* content = findComponentWithId (editor, "content");
+    auto* top = findComponentWithId (editor, "header");
+    auto* bottom = dynamic_cast<ui::shell::EffectBottomBar*> (findComponentWithId (editor, "footer"));
+    auto* sound = findComponentWithId (editor, "sound-strip");
+    auto* brush = findComponentWithId (editor, "brush-strip");
+    auto* controls = findComponentWithId (editor, "effect-controls");
+    auto* canvas = findComponentWithId (editor, "canvas");
+    auto* live = findComponentWithId (editor, "live-view");
+    auto* drawer = findComponentWithId (editor, "inspector");
+
+    if (content == nullptr || top == nullptr || bottom == nullptr || sound == nullptr || brush == nullptr || controls == nullptr
+        || canvas == nullptr || live == nullptr || drawer == nullptr)
+    {
+        check (false, "ArtFreq FX, " + state + ": the window's parts exist");
+        return;
+    }
+
+    // From top to bottom, without a gap or an overlap. (The Brush strip lies over the canvas's
+    // foot: see below.)
+    auto* view = canvas->isVisible() ? canvas : live;
+    auto y = 0;
+    juce::StringArray problems;
+
+    for (auto* part : { top, sound, view, static_cast<juce::Component*> (bottom) })
+    {
+        if (! part->isVisible())
+            continue;
+
+        // (The canvas keeps a few pixels of air around it.)
+        const auto air = part == view || y == view->getBottom() ? 16 : 0;
+
+        if (part->getY() < y || part->getY() > y + air || part->getX() < 0 || part->getRight() > content->getWidth())
+            problems.add (nameOf (*part) + " at " + part->getBounds().toString());
+
+        y = part->getBottom();
+    }
+
+    check (problems.isEmpty() && bottom->getBottom() == content->getHeight() && view->getHeight() >= 200,
+           "ArtFreq FX, " + state + ": the bars, the strips and the canvas share the window"
+               + (problems.isEmpty() ? juce::String() : " (" + problems.joinIntoString ("; ") + ")"));
+
+    auto* canvasView = dynamic_cast<ui::CanvasView*> (canvas);
+
+    // The Brush strip over the canvas's time axis, from edge to edge, on the bottom bar, clear of
+    // the drawing (so a tool never resizes the canvas).
+    if (brush->isVisible() && canvasView != nullptr)
+    {
+        const auto drawing = canvasView->getDrawingArea() + canvas->getPosition().toFloat();
+        check (canvas->isVisible() && brush->getBottom() == bottom->getY() && brush->getX() == 0 && brush->getRight() == content->getWidth()
+                   && static_cast<float> (brush->getY()) >= drawing.getBottom() && canvas->getBottom() <= bottom->getY(),
+               "ArtFreq FX, " + state + ": the Brush strip lies over the canvas's time axis, clear of the drawing");
+    }
+
+    // An object's settings in the drawer: the object and its handles are in view, none of them
+    // under the drawer (a wide one moves the canvas aside).
+    if (drawer->isVisible() && ! editor.isLayerListShown() && ! editor.getSelectedObject().isNull() && canvas->isVisible()
+        && canvasView != nullptr)
+    {
+        const auto object = canvasView->getObjectBounds (editor.getSelectedObject()) + canvas->getPosition().toFloat();
+        const auto drawing = canvasView->getDrawingArea() + canvas->getPosition().toFloat();
+        const auto reach = ui::CanvasView::handleReach + 1.0f;
+        check (! object.isEmpty() && ! object.intersects (drawer->getBounds().toFloat())
+                   && object.getX() >= drawing.getX() - reach && object.getRight() <= drawing.getRight() + reach,
+               "ArtFreq FX, " + state + ": the selected object and its handles are in view, clear of the drawer (object "
+                   + object.toNearestInt().toString() + ", drawer " + drawer->getBounds().toString() + ")");
+    }
+
+    for (auto* part : { top, controls, sound, brush, static_cast<juce::Component*> (bottom) })
+        if (part->isVisible())
+            checkNoOverlap (*part, state);
+
+    // The line that says what will happen: whole, and clear of the buttons beside it.
+    const auto hint = bottom->getHintBounds();
+    auto hintClear = true;
+
+    for (auto* child : bottom->getChildren())
+        hintClear = hintClear && ! (child->isVisible() && child->getBounds().intersects (hint));
+
+    check (hintClear && bottom->getShownHint().isNotEmpty()
+               && juce::GlyphArrangement::getStringWidth (fonts::ui (11.0f), bottom->getShownHint()) <= static_cast<float> (hint.getWidth()),
+           "ArtFreq FX, " + state + ": \"" + bottom->getShownHint() + "\" fits in the bottom bar");
+
+    if (drawer->isVisible())
+    {
+        check (drawer->getY() >= (sound->isVisible() ? sound->getBottom() : top->getBottom())
+                   && drawer->getBottom() <= (brush->isVisible() ? brush->getY() : bottom->getY())
+                   && drawer->getX() >= 0 && drawer->getRight() <= content->getWidth()
+                   && drawer->getHeight() >= ui::Inspector::compactMinimumHeight,
+               "ArtFreq FX, " + state + ": the drawer lies over the canvas, between the bars, with room for its tallest content");
+        checkNoOverlap (*drawer, state);
+    }
+
+    juce::StringArray disabled;
+    collectDisabled (editor, disabled);
+    check (disabled.isEmpty(), "ArtFreq FX, " + state + ": nothing that is shown is greyed"
+                                   + (disabled.isEmpty() ? juce::String() : " (" + disabled.joinIntoString (", ") + ")"));
+}
+
+/** ArtFreq FX's editor: a small window of its own. The top bar's Mode and Depth, what each mode
+    shows (and that nothing is greyed), the canvas in each mode, the strips, the drawer (an
+    object's settings, the layer list, which side it opens on), the bottom bar's line, the
+    settings that hold the timing, the live view of a carved song, the help, the window sizes. */
 void checkEffect (const juce::File& outputDir, float pixelScale)
 {
     using namespace artfreq;
@@ -1292,73 +1572,157 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
     pump (150);
 
+    check (editor->getWidth() == ArtFreqEditor::effectBaseWidth && editor->getHeight() == ArtFreqEditor::effectBaseHeight
+               && editor->getBaseWidth() == 720 && editor->getBaseHeight() == 440,
+           "a new ArtFreq FX opens at 720 x 440");
+
     auto* mode = find<ui::SegmentedControl> (*editor, "mode");
     auto* depth = find<ui::shell::NumberField> (*editor, "depth");
-    auto* header = findComponentWithId (*editor, "header");
-    auto* view = findComponentWithId (*editor, "view-switch");
-    auto* controls = findComponentWithId (*editor, "effect-controls");
+    auto* top = findComponentWithId (*editor, "header");
+    auto* bottom = find<ui::shell::EffectBottomBar> (*editor, "footer");
+    auto* sound = findComponentWithId (*editor, "sound-strip");
+    auto* brush = findComponentWithId (*editor, "brush-strip");
+    auto* drawer = findComponentWithId (*editor, "inspector");
+    auto* canvas = find<ui::CanvasView> (*editor, "canvas");
+    auto* list = find<ui::LayerList> (*editor, "layer-list");
     auto* undo = findComponentWithId (*editor, "undo");
-    auto* exporter = find<ui::shell::ExportPanel> (*editor, "export");
-    auto* bounce = find<juce::Button> (*editor, "bounce");
+    auto* redo = findComponentWithId (*editor, "redo");
+    auto* live = find<juce::Button> (*editor, "live");
+    auto* layers = find<juce::Button> (*editor, "layers");
+    auto* repeat = find<juce::Button> (*editor, "repeat");
+    auto* content = findComponentWithId (*editor, "content");
 
-    if (mode == nullptr || depth == nullptr || header == nullptr || view == nullptr || controls == nullptr || undo == nullptr
-        || exporter == nullptr || bounce == nullptr)
+    if (mode == nullptr || depth == nullptr || top == nullptr || bottom == nullptr || sound == nullptr || brush == nullptr
+        || drawer == nullptr || canvas == nullptr || list == nullptr || undo == nullptr || redo == nullptr || live == nullptr
+        || layers == nullptr || repeat == nullptr || content == nullptr)
         return;
 
-    // The header: Canvas | Live beside the wordmark, Mode and Depth after it, clear of undo.
-    check (controls->getParentComponent() == header && controls->isVisible(), "Mode and Depth are in the header");
-    check (view->getRight() < controls->getX() && controls->getRight() < undo->getX()
-               && mode->getRight() <= controls->getWidth() && depth->getRight() <= controls->getWidth(),
-           "the header's controls do not overlap");
+    // (Shown: visible, and so is everything it is in. The editor itself is on no screen here.)
+    const auto shown = [&] (const juce::String& id)
+    {
+        auto* c = findComponentWithId (*editor, id);
+
+        for (auto* p = c; p != nullptr && p != editor.get(); p = p->getParentComponent())
+            if (! p->isVisible())
+                return false;
+
+        return c != nullptr;
+    };
+    const auto scale = processor.getScale();
+    const auto choice = [&] (const char* id) { return juce::roundToInt (processor.getParameters().getRawParameterValue (id)->load()); };
+
+    // ---- a fresh window: Carve, and only what Carve has a use for ---------------------------------
     check (mode->getSelectedIndex() == 0 && processor.getEffectMode() == EffectMode::carve, "a new ArtFreq FX carves");
-    check (depth->isEnabled(), "Depth can be changed in Carve");
+    check (shown ("depth") && ! sound->isVisible() && ! brush->isVisible() && ! drawer->isVisible(),
+           "Carve with the Select tool: Depth, and neither strip nor the drawer");
+    check (! undo->isVisible() && ! redo->isVisible(), "nothing to undo or redo yet: neither button is there");
+    check (bottom->getShownHint() == "Carves once when you press play", "the bottom bar says \"Carves once when you press play\"");
 
-    for (auto* id : { "density", "contrast", "level" })
-        if (auto* knob = findComponentWithId (*editor, id))
-            check (! knob->isEnabled(), juce::String (id) + " is greyed in Carve (it shapes the sines only)");
+    // What the instrument's window has and this one leaves out.
+    for (const auto* id : { "preview", "export", "bounce", "clear", "trigger", "tempo-source", "start-choice", "view-switch",
+                            "toolbar", "inspector-add-text", "inspector-size" })
+        check (! shown (id), juce::String ("ArtFreq FX's window has no ") + id);
 
-    check (exporter->isAskingForDawBounce() && ! bounce->isVisible(), "Carve: the export asks for a bounce in the DAW");
+    checkEffectLayout (*editor, "a new window");
     save ("default", pixelScale);
+
+    // ---- wide objects: the canvas moves aside for the drawer, so all of them stays in view -------
+    {
+        const auto canvasWidth = canvas->getWidth();
+        const auto defaultText = processor.getDocument().objects.front().id;
+        editor->selectObject (defaultText);
+        pump (60);
+        check (editor->isDrawerOpen() && canvas->getWidth() < canvasWidth - 200 && canvas->getRight() <= drawer->getX(),
+               "the default drawing's \"ArtFreq\" (4 - 96 %) selected: the canvas lies beside the drawer, not under it");
+        checkEffectLayout (*editor, "the default text selected");
+        save ("wide-selected", pixelScale);
+
+        // + Text: across the length in a free band, typed into at once. What is typed stays in view.
+        if (auto* add = find<juce::Button> (*editor, "add-text"))
+            add->triggerClick();
+
+        pump (80);
+
+        if (auto* field = find<juce::TextEditor> (*editor, "inspector-text"))
+        {
+            field->selectAll();
+            field->insertTextAtCaret ("HELLO WORLD");
+        }
+
+        pump (80);
+        const auto* added = processor.getDocument().find (editor->getSelectedObject());
+        check (added != nullptr && added->text == "HELLO WORLD" && added->endTime - added->startTime > 0.8f
+                   && canvas->getRight() <= drawer->getX(),
+               "+ Text, typed: the new text across the length, all of it beside the drawer ("
+                   + (added != nullptr ? added->text + " " + juce::String (added->startTime) + " - " + juce::String (added->endTime) : juce::String ("none"))
+                   + ", canvas " + canvas->getBounds().toString() + ", drawer " + drawer->getBounds().toString() + ")");
+        checkEffectLayout (*editor, "new text typed");
+        save ("new-text", pixelScale);
+
+        // Deselected: the canvas has the whole width again.
+        editor->selectObject (juce::Uuid::null());
+        pump (60);
+        check (! editor->isDrawerOpen() && canvas->getWidth() == canvasWidth, "deselected, the canvas has the window's width again");
+    }
 
     juce::Uuid textId, imageId;
     makeRichDrawing (processor, textId, imageId);
     pump (100);
+    checkEffectLayout (*editor, "Carve");
     save ("carve", pixelScale);
 
-    // Mode, clicked: the segments sit at about these fractions of its width.
+    // ---- Mode, clicked: the segments sit at about these fractions of its width ----------------------
     const auto clickMode = [&] (float fraction)
     {
-        clickOn (*mode, { mode->getWidth() * fraction, mode->getHeight() * 0.5f });
-        pump (60);
+        clickOn (*mode, { static_cast<float> (mode->getWidth()) * fraction, static_cast<float> (mode->getHeight()) * 0.5f });
+        pump (80);
     };
 
-    clickMode (0.39f);
+    const auto canvasHeightInCarve = canvas->getHeight();
+
+    clickMode (0.38f);
     check (processor.getEffectMode() == EffectMode::carveDraw && mode->getSelectedIndex() == 1, "clicking Carve + Draw chooses it");
-    check (depth->isEnabled() && ! exporter->isAskingForDawBounce() && bounce->isVisible(), "Carve + Draw: Depth on, Bounce WAV back");
-
-    for (auto* id : { "density", "contrast", "level" })
-        if (auto* knob = findComponentWithId (*editor, id))
-            check (knob->isEnabled(), juce::String (id) + " can be changed in Carve + Draw");
-
+    check (shown ("depth") && sound->isVisible() && shown ("level") && shown ("density") && shown ("contrast") && shown ("lows"),
+           "Carve + Draw: Depth, and the Sound strip with Level, Density, Contrast and Lows");
+    check (canvas->getHeight() == canvasHeightInCarve - sound->getHeight(), "... the canvas makes room for the strip");
+    check (bottom->getShownHint() == "Draws once when you press play", "... and the bottom bar says \"Draws once when you press play\"");
+    checkEffectLayout (*editor, "Carve + Draw");
     save ("carve-draw", pixelScale);
 
-    clickMode (0.69f);
+    // The Sound strip's fields are the sines' parameters.
+    if (auto* level = find<ui::shell::NumberField> (*editor, "level"))
+    {
+        const auto before = processor.getParameters().getRawParameterValue (params::id::level)->load();
+        dragOn (*level, { 30.0f, 12.0f }, { 30.0f, 32.0f });
+        check (processor.getParameters().getRawParameterValue (params::id::level)->load() < before - 2.0f, "dragging Level down turns the sines down");
+        setParameter (processor, params::id::level, before);
+    }
+
+    if (auto* lows = find<ui::SegmentedControl> (*editor, "lows"))
+    {
+        clickOn (*lows, { static_cast<float> (lows->getWidth()) * 0.75f, 12.0f });
+        check (choice (params::id::lowEnd) == params::stripesLowEndIndex, "clicking Stripes chooses it");
+        clickOn (*lows, { static_cast<float> (lows->getWidth()) * 0.25f, 12.0f });
+        check (choice (params::id::lowEnd) == params::smoothLowEndIndex, "... and Smooth, Smooth");
+    }
+
+    clickMode (0.7f);
     check (processor.getEffectMode() == EffectMode::stencil, "clicking Stencil chooses it");
-    check (exporter->isAskingForDawBounce(), "Stencil: the export asks for a bounce in the DAW");
+    check (shown ("depth") && ! sound->isVisible() && ! shown ("level"), "Stencil: Depth, and no Sound strip");
+    check (bottom->getShownHint() == "Stencils once when you press play", "... \"Stencils once when you press play\"");
+    checkEffectLayout (*editor, "Stencil");
     save ("stencil", pixelScale);
 
-    clickMode (0.9f);
+    clickMode (0.92f);
     check (processor.getEffectMode() == EffectMode::draw, "clicking Draw chooses it");
-    check (! depth->isEnabled(), "Depth is greyed in Draw, which carves nothing");
-    check (bounce->isVisible() && bounce->isEnabled(), "Draw: Bounce WAV bounces the sines");
+    check (! depth->isVisible() && sound->isVisible(), "Draw carves nothing: Depth is not there, the Sound strip is");
+    checkEffectLayout (*editor, "Draw");
     save ("draw", pixelScale);
 
     // The canvas shows each mode differently (and not as the instrument does).
-    clickMode (0.1f);
+    clickMode (0.08f);
     check (processor.getEffectMode() == EffectMode::carve, "clicking Carve chooses it");
-    auto* canvas = findComponentWithId (*editor, "canvas");
 
-    if (canvas != nullptr)
     {
         const auto carved = canvas->createComponentSnapshot (canvas->getLocalBounds());
         setParameter (processor, params::id::mode, 2.0f);
@@ -1369,7 +1733,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         pump (80);
     }
 
-    // Depth: dragged up it carves less, typed it takes the value, Esc leaves it.
+    // Depth: dragged up it carves less, typed it takes the value.
     const auto before = processor.getDepthDb();
     dragOn (*depth, { 30.0f, 14.0f }, { 30.0f, -10.0f });
     check (processor.getDepthDb() > before + 5.0f, "dragging Depth up carves less deeply");
@@ -1395,47 +1759,310 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         if (auto* client = dynamic_cast<juce::TooltipClient*> (mode))
         {
             check (client->getTooltip().contains ("Stencil"), "the Mode control's tooltip explains the modes");
+
+            // Drawn at once: the tip window's own timer puts away a tip that no mouse is on, and
+            // would do so while the picture waits for the window to settle.
             tips->displayTip (mode->localPointToGlobal (juce::Point<int> (mode->getWidth() / 2, mode->getHeight())), client->getTooltip());
-            save ("tooltip", pixelScale);
+            check (tips->isVisible() && content->getLocalBounds().contains (tips->getBounds()),
+                   "... and it opens inside the window");
+            save ("tooltip", pixelScale, false);
             tips->hideTip();
         }
     }
 
-    // Preview runs the pass on the audio coming in, with the DAW stopped.
+    // Every control says what it is: a label of its own, or a tooltip.
+    for (const auto* id : { "mode", "depth", "live", "help", "settings", "tool-select", "tool-brush", "tool-erase", "add-text",
+                            "add-image", "layers", "length", "repeat", "level", "density", "contrast", "lows" })
     {
-        processor.setPreview (true);
-        const auto song = makeSong (1.0);
-        juce::AudioBuffer<float> buffer (2, 512);
-        juce::MidiBuffer midi;
-        auto changed = 0.0f;
+        auto* client = dynamic_cast<juce::TooltipClient*> (findComponentWithId (*editor, id));
+        check (client != nullptr && client->getTooltip().isNotEmpty(), juce::String (id) + " has a tooltip");
+    }
 
-        for (int start = 0; start + 512 <= 48000; start += 512)
+    // ---- the drawer: an object's settings --------------------------------------------------------------
+    const auto objectAt = [&] (const juce::Uuid& id) { return onCanvas (*canvas, *processor.getDocument().find (id), scale); };
+
+    // The text is on the left of the canvas: its settings open on the right.
+    clickOn (*canvas, objectAt (textId).getCentre());
+    pump (60);
+    check (editor->getSelectedObject() == textId && editor->isDrawerOpen() && ! editor->isLayerListShown() && ! editor->isDrawerOnLeft()
+               && shown ("inspector-text") && shown ("inspector-band") && shown ("inspector-close"),
+           "a click on the text opens its settings in a drawer on the right");
+    check (drawer->getX() > juce::roundToInt (objectAt (textId).getRight()) + canvas->getX(), "... clear of the text itself");
+    check (! layers->getToggleState(), "... the Layers button is not lit (the drawer shows an object)");
+    checkEffectLayout (*editor, "a text object selected");
+    save ("text-selected", pixelScale);
+
+    // Its settings edit it, as in the instrument.
+    if (auto* band = find<ui::SegmentedControl> (*editor, "inspector-band"))
+    {
+        const auto highLow = processor.getDocument().find (textId)->lowHz;
+        clickOn (*band, { static_cast<float> (band->getWidth()) * 0.38f, 13.0f });
+        pump (40);
+        check (ui::actions::bandOf (*processor.getDocument().find (textId), scale) == static_cast<int> (Band::mid)
+                   && processor.getDocument().find (textId)->lowHz < highLow,
+               "the drawer's Band moves the text to the mid band");
+        processor.undo();
+        pump (40);
+    }
+
+    if (auto* field = find<juce::TextEditor> (*editor, "inspector-text"))
+    {
+        field->setText ("HELLO YOU", true);
+        pump (40);
+        check (processor.getDocument().find (textId)->text == "HELLO YOU", "typing in the drawer's text box changes the text");
+        processor.undo();
+        pump (40);
+        check (processor.getDocument().find (textId)->text == "HELLO", "... and undo takes it back");
+    }
+
+    check (undo->isVisible() || redo->isVisible(), "after an edit, undo or redo is there");
+
+    // Its right-click menu opens inside the small window. (Drawn at once: off screen, an open
+    // menu closes itself at its first timer tick.)
+    {
+        const auto at = objectAt (textId).getCentre();
+        canvas->mouseDown (mouseEventAt (*canvas, at, at, juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier)));
+        save ("menu", pixelScale, false);
+        canvas->mouseUp (mouseEventAt (*canvas, at, at, {}));
+        check (juce::PopupMenu::dismissAllActiveMenus() && editor->getSelectedObject() == textId,
+               "a right-click on the text opens its menu, and it stays selected");
+        pump (40);
+    }
+
+    // The picture is on the right: its settings would cover it there, so they open on the left.
+    clickOn (*canvas, objectAt (imageId).getCentre());
+    pump (60);
+    check (editor->getSelectedObject() == imageId && editor->isDrawerOpen() && editor->isDrawerOnLeft()
+               && shown ("inspector-mode") && shown ("inspector-replace"),
+           "a click on the picture (on the right of the canvas) opens its settings on the left");
+    check (drawer->getRight() < juce::roundToInt (objectAt (imageId).getX()) + canvas->getX(), "... clear of the picture");
+    checkEffectLayout (*editor, "a picture selected");
+    save ("image-selected", pixelScale);
+
+    // The close button puts the drawer away and keeps the selection (and its handles).
+    if (auto* close = find<juce::Button> (*editor, "inspector-close"))
+    {
+        close->onClick();
+        pump (40);
+        check (! editor->isDrawerOpen() && editor->getSelectedObject() == imageId, "the drawer's close button closes it; the picture stays selected");
+    }
+
+    // Esc deselects; with nothing selected the drawer is gone.
+    editor->selectObject (textId);
+    pump (40);
+    check (editor->isDrawerOpen() && ! editor->isDrawerOnLeft(), "selecting the text again opens its settings (on the right)");
+    canvas->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
+    pump (40);
+    check (editor->getSelectedObject().isNull() && ! editor->isDrawerOpen(), "Esc deselects, and the drawer goes");
+
+    // ---- the drawer: the layer list ------------------------------------------------------------------------
+    layers->onClick();
+    pump (60);
+    check (editor->isDrawerOpen() && editor->isLayerListShown() && layers->getToggleState() && shown ("layer-list")
+               && list->getNumObjectRows() == 2 && ! editor->isDrawerOnLeft(),
+           "the Layers button opens the layer list in the drawer, and is lit");
+    checkEffectLayout (*editor, "the layer list");
+
+    clickOn (*list, list->getRowBounds (1).toFloat().getCentre().withX (60.0f));
+    pump (40);
+    check (editor->getSelectedObject() == textId && editor->isLayerListShown(), "a click on a row selects its object; the list stays");
+    save ("layers", pixelScale);
+
+    clickOn (*list, list->getEyeBounds (0).toFloat().getCentre());
+    pump (40);
+    check (! processor.getDocument().find (imageId)->visible, "a row's eye hides its object");
+    processor.undo();
+    pump (40);
+
+    clickOn (*list, list->getSettingsBounds (1).toFloat().getCentre());
+    pump (40);
+    check (editor->isDrawerOpen() && ! editor->isLayerListShown() && shown ("inspector-band"), "a row's chevron opens the object's settings");
+
+    if (auto* back = find<juce::Button> (*editor, "inspector-layers"))
+    {
+        back->onClick();
+        pump (40);
+        check (editor->isLayerListShown(), "\"Layers\" in the settings goes back to the list");
+    }
+
+    // An object's right-click menu greys nothing either: an item that would change nothing (the
+    // front-most object brought to the front) is not in it.
+    {
+        const auto itemsOf = [&] (const juce::Uuid& id)
         {
-            for (int channel = 0; channel < 2; ++channel)
-                buffer.copyFrom (channel, 0, song[static_cast<size_t> (channel)].data() + start, 512);
+            const auto menu = ui::actions::objectMenu (processor, id);   // (the iterator only refers to it)
+            juce::StringArray names;
 
-            processor.processBlock (buffer, midi);
+            for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
+                if (! it.getItem().isSeparator)
+                    names.add (it.getItem().text + (it.getItem().isEnabled ? "" : " (greyed)"));
 
-            if (start >= 4096 + 8192)
-                for (int i = 0; i < 512; ++i)
-                    changed = std::max (changed, std::abs (buffer.getSample (0, i) - song[0][static_cast<size_t> (start + i - 4096)]));
+            return names.joinIntoString (", ");
+        };
+
+        check (itemsOf (imageId) == "Send to back, Hide, Delete" && itemsOf (textId) == "Bring to front, Hide, Delete",
+               "an object's menu lists only what would change something (" + itemsOf (imageId) + " / " + itemsOf (textId) + ")");
+    }
+
+    layers->onClick();
+    pump (40);
+    check (! editor->isDrawerOpen() && ! layers->getToggleState(), "the Layers button closes the list again");
+    editor->selectObject (juce::Uuid::null());
+    pump (40);
+
+    // ---- the brush: its settings appear with it ----------------------------------------------------------
+    if (auto* brushTool = find<juce::Button> (*editor, "tool-brush"))
+    {
+        const auto heightBefore = canvas->getHeight();
+        brushTool->onClick();
+        pump (60);
+        check (brush->isVisible() && shown ("brush-size") && shown ("brush-softness") && shown ("brush-strength"),
+               "the Brush tool brings its settings: Size, Soft, Strength, in a strip over the bottom bar");
+        check (canvas->getHeight() == heightBefore && brush->getBottom() == bottom->getY()
+                   && static_cast<float> (brush->getY()) >= canvas->getY() + canvas->getDrawingArea().getBottom(),
+               "... over the canvas's time axis: the canvas keeps its size, the drawing stays clear");
+        checkEffectLayout (*editor, "the brush");
+
+        // It paints.
+        const auto area = canvas->getDrawingArea();
+        const auto from = juce::Point<float> (area.getX() + 0.55f * area.getWidth(), area.getY() + 0.12f * area.getHeight());
+        const auto to = from.translated (0.3f * area.getWidth(), 0.05f * area.getHeight());
+        const auto painted = paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f);
+        dragOn (*canvas, from, to);
+        pump (60);
+        check (paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) > painted, "the brush paints on the canvas");
+        save ("brush", pixelScale);
+
+        if (auto* eraser = find<juce::Button> (*editor, "tool-erase"))
+        {
+            eraser->onClick();
+            pump (40);
+            check (brush->isVisible(), "the Eraser keeps the strip");
+            dragOn (*canvas, from, to);
+            pump (60);
+            check (paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) <= painted, "the eraser takes the stroke away");
         }
 
-        check (processor.isSounding() && changed > 0.01f, "Preview carves the audio coming in");
-        processor.setPreview (false);
+        // Both strips at once (Draw, painting), with the drawer open: the least room there is.
+        setParameter (processor, params::id::mode, 3.0f);
+        pump (80);
+        editor->showLayers (true);
+        pump (60);
+        check (sound->isVisible() && brush->isVisible() && editor->isDrawerOpen(), "Draw while painting, the layer list open: both strips and the drawer");
+        checkEffectLayout (*editor, "Draw, the eraser and the layer list");
+        save ("draw-brush", pixelScale);
+        editor->showLayers (false);
+        setParameter (processor, params::id::mode, 0.0f);
+        pump (80);
 
-        // The host carries on: the pass stops, and with it the playhead.
-        for (int i = 0; i < 8; ++i)
-            processor.processBlock (buffer, midi);
+        if (auto* select = find<juce::Button> (*editor, "tool-select"))
+        {
+            select->onClick();
+            pump (60);
+            check (! brush->isVisible() && canvas->getHeight() == heightBefore, "back on Select the brush's settings are gone");
+        }
+    }
 
-        check (! processor.isSounding(), "Preview off stops the pass");
+    // ---- the bottom bar: Length, Repeat and the line that says what will happen ---------------------------
+    repeat->triggerClick();
+    pump (80);
+    check (choice (params::id::repeat) == 1 && bottom->getShownHint() == "Repeats every 4 bars", "Repeat on: \"Repeats every 4 bars\"");
+    checkEffectLayout (*editor, "Repeat on");
+    save ("repeat", pixelScale);
+    repeat->triggerClick();
+    pump (80);
+    check (choice (params::id::repeat) == 0 && bottom->getShownHint() == "Carves once when you press play", "... and off again");
+
+    if (auto* length = find<juce::ComboBox> (*editor, "length"))
+    {
+        // Its menu opens upwards, inside the small window. (Drawn at once, as the object's menu.)
+        length->showPopup();
+        save ("length-menu", pixelScale, false);
+        check (juce::PopupMenu::dismissAllActiveMenus(), "a click on Length opens its menu");
+        pump (60);
+
+        length->setSelectedId (6, juce::sendNotificationSync);   // 8 bars
+        pump (60);
+        check (choice (params::id::length) == 5, "the Length box sets the length");
+        length->setSelectedId (params::defaultLengthIndex + 1, juce::sendNotificationSync);
         pump (60);
     }
 
-    // The live view: a stand-in song through a second ArtFreq FX with this one's state.
-    editor->showLiveView (true);
+    // ---- Settings: the analyser, and what the instrument keeps in its footer ---------------------------------
+    editor->showSettings (true);
+    pump (80);
 
-    if (auto* live = find<ui::LiveView> (*editor, "live-view"))
+    auto* settings = findComponentWithId (*editor, "settings-panel");
+
+    if (settings != nullptr)
+    {
+        check (shown ("settings-panel") && content->getLocalBounds().reduced (8).contains (settings->getBounds()),
+               "the settings fit in the window with room around them");
+        checkNoOverlap (*settings, "the settings");
+        check (shown ("scale") && shown ("range-low") && shown ("slope") && shown ("window-size") && shown ("reset-drawing")
+                   && shown ("trigger") && shown ("start-at") && shown ("tempo-source"),
+               "the settings hold the analyser match, the window size, Trigger, Start and Tempo");
+        check (! shown ("start-bar") && ! shown ("bpm"), "On play has no bar to set, and the DAW's tempo no field (nothing is greyed)");
+        save ("settings", pixelScale);
+
+        // Start: at a bar of the song.
+        if (auto* startAt = find<ui::SegmentedControl> (*editor, "start-at"))
+        {
+            clickOn (*startAt, { static_cast<float> (startAt->getWidth()) * 0.75f, 14.0f });
+            pump (80);
+            check (choice (params::id::startAt) == params::atBarStartIndex && shown ("start-bar"), "Start: At bar shows the bar's field");
+            setParameter (processor, params::id::startBar, 9.0f);
+            pump (80);
+            check (bottom->getShownHint() == "Carves once from bar 9" && canvasBarLabels (processor) == "9 10 11 12",
+                   "... the bottom bar says \"Carves once from bar 9\" and the canvas numbers the song's bars");
+        }
+
+        // Tempo: typed in.
+        if (auto* tempo = find<ui::SegmentedControl> (*editor, "tempo-source"))
+        {
+            clickOn (*tempo, { static_cast<float> (tempo->getWidth()) * 0.75f, 14.0f });
+            pump (80);
+            check (choice (params::id::tempoSource) == 1 && shown ("bpm"), "Tempo: Manual shows the BPM field");
+            checkNoOverlap (*settings, "the settings, At bar and a typed tempo");
+            save ("settings-timing", pixelScale);
+            clickOn (*tempo, { static_cast<float> (tempo->getWidth()) * 0.25f, 14.0f });
+            pump (80);
+            check (choice (params::id::tempoSource) == 0 && ! shown ("bpm"), "... Host hides it again");
+        }
+
+        // Trigger: MIDI notes.
+        if (auto* trigger = find<ui::SegmentedControl> (*editor, "trigger"))
+        {
+            clickOn (*trigger, { static_cast<float> (trigger->getWidth()) * 0.8f, 14.0f });
+            pump (80);
+            check (choice (params::id::trigger) == 1 && ! shown ("start-at") && ! shown ("start-bar"),
+                   "Trigger: MIDI has no start to choose (a note starts it)");
+            check (bottom->getShownHint() == "Each note carves it once", "... the bottom bar says \"Each note carves it once\"");
+            clickOn (*trigger, { static_cast<float> (trigger->getWidth()) * 0.2f, 14.0f });
+            pump (80);
+        }
+
+        setParameter (processor, params::id::startBar, 1.0f);
+        setParameter (processor, params::id::startAt, static_cast<float> (params::onPlayStartIndex));
+        pump (80);
+        check (bottom->getShownHint() == "Carves once when you press play", "back to the defaults");
+
+        juce::StringArray disabled;
+        collectDisabled (*editor, disabled);
+        check (disabled.isEmpty(), "ArtFreq FX, the settings: nothing that is shown is greyed (" + disabled.joinIntoString (", ") + ")");
+    }
+
+    editor->showSettings (false);
+    pump (40);
+
+    // ---- the live view: a stand-in song through a second ArtFreq FX with this one's state -----------------
+    editor->showLiveView (true);
+    pump (40);
+    check (live->getToggleState() && ! shown ("tool-select") && ! shown ("tool-brush") && shown ("add-text") && shown ("layers"),
+           "the live view: Live is lit, and the tools (which have nothing to act on) are not there");
+    checkEffectLayout (*editor, "the live view");
+
+    if (auto* liveView = find<ui::LiveView> (*editor, "live-view"))
     {
         ArtFreqProcessor second (ArtFreqProcessor::Variant::effect);
         juce::MemoryBlock state;
@@ -1445,7 +2072,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         second.prepareToPlay (48000.0, 512);
         second.rebuildPlanIfNeeded();
 
-        const auto seconds = live->getVisibleSeconds();
+        const auto seconds = liveView->getVisibleSeconds();
         const auto song = makeSong (seconds);
         const auto carved = carveSong (second, song);
         check (second.getDocument().objects.size() == processor.getDocument().objects.size(), "the state carries the drawing");
@@ -1456,28 +2083,1014 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         for (size_t i = 4096 + 48000; i < 4096 + 6 * 48000 && i < carved.size(); ++i)
             changed = std::max (changed, std::abs (carved[i] - song[0][i - 4096]));
 
-        check (changed > 0.05f, "the processor carves the song");
-        live->fillFromAudioForSnapshot (carved, 48000.0);
+        check (changed > 0.05f, "the processor carves the song from where the DAW starts playing");
+        liveView->fillFromAudioForSnapshot (carved, 48000.0);
     }
 
     save ("live", pixelScale);
-    editor->showLiveView (false);
+    live->onClick();
+    pump (40);
+    check (! live->getToggleState() && shown ("canvas") && shown ("tool-select"), "Live again goes back to the canvas and the tools");
 
+    // ---- the help ------------------------------------------------------------------------------------------------
     editor->showHelp (true);
+    pump (40);
+
+    if (auto* help = findComponentWithId (*editor, "help-panel"))
+        check (shown ("help-panel") && content->getLocalBounds().reduced (12).contains (help->getBounds()),
+               "the help fits in the window with room around it");
+
     save ("help", pixelScale);
     editor->showHelp (false);
 
-    // Window sizes: the header holds together from 75 to 200 %.
-    for (const auto& [scale, name] : { std::pair<float, const char*> { 1.0f, "100" }, { 2.0f, "200" }, { 0.75f, "75" } })
+    // ---- an empty drawing ----------------------------------------------------------------------------------------
     {
-        setWindowScale (*editor, scale);
+        const auto drawing = processor.getDocument();
+        processor.setDocument (ArtDocument());
+        pump (80);
+        checkEffectLayout (*editor, "nothing drawn");
+        save ("empty", pixelScale);
+        processor.setDocument (drawing);
+        pump (80);
+    }
+
+    // ---- window sizes: every state holds together from 75 to 200 % ---------------------------------------------
+    const auto atEveryState = [&] (const juce::String& size)
+    {
+        // Carve; then Carve + Draw with a text's settings; then Draw, painting, the layer list.
+        checkEffectLayout (*editor, size + ", Carve");
+
+        setParameter (processor, params::id::mode, 1.0f);
+        editor->selectObject (textId);
+        pump (80);
+        checkEffectLayout (*editor, size + ", Carve + Draw with a text's settings");
+        save (size, 1.0f);
+
+        setParameter (processor, params::id::mode, 3.0f);
+        editor->selectObject (imageId);
+        pump (80);
+        checkEffectLayout (*editor, size + ", Draw with a picture's settings");
+
+        editor->selectObject (juce::Uuid::null());
+        editor->showLayers (true);
+
+        if (auto* brushTool = find<juce::Button> (*editor, "tool-brush"))
+            brushTool->onClick();
+
+        pump (80);
+        checkEffectLayout (*editor, size + ", Draw, painting, the layer list");
+
+        if (auto* select = find<juce::Button> (*editor, "tool-select"))
+            select->onClick();
+
+        editor->showLayers (false);
+        setParameter (processor, params::id::mode, 0.0f);
+        pump (80);
+
+        editor->showSettings (true);
+        pump (40);
+
+        if (settings != nullptr)
+            check (editor->getLocalBounds().contains (editor->getLocalArea (settings, settings->getLocalBounds())),
+                   "ArtFreq FX, " + size + ": the settings fit in the window");
+
+        editor->showSettings (false);
+        pump (40);
+    };
+
+    for (const auto& [windowScale, name] : { std::pair<float, const char*> { 1.0f, "100" }, { 2.0f, "200" }, { 1.5f, "150" }, { 0.75f, "75" } })
+    {
+        setWindowScale (*editor, windowScale);
         pump (60);
-        check (view->getRight() < controls->getX() && controls->getRight() < undo->getX(),
-               "the header's controls do not overlap at " + juce::String (name) + " %");
-        save (name, 1.0f);
+        check (editor->getWidth() == juce::roundToInt (720.0f * windowScale) && editor->getHeight() == juce::roundToInt (440.0f * windowScale),
+               "ArtFreq FX's window at " + juce::String (name) + " % is " + juce::String (editor->getWidth()) + " x " + juce::String (editor->getHeight()));
+        atEveryState (name);
+    }
+
+    // The size is remembered, and a window that is opened again has it.
+    setWindowScale (*editor, 1.5f);
+    pump (60);
+    check (processor.getEditorWidth() == 1080 && processor.getEditorHeight() == 660, "the window size is remembered");
+
+    {
+        const std::unique_ptr<juce::AudioProcessorEditor> again (processor.createEditor());
+        check (again != nullptr && again->getWidth() == 1080 && again->getHeight() == 660, "a reopened ArtFreq FX has the remembered size");
+    }
+
+    // A project saved by 0.4, whose ArtFreq FX had the instrument's large window: the size it
+    // saved is read as that window's scale, so 100 % stays 100 % (720 x 440, not 1120 x 720).
+    check (std::abs (ArtFreqEditor::scaleForSavedSize (true, 1120, 720) - 1.0f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 1680, 1080) - 1.5f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 840, 540) - 0.75f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 2240, 1440) - 2.0f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 1080, 660) - 1.5f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (true, 0, 0) - 1.0f) < 1.0e-4f
+               && std::abs (ArtFreqEditor::scaleForSavedSize (false, 1680, 1080) - 1.5f) < 1.0e-4f,
+           "a size saved with the old large window opens at the same scale of the small one");
+
+    processor.setEditorSize (1120, 720);
+
+    {
+        const std::unique_ptr<juce::AudioProcessorEditor> old (processor.createEditor());
+        check (old != nullptr && old->getWidth() == 720 && old->getHeight() == 440,
+               "an ArtFreq FX saved at 0.4's 1120 x 720 opens at 720 x 440");
     }
 
     processor.releaseResources();
+}
+
+//==============================================================================
+// The keyboard, the way the OS delivers it: through the window's peer.
+//
+// A plug-in cannot start the DAW's transport: it can only leave the DAW's play key (the space
+// bar, mostly) alone. On macOS JUCE hands a key on to the host's window when nothing used it
+// (juce_NSViewComponentPeer_mac.mm: keyDown -> sendEventToInputContextOrComponent, else
+// [super keyDown:]). "Used" is: a text box that is being typed in took it (the peer's text input
+// target gets all typing), or ComponentPeer::handleKeyUpOrDown or handleKeyPress said so (the
+// focused component, its parents and their key listeners), or a component is modal (JUCE then
+// swallows every key). The same calls are made here, on an editor in a window that has the
+// keyboard, with the clicks sent through the peer as well, so that JUCE moves the focus as it
+// does in a host.
+struct KeyRig
+{
+    explicit KeyRig (artfreq::ArtFreqProcessor::Variant variant) : processor (variant)
+    {
+        using namespace artfreq;
+
+        processor.setRateAndBufferSizeDetails (48000.0, 512);
+        processor.prepareToPlay (48000.0, 512);
+
+        ArtDocument document;
+        auto text = ArtDocument::makeTextObject ("HELLO", 3500.0f, 16000.0f);
+        text.startTime = 0.04f;
+        text.endTime = 0.5f;
+        textId = text.id;
+        document.objects.push_back (text);
+        processor.setDocument (document);
+        processor.rebuildPlanIfNeeded();
+
+        editor.reset (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
+
+        if (editor == nullptr)
+            return;
+
+        editor->addToDesktop (0);
+        editor->setVisible (true);
+        pump (150);
+
+        // As when the user clicks into the plug-in's window for the first time.
+        editor->grabKeyboardFocus();
+        pump (50);
+
+        // The display tells the window that it has the keyboard in a message, and JUCE then gives
+        // the focus to the editor. On X11 that message can lie unseen until something more
+        // arrives from the display, and would then take the focus from what was clicked first.
+        // So it is waited for: the focus is put on the canvas, and comes back to the editor when
+        // the message is dealt with (the pointer moving and the window repainting keep the
+        // display talking). If it was dealt with at once, the wait is in vain.
+        if (auto* canvasView = findComponentWithId (*editor, "canvas"))
+        {
+            canvasView->grabKeyboardFocus();
+
+            for (int rounds = 0; rounds < 24 && juce::Component::getCurrentlyFocusedComponent() == canvasView; ++rounds)
+            {
+                const auto corner = 6.0f + static_cast<float> (rounds % 2) * 6.0f;
+                juce::Desktop::getInstance().getMainMouseSource().setScreenPosition (editor->localPointToGlobal (juce::Point<float> (corner, corner)));
+                editor->repaint();
+                pump (15);
+            }
+
+            editor->grabKeyboardFocus();
+            pump (20);
+        }
+    }
+
+    ~KeyRig()
+    {
+        juce::PopupMenu::dismissAllActiveMenus();
+
+        if (editor != nullptr)
+            editor->removeFromDesktop();
+
+        pump (30);
+        editor.reset();
+        pump (30);
+        processor.releaseResources();
+    }
+
+    juce::ComponentPeer* peer() const   { return editor != nullptr ? editor->getPeer() : nullptr; }
+
+    /** The window is on a desktop and has the keyboard. */
+    bool hasKeyboard() const
+    {
+        return peer() != nullptr && peer()->isFocused() && juce::Component::getCurrentlyFocusedComponent() != nullptr;
+    }
+
+    juce::Component& get (const juce::String& id) const
+    {
+        auto* found = findComponentWithId (*editor, id);
+        check (found != nullptr, "component '" + id + "' exists");
+        return found != nullptr ? *found : *editor;
+    }
+
+    bool hasFocus (const juce::String& id) const
+    {
+        return juce::Component::getCurrentlyFocusedComponent() == findComponentWithId (*editor, id);
+    }
+
+    /** What has the focus, for the messages. */
+    juce::String focusName() const
+    {
+        const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        return focused == nullptr ? "nothing"
+             : focused == editor.get() ? "the editor"
+             : focused->getComponentID().isNotEmpty() ? focused->getComponentID()
+             : focused->getName().isNotEmpty() ? focused->getName() : "a component without a name";
+    }
+
+    // ---- the mouse, through the window ----------------------------------------------------------
+    void mouse (juce::Component& c, juce::Point<float> at, bool down)
+    {
+        const auto inWindow = editor->getLocalPoint (&c, at);
+        const auto buttons = down ? juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier) : juce::ModifierKeys();
+
+        // The display's pointer goes along: components ask it where the mouse is.
+        juce::Desktop::getInstance().getMainMouseSource().setScreenPosition (editor->localPointToGlobal (inWindow));
+        peer()->handleMouseEvent (juce::MouseInputSource::InputSourceType::mouse, inWindow, buttons,
+                                  juce::MouseInputSource::defaultPressure, juce::MouseInputSource::defaultOrientation, time);
+    }
+
+    /** A click (clicks are a second apart: never a double-click by accident). */
+    void click (juce::Component& c, juce::Point<float> at)
+    {
+        time += 1000;
+        mouse (c, at, true);
+        time += 30;
+        mouse (c, at, false);
+        pump (40);
+    }
+
+    void click (const juce::String& id)   { click (get (id), get (id).getLocalBounds().toFloat().getCentre()); }
+
+    void doubleClick (juce::Component& c, juce::Point<float> at)
+    {
+        time += 1000;
+        mouse (c, at, true);
+        time += 30;
+        mouse (c, at, false);
+        time += 120;
+        mouse (c, at, true);
+        time += 30;
+        mouse (c, at, false);
+        pump (60);
+    }
+
+    void drag (juce::Component& c, juce::Point<float> from, juce::Point<float> to)
+    {
+        time += 1000;
+        mouse (c, from, true);
+
+        for (int i = 1; i <= 4; ++i)
+        {
+            time += 10;
+            mouse (c, from + (to - from) * (static_cast<float> (i) / 4.0f), true);
+        }
+
+        time += 10;
+        mouse (c, to, false);
+        pump (40);
+    }
+
+    // ---- the keyboard, through the window -------------------------------------------------------
+    /** Whether a text box is being typed in: macOS then sends the keys there, as text, before
+        anything else gets to see them. (A number typed into a field, a knob or a bar is not: its
+        keys come as key presses, so the space bar can still go on; see editing().) */
+    bool typing() const   { return peer()->findCurrentTextInputTarget() != nullptr; }
+
+    /** Whether a text box has the focus: the object's text, or a number being typed. */
+    bool editing() const   { return artfreq::ui::isTextBox (juce::Component::getCurrentlyFocusedComponent()); }
+
+    /** Presses a key and lets it go. Returns whether it was used, so that the DAW would not get
+        it. */
+    bool uses (const juce::KeyPress& key)
+    {
+        const auto wasTyping = typing();
+        auto used = peer()->handleKeyUpOrDown (true);
+        used = peer()->handleKeyPress (key) || used;
+        used = peer()->handleKeyUpOrDown (false) || used;
+        used = used || wasTyping || juce::Component::getCurrentlyModalComponent() != nullptr;
+
+        pump (30);   // (a text box acts on Return and Esc a moment later)
+        return used;
+    }
+
+    bool usesSpace()   { return uses (juce::KeyPress (juce::KeyPress::spaceKey, juce::ModifierKeys(), ' ')); }
+
+    /** Types into whatever has the focus, key by key. */
+    void type (const juce::String& text)
+    {
+        for (const auto character : text)
+        {
+            peer()->handleKeyUpOrDown (true);
+            peer()->handleKeyPress (juce::KeyPress (character == ' ' ? juce::KeyPress::spaceKey : static_cast<int> (character),
+                                                    juce::ModifierKeys(), character));
+            peer()->handleKeyUpOrDown (false);
+        }
+
+        pump (30);   // (a text box reports its changes a moment later)
+    }
+
+    juce::String text (const juce::Uuid& id) const
+    {
+        const auto* object = processor.getDocument().find (id);
+        return object != nullptr ? object->text : juce::String ("(gone)");
+    }
+
+    artfreq::ui::CanvasView& canvas() const   { return *dynamic_cast<artfreq::ui::CanvasView*> (findComponentWithId (*editor, "canvas")); }
+
+    /** A point on the text object, and one on empty canvas (bar 4, in the lows). */
+    juce::Point<float> onText() const
+    {
+        const auto a = canvas().getDrawingArea();
+        return { a.getX() + 0.25f * a.getWidth(), a.getY() + 0.12f * a.getHeight() };
+    }
+
+    juce::Point<float> onEmptyCanvas() const
+    {
+        const auto a = canvas().getDrawingArea();
+        return { a.getX() + 0.85f * a.getWidth(), a.getY() + 0.8f * a.getHeight() };
+    }
+
+    artfreq::ArtFreqProcessor processor;
+    std::unique_ptr<artfreq::ArtFreqEditor> editor;
+    juce::Uuid textId;
+    juce::int64 time = juce::Time::currentTimeMillis() + 60000;   // of the last mouse event: only ever forwards
+};
+
+bool canDriveAWindow()
+{
+   #if JUCE_LINUX || JUCE_BSD
+    return true;
+   #else
+    return false;
+   #endif
+}
+
+/** The DAW's play key works while the plug-in's window has the focus: in every place the focus
+    can be, the space bar comes back unused; where text is being typed it is typed, and Return or
+    Esc hand the keyboard back. */
+void checkKeys (const juce::File& outputDir, float pixelScale)
+{
+    using namespace artfreq;
+
+    const juce::String name ("ArtFreq");
+
+    // This needs a display that gives a window the keyboard and moves the pointer when asked. A
+    // virtual display on Linux does; a build machine's macOS session does not reliably (and on a
+    // desk the pointer is the user's). The code that is checked is the same on both.
+    if (! canDriveAWindow())
+    {
+        std::cout << "(" << name << "'s keys are checked on Linux only, under a virtual display)" << std::endl;
+        return;
+    }
+
+    KeyRig rig (ArtFreqProcessor::Variant::instrument);
+
+    if (rig.editor == nullptr || ! rig.hasKeyboard())
+    {
+        std::cout << "(no display that gives a window the keyboard: " << name << "'s keys were not checked)" << std::endl;
+        return;
+    }
+
+    auto& processor = rig.processor;
+    auto& editor = *rig.editor;
+    const auto returnKey = juce::KeyPress (juce::KeyPress::returnKey, juce::ModifierKeys(), '\r');
+    const auto escapeKey = juce::KeyPress (juce::KeyPress::escapeKey, juce::ModifierKeys(), 27);
+
+    const auto saveInspector = [&] (const juce::String& fileName)
+    {
+        auto& inspector = rig.get ("inspector");
+        const auto image = editor.createComponentSnapshot (editor.getLocalArea (&inspector, inspector.getLocalBounds()), true, pixelScale);
+        const auto file = outputDir.getChildFile (fileName);
+
+        if (writePng (image, file))
+            std::cout << file.getFullPathName() << std::endl;
+        else
+            check (false, "write " + file.getFullPathName());
+    };
+
+    /** In this state the space bar is the DAW's: nothing used it, nothing is typing or modal. */
+    const auto spaceIsTheDaws = [&] (const juce::String& state)
+    {
+        const auto typing = rig.typing();
+        const auto modal = juce::Component::getCurrentlyModalComponent() != nullptr;
+        const auto focus = rig.focusName();
+        const auto used = rig.usesSpace();
+
+        check (! used && ! typing && ! modal,
+               name + ": the space bar comes back unused " + state + " (the focus is on " + focus
+                   + (typing ? ", a text box is being typed in" : "") + (modal ? ", something is modal" : "") + ")");
+    };
+
+    // ---- every place the focus can be ---------------------------------------------------------------
+    spaceIsTheDaws ("as the window opens");
+
+    rig.click (rig.canvas(), rig.onEmptyCanvas());
+    check (rig.hasFocus ("canvas"), name + ": a click on the canvas gives it the focus");
+    spaceIsTheDaws ("after a click on the canvas");
+
+    // The layer list: a row clicked (the list handles Up, Down, Return, Delete and Esc itself).
+    if (auto* list = dynamic_cast<ui::LayerList*> (findComponentWithId (editor, "layer-list")); list != nullptr && list->isShowing())
+    {
+        rig.click (*list, list->getRowBounds (0).toFloat().getCentre().withX (60.0f));
+        check (rig.hasFocus ("layer-list"), name + ": a click on a row of the layer list gives the list the focus");
+        spaceIsTheDaws ("with the layer list focused");
+    }
+    else
+    {
+        check (false, name + ": the layer list is shown when nothing is selected");
+    }
+
+    // Buttons, chips, segmented controls and number fields that are only clicked: none keeps
+    // the focus (JUCE gives a clicked button the focus, and Space or Return would press it again).
+    const std::pair<const char*, const char*> clicked[] = {
+        { "tool-brush", "a tool button" }, { "tool-select", "a tool button" }, { "undo", "Undo" }, { "redo", "Redo (disabled)" },
+        { "view-switch", "Canvas | Live" }, { "trigger", "Trigger (a segmented control)" }, { "repeat", "Repeat (a chip)" },
+        { "tempo-source", "Tempo" }, { "bpm", "BPM (following the host: not editable)" }, { "preview", "Preview" },
+        { "lows", "Lows" }, { "toolbar", "the toolbar's background" }, { "header", "the header's background" },
+        { "footer", "the footer's background" }, { "inspector", "the inspector's background" } };
+
+    for (const auto& [id, what] : clicked)
+    {
+        auto& target = rig.get (id);
+        const auto at = juce::String (id) == "toolbar" ? juce::Point<float> (650.0f, 22.0f)
+                      : juce::String (id) == "header"  ? juce::Point<float> (330.0f, 20.0f)
+                      : juce::String (id) == "footer"  ? juce::Point<float> (6.0f, 6.0f)
+                      : juce::String (id) == "inspector" ? juce::Point<float> (140.0f, static_cast<float> (target.getHeight()) - 90.0f)
+                                                         : target.getLocalBounds().toFloat().getCentre();
+        rig.click (target, at);
+        spaceIsTheDaws (juce::String ("after a click on ") + what);
+
+        const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        check (focused != nullptr && dynamic_cast<const juce::Button*> (focused) == nullptr,
+               name + ": a click on " + what + " does not leave the focus on a button (it is on " + rig.focusName() + ")");
+
+        // Back to how it was: the canvas, Transport without Repeat, the DAW's tempo, no preview.
+        editor.showLiveView (false);
+        setParameter (processor, params::id::trigger, 0.0f);
+        setParameter (processor, params::id::repeat, 0.0f);
+        setParameter (processor, params::id::tempoSource, 0.0f);
+        processor.setPreview (false);
+        pump (40);
+    }
+
+    // Menus: the keys are the menu's while it is open; closed, nothing stays modal and the box
+    // that opened it has not kept the focus (the arrows and Return would be its own).
+    for (const auto* id : { "length", "start-choice" })
+    {
+        rig.click (id);
+        check (juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a click on " + juce::String (id) + " opens its menu");
+        juce::PopupMenu::dismissAllActiveMenus();
+        pump (80);
+        spaceIsTheDaws (juce::String ("after ") + id + "'s menu has closed");
+        check (! rig.uses (returnKey) && ! rig.uses (juce::KeyPress (juce::KeyPress::downKey)),
+               name + ": Return and Down are not kept by " + id + " after its menu");
+    }
+
+    // A knob turned, a number field dragged.
+    rig.drag (rig.get ("density"), { 38.0f, 40.0f }, { 38.0f, 20.0f });
+    spaceIsTheDaws ("after turning a knob");
+
+    setParameter (processor, params::id::tempoSource, 1.0f);
+    pump (60);
+    rig.drag (rig.get ("bpm"), { 30.0f, 14.0f }, { 30.0f, 2.0f });
+    spaceIsTheDaws ("after dragging a number field");
+    setParameter (processor, params::id::tempoSource, 0.0f);
+    pump (40);
+
+    // The panels: the keys are the panel's while it is open (Esc closes it), and it has no use
+    // for the space bar; closed, the canvas has the focus again.
+    for (const auto* button : { "help", "settings" })
+    {
+        const auto panel = juce::String (button) + "-panel";
+        rig.click (button);
+        check (rig.get (panel).isShowing() && rig.hasFocus (panel), name + ": the " + button + " panel has the focus while it is open");
+        spaceIsTheDaws (juce::String ("with the ") + button + " panel open");
+        check (rig.uses (escapeKey) && ! rig.get (panel).isVisible(), name + ": Esc closes the " + button + " panel");
+        check (rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's again");
+        spaceIsTheDaws (juce::String ("after the ") + button + " panel has closed");
+    }
+
+    // The live view: no canvas to hold the focus.
+    editor.showLiveView (true);
+    pump (60);
+    spaceIsTheDaws ("in the live view");
+    rig.click ("repeat");
+    spaceIsTheDaws ("in the live view, after a click");
+    setParameter (processor, params::id::repeat, 0.0f);
+    editor.showLiveView (false);
+    pump (60);
+
+    // ---- a text object: selected is not typing ------------------------------------------------------
+    auto& textBox = rig.get ("inspector-text");
+
+    rig.click (rig.canvas(), rig.onText());
+    check (editor.getSelectedObject() == rig.textId && textBox.isShowing() && ! textBox.hasKeyboardFocus (true)
+           && rig.hasFocus ("canvas"),
+           name + ": a click on a text object selects it, and the focus stays with the canvas, not in its text box");
+    spaceIsTheDaws ("with a text object selected");
+    check (rig.text (rig.textId) == "HELLO", name + ": ... and nothing was typed into the text");
+
+    // ---- typing: the one place where the space bar types ---------------------------------------------
+    rig.doubleClick (rig.canvas(), rig.onText());
+    check (textBox.hasKeyboardFocus (true) && rig.typing(), name + ": a double-click on the text puts the focus in its text box");
+    rig.type ("PLAY IT");
+    check (rig.text (rig.textId) == "PLAY IT", name + ": typed text goes into the text box, the space too (\"" + rig.text (rig.textId) + "\")");
+    check (rig.usesSpace() && rig.text (rig.textId) == "PLAY IT ", name + ": the space bar types a space while the text box is typed in");
+
+    saveInspector ("artfreq-keys-typing.png");
+
+    check (rig.uses (returnKey) && ! rig.typing() && rig.hasFocus ("canvas"),
+           name + ": Return ends the typing and hands the focus back to the canvas");
+    check (rig.text (rig.textId) == "PLAY IT ", name + ": ... keeping what was typed");
+    spaceIsTheDaws ("after Return in the text box");
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    rig.type ("NOW");
+    check (rig.uses (escapeKey) && ! rig.typing() && rig.hasFocus ("canvas") && rig.text (rig.textId) == "NOW",
+           name + ": Esc ends the typing too");
+    spaceIsTheDaws ("after Esc in the text box");
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    check (textBox.hasKeyboardFocus (true), name + ": (typing again)");
+    rig.click ("density");
+    check (! textBox.hasKeyboardFocus (true) && ! rig.typing(), name + ": a click anywhere else ends the typing");
+    spaceIsTheDaws ("after clicking away from the text box");
+
+    // Add text: typing is what comes next, so the new text box has the focus, and shows it.
+    const auto objectsBefore = processor.getDocument().objects.size();
+    rig.click ("add-text");
+    pump (60);
+    const auto newId = editor.getSelectedObject();
+    check (processor.getDocument().objects.size() == objectsBefore + 1 && textBox.isShowing() && textBox.hasKeyboardFocus (true)
+           && rig.typing(), name + ": Add text puts the focus in the new object's text box");
+
+    saveInspector ("artfreq-keys-add-text.png");
+
+    rig.type ("NEW ONE");
+    check (rig.text (newId) == "NEW ONE", name + ": ... where typing replaces its text (\"" + rig.text (newId) + "\")");
+    check (rig.uses (returnKey) && rig.hasFocus ("canvas"), name + ": ... and Return hands the focus back");
+    spaceIsTheDaws ("after Add text, typing and Return");
+
+    // ---- number fields ---------------------------------------------------------------------------
+    if (auto* footer = dynamic_cast<ui::shell::Footer*> (findComponentWithId (editor, "footer")))
+    {
+        footer->setStartAt (StartAt::bar);
+        pump (80);
+        spaceIsTheDaws ("with the start bar field shown, not edited");
+
+        rig.click ("start-bar");
+        check (rig.editing() && ! rig.typing(), name + ": a click on the start bar field starts typing a number into it");
+        rig.type ("9");
+        check (! rig.usesSpace() && juce::roundToInt (processor.getParameters().getRawParameterValue (params::id::startBar)->load()) == 9,
+               name + ": ... where the space bar sets the typed bar and is the DAW's (a number has no spaces)");
+        check (! rig.editing() && rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's again");
+
+        rig.click ("start-bar");
+        rig.type ("12");
+        check (rig.uses (returnKey) && juce::roundToInt (processor.getParameters().getRawParameterValue (params::id::startBar)->load()) == 12,
+               name + ": Return sets the typed bar");
+        check (! rig.editing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
+        spaceIsTheDaws ("after typing a start bar");
+
+        rig.click ("start-bar");
+        rig.type ("40");
+        check (rig.uses (escapeKey) && juce::roundToInt (processor.getParameters().getRawParameterValue (params::id::startBar)->load()) == 12
+               && rig.hasFocus ("canvas"), name + ": Esc leaves the bar as it was and hands the focus back");
+        spaceIsTheDaws ("after Esc in the start bar field");
+
+        setParameter (processor, params::id::startBar, 1.0f);
+        footer->setStartAt (StartAt::play);
+        pump (60);
+    }
+
+    // A knob's value, typed (its label is modal while it is edited).
+    rig.doubleClick (rig.get ("level"), { 38.0f, 72.0f });
+    check (rig.editing() && juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a double-click on a knob's value types into it");
+    rig.type ("-12");
+    check (rig.uses (returnKey) && std::abs (processor.getParameters().getRawParameterValue (params::id::level)->load() + 12.0f) < 1.0e-3f,
+           name + ": Return sets the typed level");
+    check (juce::Component::getCurrentlyModalComponent() == nullptr && rig.hasFocus ("canvas"),
+           name + ": ... nothing stays modal, and the focus is the canvas's");
+    spaceIsTheDaws ("after typing a knob's value");
+
+    // ---- the keys the editor does use are still its own ------------------------------------------------
+    rig.click (rig.canvas(), rig.onEmptyCanvas());
+    check (rig.uses (juce::KeyPress ('b', juce::ModifierKeys(), 'b')) && rig.uses (juce::KeyPress ('v', juce::ModifierKeys(), 'v')),
+           name + ": B and V choose a tool");
+    check (! rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && ! rig.uses (juce::KeyPress (juce::KeyPress::leftKey))
+           && ! rig.uses (returnKey) && ! rig.uses (juce::KeyPress ('a', juce::ModifierKeys(), 'a'))
+           && ! rig.uses (juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys(), '\t')),
+           name + ": with nothing selected, Delete, the arrows, Return, Tab and other letters go on to the DAW too");
+    pump (60);
+
+    rig.click (rig.canvas(), rig.onText());
+    check (rig.uses (juce::KeyPress (juce::KeyPress::rightKey)), name + ": an arrow nudges the selection");
+    check (rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && rig.text (rig.textId) == "(gone)", name + ": Delete removes it");
+    check (rig.uses (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)) && rig.text (rig.textId) == "NOW",
+           name + ": Cmd+Z brings it back");
+    spaceIsTheDaws ("at the end");
+}
+
+/** The same for ArtFreq FX's own window: its bars, its strips, its drawer and its settings. And,
+    with clicks that arrive as the OS sends them, what the drawer does around the mouse: it opens
+    away from the click (so a double-click's second click still lands on the text), its close
+    button keeps the selection, and a click on the selected object brings it back. */
+void checkEffectKeys (const juce::File& outputDir, float pixelScale)
+{
+    using namespace artfreq;
+
+    const juce::String name ("ArtFreq FX");
+
+    if (! canDriveAWindow())
+    {
+        std::cout << "(" << name << "'s keys are checked on Linux only, under a virtual display)" << std::endl;
+        return;
+    }
+
+    KeyRig rig (ArtFreqProcessor::Variant::effect);
+
+    if (rig.editor == nullptr || ! rig.hasKeyboard())
+    {
+        std::cout << "(no display that gives a window the keyboard: " << name << "'s keys were not checked)" << std::endl;
+        return;
+    }
+
+    auto& processor = rig.processor;
+    auto& editor = *rig.editor;
+    const auto returnKey = juce::KeyPress (juce::KeyPress::returnKey, juce::ModifierKeys(), '\r');
+    const auto escapeKey = juce::KeyPress (juce::KeyPress::escapeKey, juce::ModifierKeys(), 27);
+    const auto parameterValue = [&] (const char* id) { return processor.getParameters().getRawParameterValue (id)->load(); };
+
+    /** In this state the space bar is the DAW's: nothing used it, nothing is typing or modal. */
+    const auto spaceIsTheDaws = [&] (const juce::String& state)
+    {
+        const auto typing = rig.typing();
+        const auto modal = juce::Component::getCurrentlyModalComponent() != nullptr;
+        const auto focus = rig.focusName();
+        const auto used = rig.usesSpace();
+
+        check (! used && ! typing && ! modal,
+               name + ": the space bar comes back unused " + state + " (the focus is on " + focus
+                   + (typing ? ", a text box is being typed in" : "") + (modal ? ", something is modal" : "") + ")");
+    };
+
+    const auto notOnAButton = [&] (const juce::String& what)
+    {
+        const auto* focused = juce::Component::getCurrentlyFocusedComponent();
+        check (focused != nullptr && dynamic_cast<const juce::Button*> (focused) == nullptr,
+               name + ": a click on " + what + " does not leave the focus on a button (it is on " + rig.focusName() + ")");
+    };
+
+    const auto saveWindow = [&] (const juce::String& fileName)
+    {
+        const auto image = editor.createComponentSnapshot (editor.getLocalBounds(), true, pixelScale);
+        const auto file = outputDir.getChildFile (fileName);
+
+        if (writePng (image, file))
+            std::cout << file.getFullPathName() << std::endl;
+        else
+            check (false, "write " + file.getFullPathName());
+    };
+
+    // A second text, on the right of the canvas (the rig's "HELLO" is on the left).
+    juce::Uuid rightId;
+    processor.editDocument ([&rightId] (ArtDocument& document)
+    {
+        auto text = ArtDocument::makeTextObject ("RIGHT", 300.0f, 1500.0f);
+        text.startTime = 0.62f;
+        text.endTime = 0.96f;
+        rightId = text.id;
+        document.objects.push_back (text);
+    }, {});
+    processor.rebuildPlanIfNeeded();
+    pump (80);
+
+    const auto onRightText = [&]
+    {
+        const auto r = onCanvas (rig.canvas(), *processor.getDocument().find (rightId), processor.getScale());
+        return juce::Point<float> (r.getX() + 0.8f * r.getWidth(), r.getCentreY());
+    };
+
+    // ---- every place the focus can be ---------------------------------------------------------------
+    spaceIsTheDaws ("as the window opens");
+
+    rig.click (rig.canvas(), rig.onEmptyCanvas());
+    check (rig.hasFocus ("canvas"), name + ": a click on the canvas gives it the focus");
+    spaceIsTheDaws ("after a click on the canvas");
+
+    // The bars: buttons, chips, the segmented Mode and their backgrounds, each only clicked.
+    const std::pair<const char*, const char*> clicked[] = {
+        { "tool-brush", "a tool button" }, { "brush-strip", "the brush strip's background" }, { "tool-select", "a tool button" },
+        { "live", "Live" }, { "repeat", "Repeat (a chip)" }, { "mode", "Mode (a segmented control)" },
+        { "header", "the top bar's background" }, { "footer", "the bottom bar's background" },
+        { "layers", "Layers" }, { "inspector", "the drawer's background" }, { "inspector-close", "the drawer's close button" } };
+
+    for (const auto& [id, what] : clicked)
+    {
+        auto& target = rig.get (id);
+        const auto at = juce::String (id) == "brush-strip" ? juce::Point<float> (680.0f, 16.0f)
+                      : juce::String (id) == "header"      ? juce::Point<float> (565.0f, 38.0f)
+                      : juce::String (id) == "footer"      ? juce::Point<float> (400.0f, 4.0f)
+                      : juce::String (id) == "inspector"   ? juce::Point<float> (120.0f, static_cast<float> (target.getHeight()) - 30.0f)
+                                                           : target.getLocalBounds().toFloat().getCentre();
+        rig.click (target, at);
+        spaceIsTheDaws (juce::String ("after a click on ") + what);
+        notOnAButton (what);
+
+        // Back to how it was, except the brush (its strip is clicked next) and the drawer (so are
+        // its background and its close button).
+        editor.showLiveView (false);
+        setParameter (processor, params::id::repeat, 0.0f);
+        setParameter (processor, params::id::mode, 0.0f);
+        pump (40);
+    }
+
+    check (! editor.isDrawerOpen(), name + ": the drawer's close button closed it");
+
+    // Undo and redo are there only while they have something to do.
+    check (! rig.get ("undo").isVisible() || ! rig.get ("redo").isVisible(), name + ": (undo and redo are not both there)");
+    rig.click (rig.canvas(), rig.onText());
+    check (rig.uses (juce::KeyPress (juce::KeyPress::rightKey)), name + ": an arrow nudges the selection");
+    pump (1200);   // (a held arrow's undo step ends after a pause)
+    check (rig.get ("undo").isVisible(), name + ": after an edit, Undo is there");
+    rig.click ("undo");
+    spaceIsTheDaws ("after a click on Undo (which then has nothing more to undo, and goes)");
+    notOnAButton ("Undo");
+    check (rig.get ("redo").isVisible(), name + ": ... and Redo is there");
+    rig.click ("redo");
+    spaceIsTheDaws ("after a click on Redo");
+    notOnAButton ("Redo");
+    rig.uses (escapeKey);
+    pump (40);
+    check (editor.getSelectedObject().isNull() && ! editor.isDrawerOpen(), name + ": Esc deselects, and the drawer goes");
+    check (! rig.uses (escapeKey), name + ": with nothing selected and no drawer, Esc goes on to the DAW");
+
+    // The Length menu: the keys are the menu's while it is open; closed, nothing stays modal.
+    rig.click ("length");
+    check (juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a click on Length opens its menu");
+    juce::PopupMenu::dismissAllActiveMenus();
+    pump (80);
+    spaceIsTheDaws ("after Length's menu has closed");
+    check (! rig.uses (returnKey) && ! rig.uses (juce::KeyPress (juce::KeyPress::downKey)),
+           name + ": Return and Down are not kept by Length after its menu");
+
+    // Depth, dragged; the Sound strip (Draw): Lows clicked, Level dragged and typed.
+    rig.drag (rig.get ("depth"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
+    spaceIsTheDaws ("after dragging Depth");
+    rig.click ("depth");
+    check (rig.editing() && ! rig.usesSpace() && ! rig.editing() && rig.hasFocus ("canvas"),
+           name + ": a click on Depth starts typing, and the space bar after it is the DAW's");
+
+    setParameter (processor, params::id::mode, 3.0f);
+    pump (80);
+    rig.click ("lows");
+    spaceIsTheDaws ("after a click on Lows");
+    rig.click (rig.get ("sound-strip"), { 700.0f, 16.0f });
+    spaceIsTheDaws ("after a click on the Sound strip's background");
+    rig.drag (rig.get ("level"), { 30.0f, 12.0f }, { 30.0f, 4.0f });
+    spaceIsTheDaws ("after dragging Level");
+
+    // One click on a value and then the space bar: the DAW plays (the customer's "press the
+    // normal play button ... it should play instead of me having to click out").
+    for (const auto* id : { "level", "density", "contrast" })
+    {
+        rig.click (id);
+        check (rig.editing() && ! rig.typing(), name + ": a click on " + juce::String (id) + " starts typing a number into it");
+        check (! rig.usesSpace() && ! rig.editing() && rig.hasFocus ("canvas"),
+               name + ": ... and the space bar after it is the DAW's, and ends the typing");
+    }
+
+    rig.click ("level");
+    rig.type ("-12");
+    check (! rig.usesSpace() && std::abs (parameterValue (params::id::level) + 12.0f) < 1.0e-3f,
+           name + ": the space bar sets a typed level and is the DAW's");
+    rig.click ("level");
+    rig.type ("-9");
+    check (rig.uses (returnKey) && std::abs (parameterValue (params::id::level) + 9.0f) < 1.0e-3f, name + ": Return sets the typed level");
+    check (! rig.editing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
+    spaceIsTheDaws ("after typing a level");
+
+    // A value being typed when its strip goes (automation changes the mode): nothing keeps the keys.
+    rig.click ("density");
+    check (rig.editing(), name + ": (typing a density)");
+    setParameter (processor, params::id::mode, 0.0f);
+    pump (120);
+    check (! rig.get ("sound-strip").isVisible() && ! rig.editing(), name + ": the Sound strip goes with the mode, and the typing with it");
+    spaceIsTheDaws ("after the Sound strip went while a value was typed");
+    setParameter (processor, params::id::lowEnd, 0.0f);
+    setParameter (processor, params::id::level, -6.0f);
+
+    // The panels: the keys are the panel's while it is open (Esc closes it), and it has no use
+    // for the space bar; closed, the canvas has the focus again.
+    for (const auto* button : { "help", "settings" })
+    {
+        const auto panel = juce::String (button) + "-panel";
+        rig.click (button);
+        check (rig.get (panel).isShowing() && rig.hasFocus (panel), name + ": the " + button + " panel has the focus while it is open");
+        spaceIsTheDaws (juce::String ("with the ") + button + " panel open");
+        check (rig.uses (escapeKey) && ! rig.get (panel).isVisible(), name + ": Esc closes the " + button + " panel");
+        check (rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's again");
+        spaceIsTheDaws (juce::String ("after the ") + button + " panel has closed");
+    }
+
+    // The timing in the settings: segmented controls clicked, the start bar typed.
+    rig.click ("settings");
+
+    for (const auto* id : { "trigger", "tempo-source", "start-at" })
+    {
+        rig.click (rig.get (id), { static_cast<float> (rig.get (id).getWidth()) * 0.75f, 14.0f });
+        check (rig.hasFocus ("settings-panel"), name + ": a click on " + juce::String (id) + " in the settings leaves the focus with the panel");
+        spaceIsTheDaws (juce::String ("after a click on ") + id + " in the settings");
+        setParameter (processor, params::id::trigger, 0.0f);
+        pump (60);
+    }
+
+    check (juce::roundToInt (parameterValue (params::id::startAt)) == params::atBarStartIndex && rig.get ("start-bar").isShowing()
+               && rig.get ("bpm").isShowing(), name + ": (At bar and a typed tempo: their fields are there)");
+    rig.click ("start-bar");
+    check (rig.editing() && ! rig.typing(), name + ": a click on the start bar field starts typing a number into it");
+    rig.type ("9");
+    check (! rig.usesSpace() && juce::roundToInt (parameterValue (params::id::startBar)) == 9 && rig.hasFocus ("settings-panel"),
+           name + ": ... where the space bar sets the typed bar, is the DAW's, and hands the focus back to the settings");
+    rig.click ("start-bar");
+    rig.type ("12");
+    check (rig.uses (returnKey) && juce::roundToInt (parameterValue (params::id::startBar)) == 12, name + ": Return sets the typed bar");
+    check (! rig.editing() && rig.hasFocus ("settings-panel"), name + ": ... and hands the focus back to the settings");
+    spaceIsTheDaws ("after typing a start bar");
+    rig.drag (rig.get ("bpm"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
+    spaceIsTheDaws ("after dragging the BPM field");
+    check (rig.uses (escapeKey) && ! rig.get ("settings-panel").isVisible() && rig.hasFocus ("canvas"), name + ": Esc closes the settings");
+    setParameter (processor, params::id::startBar, 1.0f);
+    setParameter (processor, params::id::startAt, static_cast<float> (params::onPlayStartIndex));
+    setParameter (processor, params::id::tempoSource, 0.0f);
+    setParameter (processor, params::id::bpm, 120.0f);
+    pump (60);
+
+    // The live view: no canvas to hold the focus.
+    rig.click ("live");
+    spaceIsTheDaws ("in the live view");
+    rig.click ("repeat");
+    spaceIsTheDaws ("in the live view, after a click");
+    setParameter (processor, params::id::repeat, 0.0f);
+    rig.click ("live");
+    pump (60);
+    check (rig.get ("canvas").isShowing(), name + ": Live again shows the canvas");
+
+    // ---- the drawer: the layer list -------------------------------------------------------------------
+    rig.click ("layers");
+    auto* list = dynamic_cast<ui::LayerList*> (findComponentWithId (editor, "layer-list"));
+
+    if (list != nullptr && list->isShowing())
+    {
+        rig.click (*list, list->getRowBounds (1).toFloat().getCentre().withX (60.0f));
+        check (rig.hasFocus ("layer-list") && editor.getSelectedObject() == rig.textId && editor.isLayerListShown(),
+               name + ": a click on a row of the layer list selects its object and gives the list the focus");
+        spaceIsTheDaws ("with the layer list focused");
+        check (rig.uses (escapeKey) && editor.getSelectedObject().isNull() && editor.isLayerListShown(), name + ": Esc deselects; the list stays");
+        check (rig.uses (escapeKey) && ! editor.isDrawerOpen(), name + ": Esc again closes the list");
+        check (rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's");
+        check (! rig.uses (escapeKey), name + ": ... and a third Esc goes on to the DAW");
+        spaceIsTheDaws ("after the layer list has closed");
+    }
+    else
+    {
+        check (false, name + ": the Layers button shows the layer list");
+    }
+
+    // ---- a text object: selected is not typing; the drawer keeps clear of the mouse -----------------------
+    auto& textBox = rig.get ("inspector-text");
+
+    rig.click (rig.canvas(), rig.onText());
+    check (editor.getSelectedObject() == rig.textId && editor.isDrawerOpen() && ! editor.isDrawerOnLeft() && textBox.isShowing()
+           && ! textBox.hasKeyboardFocus (true) && rig.hasFocus ("canvas"),
+           name + ": a click on a text object selects it and opens its settings on the right; the focus stays with the canvas");
+    spaceIsTheDaws ("with a text object selected");
+    check (rig.text (rig.textId) == "HELLO", name + ": ... and nothing was typed into the text");
+
+    // The close button: the drawer goes, the selection stays; a click on the object brings it back.
+    rig.click ("inspector-close");
+    check (! editor.isDrawerOpen() && editor.getSelectedObject() == rig.textId && rig.hasFocus ("canvas"),
+           name + ": the drawer's close button closes it and keeps the selection");
+    spaceIsTheDaws ("after closing the drawer");
+    rig.drag (rig.canvas(), rig.onText(), rig.onText().translated (20.0f, 0.0f));
+    check (! editor.isDrawerOpen(), name + ": dragging the object leaves the drawer closed");
+    processor.undo();
+    pump (60);
+    rig.click (rig.canvas(), rig.onText());
+    check (editor.isDrawerOpen() && editor.getSelectedObject() == rig.textId, name + ": a click on the selected object opens its settings again");
+
+    // The text on the right (under the open drawer: Esc first): its settings open on the left, so
+    // the double-click's second click lands on the text, not on a control of a drawer that
+    // opened under the mouse.
+    rig.uses (escapeKey);
+    pump (40);
+    rig.click (rig.canvas(), onRightText());
+    check (editor.getSelectedObject() == rightId && editor.isDrawerOpen() && editor.isDrawerOnLeft(),
+           name + ": a click on an object on the right opens its settings on the left");
+    saveWindow ("artfreq-fx-drawer-left.png");
+    rig.uses (escapeKey);
+    pump (40);
+    check (! editor.isDrawerOpen(), name + ": (Esc: deselected, the drawer gone)");
+
+    rig.doubleClick (rig.canvas(), onRightText());
+    check (editor.getSelectedObject() == rightId && editor.isDrawerOnLeft() && textBox.hasKeyboardFocus (true) && rig.typing(),
+           name + ": a double-click on the text on the right selects it and puts the focus in its text box");
+    rig.type ("PLAY IT");
+    check (rig.text (rightId) == "PLAY IT", name + ": typed text goes into the text box, the space too (\"" + rig.text (rightId) + "\")");
+    check (rig.usesSpace() && rig.text (rightId) == "PLAY IT ", name + ": the space bar types a space while the text box is typed in");
+    saveWindow ("artfreq-fx-typing.png");
+    check (rig.uses (returnKey) && ! rig.typing() && rig.hasFocus ("canvas"),
+           name + ": Return ends the typing and hands the focus back to the canvas");
+    spaceIsTheDaws ("after Return in the text box");
+
+    // Dragged to the left, under its drawer: the drawer moves aside when the object is let go.
+    {
+        const auto from = onRightText();
+        const auto to = juce::Point<float> (rig.canvas().getDrawingArea().getX() + 0.12f * rig.canvas().getDrawingArea().getWidth(), from.y);
+        rig.drag (rig.canvas(), from, to);
+        const auto* moved = processor.getDocument().find (rightId);
+        check (moved != nullptr && moved->startTime < 0.2f && editor.isDrawerOpen() && ! editor.isDrawerOnLeft(),
+               name + ": dragged under the drawer, the object is uncovered: the drawer goes to the other side");
+        processor.undo();
+        pump (60);
+    }
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    rig.type ("NOW");
+    check (rig.uses (escapeKey) && ! rig.typing() && rig.hasFocus ("canvas") && rig.text (rig.textId) == "NOW",
+           name + ": Esc ends the typing too");
+    spaceIsTheDaws ("after Esc in the text box");
+
+    rig.doubleClick (rig.canvas(), rig.onText());
+    check (textBox.hasKeyboardFocus (true), name + ": (typing again)");
+    rig.click ("mode");
+    check (! textBox.hasKeyboardFocus (true) && ! rig.typing(), name + ": a click anywhere else ends the typing");
+    spaceIsTheDaws ("after clicking away from the text box");
+    setParameter (processor, params::id::mode, 0.0f);
+    pump (40);
+
+    // + Text: typing is what comes next, so the drawer opens on the new text and its box has the focus.
+    rig.uses (escapeKey);
+    pump (40);
+    const auto objectsBefore = processor.getDocument().objects.size();
+    rig.click ("add-text");
+    pump (60);
+    const auto newId = editor.getSelectedObject();
+    check (processor.getDocument().objects.size() == objectsBefore + 1 && editor.isDrawerOpen() && textBox.isShowing()
+           && textBox.hasKeyboardFocus (true) && rig.typing(), name + ": + Text opens the drawer on the new text, with the focus in its text box");
+    rig.type ("NEW ONE");
+    check (rig.text (newId) == "NEW ONE", name + ": ... where typing replaces its text (\"" + rig.text (newId) + "\")");
+    check (rig.uses (returnKey) && rig.hasFocus ("canvas"), name + ": ... and Return hands the focus back");
+    spaceIsTheDaws ("after + Text, typing and Return");
+
+    // A bar in the drawer, typed.
+    rig.doubleClick (rig.get ("inspector-intensity"), { 60.0f, 13.0f });
+    pump (40);
+
+    if (rig.typing())
+    {
+        rig.type ("50");
+        check (rig.uses (returnKey) && juce::Component::getCurrentlyModalComponent() == nullptr && rig.hasFocus ("canvas"),
+               name + ": a value typed into the drawer's Intensity is set, and the focus goes back to the canvas");
+        spaceIsTheDaws ("after typing an intensity");
+    }
+
+    // ---- the keys the editor does use are still its own ------------------------------------------------
+    // (Between the two texts, above the new one in the lows: nothing is there.)
+    rig.uses (escapeKey);
+    pump (40);
+    rig.click (rig.canvas(), { rig.canvas().getDrawingArea().getX() + 0.56f * rig.canvas().getDrawingArea().getWidth(),
+                               rig.canvas().getDrawingArea().getY() + 0.45f * rig.canvas().getDrawingArea().getHeight() });
+    check (editor.getSelectedObject().isNull(), name + ": (a click on empty canvas selects nothing)");
+    const auto canvasBefore = rig.canvas().getBounds();
+    check (rig.uses (juce::KeyPress ('b', juce::ModifierKeys(), 'b')) && rig.get ("brush-strip").isVisible(),
+           name + ": B chooses the brush, and its strip is there");
+    check (rig.canvas().getBounds() == canvasBefore, name + ": ... over the canvas's time axis: the canvas keeps its size and place");
+    check (rig.uses (juce::KeyPress ('v', juce::ModifierKeys(), 'v')) && ! rig.get ("brush-strip").isVisible()
+               && rig.canvas().getBounds() == canvasBefore, name + ": V the Select tool again (the canvas as it was)");
+    check (! rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && ! rig.uses (juce::KeyPress (juce::KeyPress::leftKey))
+           && ! rig.uses (returnKey) && ! rig.uses (juce::KeyPress ('a', juce::ModifierKeys(), 'a'))
+           && ! rig.uses (juce::KeyPress (juce::KeyPress::tabKey, juce::ModifierKeys(), '\t')),
+           name + ": with nothing selected, Delete, the arrows, Return, Tab and other letters go on to the DAW too");
+    pump (60);
+
+    rig.click (rig.canvas(), rig.onText());
+    check (rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && rig.text (rig.textId) == "(gone)" && ! editor.isDrawerOpen(),
+           name + ": Delete removes the selected object, and its drawer goes");
+    check (rig.uses (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)) && rig.text (rig.textId) == "NOW",
+           name + ": Cmd+Z brings it back");
+    spaceIsTheDaws ("at the end");
 }
 
 int main (int argc, char* argv[])
@@ -1539,6 +3152,49 @@ int main (int argc, char* argv[])
 
         if (content == nullptr)
             return 1;
+
+        // The footer's timing columns alone (Length to BPM, with their hint line), as a display of
+        // twice the window's pixels shows them: On play and At bar 9, at the window's current size.
+        const auto saveFooterStates = [&] (const juce::String& size)
+        {
+            auto* footer = dynamic_cast<ui::shell::Footer*> (findComponentWithId (*editor, "footer"));
+            auto* length = findComponentWithId (*editor, "length");
+            auto* bpm = findComponentWithId (*editor, "bpm");
+            auto* startChoice = findComponentWithId (*editor, "start-choice");
+            auto* startBar = findComponentWithId (*editor, "start-bar");
+
+            if (footer == nullptr || length == nullptr || bpm == nullptr || startChoice == nullptr || startBar == nullptr)
+                return;
+
+            const auto columns = juce::Rectangle<int> (length->getX() - 24, 0, bpm->getRight() + 24 - (length->getX() - 24),
+                                                       footer->getHeight());
+
+            for (const auto atBar : { false, true })
+            {
+                setParameter (processor, params::id::startBar, atBar ? 9.0f : 1.0f);
+                footer->setStartAt (atBar ? StartAt::bar : StartAt::play);
+                pump (60);
+
+                // In line at every size: the choice (and the field) on the hint's line, inside the
+                // Trigger column's width, clear of Tempo's hint.
+                check (startChoice->isVisible() && startBar->isVisible() == atBar
+                       && (atBar ? startBar : startChoice)->getRight() <= findComponentWithId (*editor, "repeat")->getRight() + 8,
+                       juce::String (atBar ? "At bar" : "On play") + ": the hint line fits under Trigger at " + size + " %");
+
+                const auto area = editor->getLocalArea (footer, columns).getIntersection (editor->getLocalBounds());
+                const auto image = editor->createComponentSnapshot (area, true, 2.0f);
+                const auto file = outputDir.getChildFile ("artfreq-footer-" + juce::String (atBar ? "at-bar-" : "on-play-") + size + ".png");
+
+                if (writePng (image, file))
+                    std::cout << file.getFullPathName() << std::endl;
+                else
+                    check (false, "write " + file.getFullPathName());
+            }
+
+            setParameter (processor, params::id::startBar, 1.0f);
+            footer->setStartAt (StartAt::play);
+            pump (30);
+        };
 
         // Let attachments, the first plan and any async updates settle.
         pump (150);
@@ -1737,19 +3393,23 @@ int main (int argc, char* argv[])
 
         // ---- window sizes -------------------------------------------------------------------------
         save ("100", 1.0f);
+        saveFooterStates ("100");
 
         setWindowScale (*editor, 2.0f);
         pump (60);
         save ("200", 1.0f);
+        saveFooterStates ("200");
 
         setWindowScale (*editor, 1.5f);
         pump (60);
         check (processor.getEditorWidth() == 1680 && processor.getEditorHeight() == 1080, "the window size is remembered");
         save ("150", 1.0f);
+        saveFooterStates ("150");
 
         setWindowScale (*editor, 0.75f);
         pump (60);
         save ("75", 1.0f);
+        saveFooterStates ("75");
 
         setWindowScale (*editor, 1.25f);
         pump (30);
@@ -1809,6 +3469,11 @@ int main (int argc, char* argv[])
 
     // ---- ArtFreq FX: the same editor on the effect ----------------------------------------------
     checkEffect (outputDir, pixelScale);
+    pump (50);
+
+    // ---- the DAW's play key, in both plug-ins --------------------------------------------------------
+    checkKeys (outputDir, pixelScale);
+    checkEffectKeys (outputDir, pixelScale);
     pump (50);
 
     if (failed)

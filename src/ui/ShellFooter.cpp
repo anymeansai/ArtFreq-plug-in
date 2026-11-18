@@ -1,5 +1,6 @@
 #include "ShellFooter.h"
 
+#include "LookAndFeel.h"
 #include "Parameters.h"
 
 namespace artfreq::ui::shell
@@ -13,8 +14,9 @@ namespace
     constexpr int hintTop = 80;
     constexpr int hintHeight = 16;
 
-    // Columns. The trigger column holds Transport | MIDI and the Repeat switch; the start bar
-    // field sits in its hint line, so the timing row keeps its width.
+    // Columns. The trigger column holds Transport | MIDI and the Repeat switch; where a single
+    // pass starts (the start choice, and the start bar field) sits in its hint line, so the timing
+    // row keeps its width.
     constexpr int knobGap = 4;
     constexpr int lengthWidth = 96;
     constexpr int triggerWidth = 124;
@@ -25,8 +27,15 @@ namespace
     constexpr int columnGap = 16;
     constexpr int startBarWidth = 40;
     constexpr int startBarHeight = 20;
-    constexpr int startBarGap = 5;
+    constexpr int startBarGap = 3;
     constexpr float startBarTextSize = 12.0f;   // as the knobs' values in the same line
+
+    // The start choice: its words continue the hint's ("Plays once"), on the same baseline.
+    constexpr int startChoiceGap = 0;           // after the hint's words (the pad is the word space)
+    constexpr int startChoicePad = 3;           // left of its words
+    constexpr int startChoiceChevron = 10;
+    constexpr int startChoiceTail = 3;          // right of the chevron
+    constexpr int startMenuItemHeight = 28;
     constexpr int previewWidth = 56;
     constexpr int previewSize = 44;
     constexpr int previewGap = 12;
@@ -59,8 +68,58 @@ namespace
         g.drawText (text, column.getX(), hintTop, column.getWidth(), hintHeight, justification, true);
     }
 
-    constexpr const char* startBarLead = "Plays once from bar";
+    // The single pass's hint: these words, then the start choice's, then (At bar) the bar.
+    constexpr const char* startLead = "Plays once";
+    constexpr const char* onPlayWords = "when you press play";
+    constexpr const char* atBarWords = "from bar";
 } // namespace
+
+//==============================================================================
+StartChoice::StartChoice() : juce::Button ("Start at")
+{
+    setTitle ("Start at");
+    setTooltip ("Where the drawing starts: when you press play in your DAW (wherever the playhead is; a DAW's "
+                "export or freeze starts it where the render starts), or at a bar of the song, which an export keeps");
+    setMouseCursor (juce::MouseCursor::PointingHandCursor);
+}
+
+void StartChoice::setWords (const juce::String& newWords)
+{
+    if (words == newWords)
+        return;
+
+    words = newWords;
+    repaint();
+}
+
+int StartChoice::getIdealWidth() const
+{
+    return startChoicePad + textWidth (hintFont(), words) + startChoiceChevron + startChoiceTail;
+}
+
+void StartChoice::paintButton (juce::Graphics& g, bool highlighted, bool down)
+{
+    const auto bounds = getLocalBounds().toFloat();
+
+    if (highlighted || down)
+    {
+        g.setColour (down ? theme::raised : theme::raisedHover);
+        g.fillRoundedRectangle (bounds, 4.0f);
+    }
+
+    // A shade brighter than the hint's words, so it reads as the part that can be changed.
+    const auto colour = highlighted || down ? theme::text : theme::textDim;
+    const auto wordsWidth = textWidth (hintFont(), words);
+
+    g.setFont (hintFont());
+    g.setColour (colour);
+    g.drawText (words, startChoicePad, 0, wordsWidth, getHeight(), juce::Justification::centredLeft, false);
+
+    const auto chevron = juce::Rectangle<float> (static_cast<float> (startChoicePad + wordsWidth), 0.0f,
+                                                 static_cast<float> (startChoiceChevron), bounds.getHeight());
+    drawIcon (g, shellIcons::chevronDown(), chevron.withSizeKeepingCentre (10.0f, 10.0f).translated (0.0f, 0.5f),
+              highlighted || down ? theme::text : theme::textFaint.brighter (0.25f));
+}
 
 //==============================================================================
 PreviewButton::PreviewButton() : juce::Button ("Preview")
@@ -138,16 +197,6 @@ Footer::Footer (ArtFreqProcessor& p, int inspectorLeftEdge)
     contrast.setTooltip ("Contrast: how far the quietest drawn parts sit below the loudest (dB)");
     level.setTooltip ("Level: the output level");
 
-    // In the effect these three shape the drawing's sines, which only the Draw modes play.
-    if (processor.isEffect())
-    {
-        density.setTooltip ("Density (Carve + Draw and Draw): how many lines share the height. Few = scan lines, many = solid shapes.");
-        contrast.setTooltip ("Contrast (Carve + Draw and Draw): how far the quietest drawn parts sit below the loudest (dB)");
-        level.setTooltip ("Level (Carve + Draw and Draw): the level of the drawing's sines. The audio passing through keeps its own.");
-        preview.setTooltip ("Preview: run the drawing's pass from its start on the audio coming in, even while the DAW is "
-                            "stopped (once, or on a loop with Repeat). Most DAWs keep sending audio to effects then.");
-    }
-
     // Length
     length.addItemList (params::lengthNames(), 1);
     length.setComponentID ("length");
@@ -169,6 +218,10 @@ Footer::Footer (ArtFreqProcessor& p, int inspectorLeftEdge)
     repeatAttachment = std::make_unique<juce::ButtonParameterAttachment> (parameter (processor, params::id::repeat), repeat);
     addAndMakeVisible (repeat);
 
+    startChoice.setComponentID ("start-choice");
+    startChoice.onClick = [this] { showStartMenu(); };
+    addChildComponent (startChoice);
+
     NumberField::Options barOptions;
     barOptions.format = [] (double v) { return juce::String (juce::roundToInt (v)); };
     barOptions.dragUnitsPerPixel = 0.25;
@@ -178,6 +231,7 @@ Footer::Footer (ArtFreqProcessor& p, int inspectorLeftEdge)
     startBar = std::make_unique<NumberField> (parameter (processor, params::id::startBar), barOptions);
     startBar->setComponentID ("start-bar");
     startBar->setTitle ("Start bar");
+    startBar->setTooltip ("The bar of the song the drawing starts at: drag, or click to type");
     addChildComponent (*startBar);
 
     tempoSource.setComponentID ("tempo-source");
@@ -215,9 +269,20 @@ juce::String Footer::lengthHint() const
     return formatNumber (seconds, seconds < 10.0 ? 2 : 1) + " s per pass";
 }
 
+bool Footer::showsStartChoice() const
+{
+    // Transport without Repeat: the single pass, which starts on play or at a bar.
+    return choiceIndex (processor, params::id::trigger) == 0 && choiceIndex (processor, params::id::repeat) == 0;
+}
+
 bool Footer::showsStartBar() const
 {
     return processor.getSinglePassStartBar() > 0;
+}
+
+bool Footer::startsOnPlay() const
+{
+    return params::startAtForIndex (choiceIndex (processor, params::id::startAt)) == StartAt::play;
 }
 
 juce::String Footer::getTriggerHint() const
@@ -228,11 +293,54 @@ juce::String Footer::getTriggerHint() const
         return repeats ? "Loops while a note is held" : "Each note plays it once";
 
     if (! repeats)
-        return juce::String (startBarLead) + " " + juce::String (processor.getSinglePassStartBar());
+        return juce::String (startLead) + " "
+             + (startsOnPlay() ? juce::String (onPlayWords)
+                               : juce::String (atBarWords) + " " + juce::String (processor.getSinglePassStartBar()));
 
     const auto lengths = params::lengthNames();
-    return "Repeats every " + lengths[juce::jlimit (0, lengths.size() - 1, choiceIndex (processor, params::id::length))]
-         + " from bar 1";
+    return "Repeats every " + lengths[juce::jlimit (0, lengths.size() - 1, choiceIndex (processor, params::id::length))];
+}
+
+void Footer::setStartAt (StartAt startAt)
+{
+    // Not an automation target, but the host still hears of it (the project has changed).
+    auto& choice = parameter (processor, params::id::startAt);
+    const auto index = startAt == StartAt::bar ? params::atBarStartIndex : params::onPlayStartIndex;
+
+    choice.beginChangeGesture();
+    choice.setValueNotifyingHost (choice.convertTo0to1 (static_cast<float> (index)));
+    choice.endChangeGesture();
+    refresh();
+}
+
+juce::PopupMenu Footer::startMenu() const
+{
+    juce::PopupMenu menu;
+    menu.addItem (static_cast<int> (StartAt::play) + 1, "When you press play", true, startsOnPlay());
+    menu.addItem (static_cast<int> (StartAt::bar) + 1, "From a bar of the song", true, ! startsOnPlay());
+    return menu;
+}
+
+void Footer::showStartMenu()
+{
+    auto options = juce::PopupMenu::Options()
+                       .withTargetComponent (startChoice)
+                       .withStandardItemHeight (startMenuItemHeight);
+
+    // Inside the window: scaled like the rest, never a separate desktop window.
+    if (auto* parent = ArtFreqLookAndFeel::findPopupParent (*this))
+        options = options.withParentComponent (parent);
+
+    // The window's look, from the start: a menu looks its look-and-feel up before it joins its
+    // parent, and would otherwise be opaque, with square corners left unpainted.
+    auto menu = startMenu();
+    menu.setLookAndFeel (&getLookAndFeel());
+
+    menu.showMenuAsync (options, [safe = juce::Component::SafePointer<Footer> (this)] (int result)
+    {
+        if (safe != nullptr && result != 0)
+            safe->setStartAt (static_cast<StartAt> (result - 1));
+    });
 }
 
 juce::String Footer::tempoHint() const
@@ -242,16 +350,6 @@ juce::String Footer::tempoHint() const
 
 void Footer::refresh()
 {
-    // ArtFreq FX: the sines' settings are greyed in the modes that play no sines.
-    if (processor.isEffect())
-    {
-        const auto sines = playsSines (processor.getEffectMode());
-
-        for (auto* knob : { &density, &contrast, &level })
-            if (knob->isEnabled() != sines)
-                knob->setEnabled (sines);
-    }
-
     const auto previewing = processor.isPreviewing();
 
     if (preview.getToggleState() != previewing)
@@ -260,8 +358,20 @@ void Footer::refresh()
     const auto followHost = choiceIndex (processor, params::id::tempoSource) == 0;
     bpm->setFollowing (followHost, followHost ? formatNumber (processor.getEffectiveTempo(), 2) : juce::String());
 
-    // The start bar field is the bar number in "Plays once from bar [N]".
+    // A single Transport pass: "Plays once [when you press play v]", or "Plays once [from bar v]
+    // [N]" with the start bar field as its number.
+    const auto withStartChoice = showsStartChoice();
     const auto withStartBar = showsStartBar();
+    const juce::String words (startsOnPlay() ? onPlayWords : atBarWords);
+
+    if (startChoice.getWords() != words)
+    {
+        startChoice.setWords (words);
+        layoutStart();
+    }
+
+    if (startChoice.isVisible() != withStartChoice)
+        startChoice.setVisible (withStartChoice);
 
     if (startBar->isVisible() != withStartBar)
         startBar->setVisible (withStartBar);
@@ -298,7 +408,7 @@ void Footer::paint (juce::Graphics& g)
     caption ("Preview", previewColumn, juce::Justification::centred);
 
     drawHint (g, lengthHint(), lengthColumn, theme::textFaint);
-    drawHint (g, showsStartBar() ? juce::String (startBarLead) : getTriggerHint(), triggerColumn.withRight (repeat.getRight()),
+    drawHint (g, showsStartChoice() ? juce::String (startLead) : getTriggerHint(), triggerColumn.withRight (repeat.getRight()),
               theme::textFaint);
     drawHint (g, tempoHint(), tempoColumn.getUnion (bpmColumn), theme::textFaint);
 
@@ -343,9 +453,7 @@ void Footer::resized()
     tempoSource.setBounds (tempoColumn);
     bpm->setBounds (bpmColumn);
 
-    // Right after "Plays once from bar", centred on the hint line.
-    startBar->setBounds (triggerColumn.getX() + textWidth (hintFont(), startBarLead) + startBarGap,
-                         hintTop + (hintHeight - startBarHeight) / 2, startBarWidth, startBarHeight);
+    layoutStart();
 
     // Preview and Export line up with the inspector above them.
     outputDividerX = inspectorLeft;
@@ -359,6 +467,17 @@ void Footer::resized()
     // edges line up from top to bottom.
     x = previewColumn.getRight() + previewGap;
     exporter.setBounds (x, captionTop, getWidth() - metrics::pad - x, hintTop + hintHeight - captionTop);
+}
+
+void Footer::layoutStart()
+{
+    // Right after "Plays once", centred on the hint line (so its words sit on the hint's
+    // baseline); the start bar field right after it.
+    const auto top = hintTop + (hintHeight - startBarHeight) / 2;
+
+    startChoice.setBounds (triggerColumn.getX() + textWidth (hintFont(), startLead) + startChoiceGap, top,
+                           startChoice.getIdealWidth(), startBarHeight);
+    startBar->setBounds (startChoice.getRight() + startBarGap, top, startBarWidth, startBarHeight);
 }
 
 } // namespace artfreq::ui::shell

@@ -685,6 +685,7 @@ Run runEngine (int engineIndex, const Song& song, const MaskPlan* plan, const Ca
     TrackerSettings trackerSettings;
     trackerSettings.mode = TriggerMode::transport;
     trackerSettings.repeat = false;
+    trackerSettings.startAt = StartAt::bar;
     trackerSettings.startBar = startBar;
     trackerSettings.lengthQuarterNotes = 16.0;
     trackerSettings.quarterNotesPerBar = 4.0;

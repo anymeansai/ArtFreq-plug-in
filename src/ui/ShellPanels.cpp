@@ -1,5 +1,6 @@
 #include "ShellPanels.h"
 
+#include "KeyFocus.h"
 #include "Parameters.h"
 #include "ShellHeader.h"
 
@@ -7,6 +8,13 @@ namespace artfreq::ui::shell
 {
 namespace
 {
+    /** A segmented control that also explains itself in a tooltip. */
+    struct TippedChoice final : public SegmentedControl,
+                                public juce::SettableTooltipClient
+    {
+        using SegmentedControl::SegmentedControl;
+    };
+
     constexpr int cardPad = 20;
     constexpr int titleRowHeight = 56;
     constexpr int closeSize = 28;
@@ -23,17 +31,31 @@ namespace
         g.drawRoundedRectangle (r.reduced (0.5f), theme::panelCorner, 1.0f);
     }
 
-    void paintTitle (juce::Graphics& g, const juce::String& title, int width)
+    // ArtFreq FX's panels sit in a smaller window: a lower title row, tighter rows.
+    constexpr int effectTitleRowHeight = 46;
+    constexpr int effectColumnWidth = 300;
+    constexpr int effectColumnGap = 32;
+    constexpr int effectRowGap = 10;
+
+    void paintTitle (juce::Graphics& g, const juce::String& title, int width, int rowHeight = titleRowHeight)
     {
         g.setColour (theme::text);
         g.setFont (fonts::ui (theme::titleSize, fonts::UiWeight::semiBold));
-        g.drawText (title, cardPad, 0, width - 2 * cardPad, titleRowHeight, juce::Justification::centredLeft, false);
-        drawHorizontalDivider (g, titleRowHeight - 1, 0, width);
+        g.drawText (title, cardPad, 0, width - 2 * cardPad, rowHeight, juce::Justification::centredLeft, false);
+        drawHorizontalDivider (g, rowHeight - 1, 0, width);
     }
 
-    void placeCloseButton (juce::Component& button, int width)
+    void placeCloseButton (juce::Component& button, int width, int rowHeight = titleRowHeight)
     {
-        button.setBounds (width - 14 - closeSize, (titleRowHeight - closeSize) / 2, closeSize, closeSize);
+        button.setBounds (width - 14 - closeSize, (rowHeight - closeSize) / 2, closeSize, closeSize);
+    }
+
+    int choiceIndex (ArtFreqProcessor& processor, const char* id)
+    {
+        if (auto* value = processor.getParameters().getRawParameterValue (id))
+            return juce::roundToInt (value->load());
+
+        return 0;
     }
 
     juce::TextLayout wrappedText (const juce::AttributedString& text, float width)
@@ -99,11 +121,14 @@ void Scrim::mouseDown (const juce::MouseEvent&)
 }
 
 //==============================================================================
-SettingsPanel::SettingsPanel (ArtFreqProcessor& processor)
-    : closeButton ("Close settings", icons::close())
+SettingsPanel::SettingsPanel (ArtFreqProcessor& p)
+    : processor (p),
+      effect (p.isEffect()),
+      closeButton ("Close settings", icons::close())
 {
     setComponentID ("settings-panel");
     setWantsKeyboardFocus (true);
+    setKeepsKeyFocus (*this);   // while it is open: Esc closes it, and the canvas gets no keys
 
     closeButton.setFlat (true);
     closeButton.setTooltip ("Close (Esc)");
@@ -164,9 +189,59 @@ SettingsPanel::SettingsPanel (ArtFreqProcessor& processor)
     addChildComponent (cancelButton);
     addChildComponent (confirmButton);
 
+    // ArtFreq FX: the timing that the instrument keeps in its footer.
+    if (effect)
+    {
+        trigger = std::make_unique<SegmentedControl> (juce::StringArray { "Transport", "MIDI" });
+        trigger->setTitle ("Trigger");
+        trigger->setComponentID ("trigger");
+        triggerAttachment = std::make_unique<ChoiceSegments> (*trigger, *state.getParameter (params::id::trigger));
+        addAndMakeVisible (*trigger);
+
+        // (Its tooltip says what On play means for an export, which is when At bar is wanted.)
+        auto tipped = std::make_unique<TippedChoice> (juce::StringArray { "On play", "At bar" });
+        tipped->setTooltip ("Where a single pass starts. On play: wherever the DAW starts playing (an export or "
+                            "freeze starts it where the render starts). At bar: at a bar of the song, which an "
+                            "export keeps");
+        startAt = std::move (tipped);
+        startAt->setTitle ("Start");
+        startAt->setComponentID ("start-at");
+        startAtAttachment = std::make_unique<ChoiceSegments> (*startAt, *state.getParameter (params::id::startAt));
+        addChildComponent (*startAt);
+
+        NumberField::Options barOptions;
+        barOptions.format = [] (double v) { return juce::String (juce::roundToInt (v)); };
+        barOptions.dragUnitsPerPixel = 0.25;
+        barOptions.snap = 1.0;
+        barOptions.editOnSingleClick = true;
+        startBar = std::make_unique<NumberField> (*state.getParameter (params::id::startBar), barOptions);
+        startBar->setTitle ("Start bar");
+        startBar->setComponentID ("start-bar");
+        startBar->setTooltip ("The bar of the song the drawing starts at: drag, or click to type");
+        addChildComponent (*startBar);
+
+        tempoSource = std::make_unique<SegmentedControl> (juce::StringArray { "Host", "Manual" });
+        tempoSource->setTitle ("Tempo");
+        tempoSource->setComponentID ("tempo-source");
+        tempoAttachment = std::make_unique<ChoiceSegments> (*tempoSource, *state.getParameter (params::id::tempoSource));
+        addAndMakeVisible (*tempoSource);
+
+        NumberField::Options bpmOptions;
+        bpmOptions.format = [] (double v) { return formatNumber (v, 2); };
+        bpmOptions.dragUnitsPerPixel = 0.5;
+        bpmOptions.snap = 1.0;
+        bpmOptions.editOnSingleClick = true;
+        bpmOptions.unit = "BPM";
+        bpm = std::make_unique<NumberField> (*state.getParameter (params::id::bpm), bpmOptions);
+        bpm->setTitle ("BPM");
+        bpm->setComponentID ("bpm");
+        addChildComponent (*bpm);
+    }
+
     // Lay out once to learn the height the content needs.
-    setSize (width, 600);
-    setSize (width, idealHeight);
+    setSize (getPanelWidth(), 600);
+    setSize (getPanelWidth(), idealHeight);
+    refresh();
 }
 
 SettingsPanel::~SettingsPanel() = default;
@@ -201,13 +276,43 @@ void SettingsPanel::showResetConfirmation (bool shouldShow)
     repaint();
 }
 
+void SettingsPanel::refresh()
+{
+    if (! effect)
+        return;
+
+    // Where a single pass starts can be chosen for the one way of playing that has a single
+    // pass (Transport without Repeat); for the others the row says where they start instead.
+    // The tempo can be typed with Manual; with Host the row shows the DAW's. Nothing is greyed.
+    const auto midi = choiceIndex (processor, params::id::trigger) == 1;
+    const auto repeats = choiceIndex (processor, params::id::repeat) != 0;
+    const auto single = ! midi && ! repeats;
+    const auto atBar = params::startAtForIndex (choiceIndex (processor, params::id::startAt)) == StartAt::bar;
+    const auto manual = choiceIndex (processor, params::id::tempoSource) != 0;
+
+    startAt->setVisible (single);
+    startBar->setVisible (single && atBar);
+    bpm->setVisible (manual);
+
+    const juce::String newStartText (single ? "" : midi ? "When a note is played" : "On the DAW's bars (Repeat is on)");
+    const auto newTempoText = manual ? juce::String() : "DAW: " + formatNumber (processor.getEffectiveTempo(), 2) + " BPM";
+
+    if (newStartText != startText || newTempoText != tempoText)
+    {
+        startText = newStartText;
+        tempoText = newTempoText;
+        repaint (startTextArea.getUnion (tempoTextArea));
+    }
+}
+
 void SettingsPanel::paint (juce::Graphics& g)
 {
     paintCard (g, getLocalBounds());
-    paintTitle (g, "Settings", getWidth());
+    paintTitle (g, "Settings", getWidth(), effect ? effectTitleRowHeight : titleRowHeight);
 
-    for (const auto& [text, y] : sectionCaptions)
-        drawCaps (g, text, { cardPad, y, getWidth() - 2 * cardPad, 12 }, juce::Justification::centredLeft, theme::textDim);
+    for (const auto& caption : sectionCaptions)
+        drawCaps (g, caption.label, { caption.x, caption.y, getWidth() - cardPad - caption.x, 12 },
+                  juce::Justification::centredLeft, theme::textDim);
 
     for (auto y : dividers)
         drawHorizontalDivider (g, y, cardPad, getWidth() - cardPad);
@@ -217,7 +322,20 @@ void SettingsPanel::paint (juce::Graphics& g)
     for (const auto& row : rows)
     {
         g.setColour (theme::textDim);
-        g.drawText (row.label, cardPad, row.y, labelWidth, metrics::controlHeight, juce::Justification::centredLeft, false);
+        g.drawText (row.label, row.x, row.y, labelWidth, metrics::controlHeight, juce::Justification::centredLeft, false);
+    }
+
+    if (effect)
+    {
+        // The hairline between the two columns, and what the timing rows say in words.
+        drawVerticalDivider (g, columnDividerX, effectTitleRowHeight + 16, getHeight() - cardPad);
+        wrappedText (midiNoteText(), static_cast<float> (midiNoteArea.getWidth())).draw (g, midiNoteArea.toFloat());
+
+        g.setFont (fonts::ui (12.0f));
+        g.setColour (theme::textDim);
+        g.drawText (startText, startTextArea, juce::Justification::centredLeft, false);
+        g.drawText (tempoText, tempoTextArea, juce::Justification::centredLeft, false);
+        g.setFont (fonts::ui (theme::controlSize));
     }
 
     g.setColour (theme::textFaint);
@@ -241,9 +359,15 @@ void SettingsPanel::paint (juce::Graphics& g)
         confirmText.append ("Back to the default drawing.", fonts::ui (12.0f), theme::textDim);
     }
 
-    const auto layout = wrappedText (confirmText, static_cast<float> (confirmTextArea.getWidth()));
-    layout.draw (g, confirmTextArea.toFloat().withSizeKeepingCentre (static_cast<float> (confirmTextArea.getWidth()),
-                                                                      layout.getHeight()));
+    // (ArtFreq FX's narrower column: the line has the room up to the button it describes.)
+    auto confirmArea = confirmTextArea;
+
+    if (effect && ! confirmingReset)
+        confirmArea.setRight (resetButton.getX() - 12);
+
+    const auto layout = wrappedText (confirmText, static_cast<float> (confirmArea.getWidth()));
+    layout.draw (g, confirmArea.toFloat().withSizeKeepingCentre (static_cast<float> (confirmArea.getWidth()),
+                                                                  layout.getHeight()));
 }
 
 juce::AttributedString SettingsPanel::noteText()
@@ -253,13 +377,113 @@ juce::AttributedString SettingsPanel::noteText()
                       fonts::ui (12.0f), theme::textFaint, 2.0f);
 }
 
+juce::AttributedString SettingsPanel::midiNoteText()
+{
+    return plainText ("MIDI notes reach an effect in Reaper, Bitwig, Cubase, Studio One and FL Studio; "
+                      "not in Ableton Live.",
+                      fonts::ui (12.0f), theme::textFaint, 2.0f);
+}
+
+/** ArtFreq FX: two columns. Left, the analyser match and the window; right, how it plays
+    (Trigger, Start, Tempo) and the drawing. */
+void SettingsPanel::layoutEffect()
+{
+    placeCloseButton (closeButton, getWidth(), effectTitleRowHeight);
+
+    const auto h = metrics::controlHeight;
+    const auto controlWidth = effectColumnWidth - labelWidth;
+    const auto top = effectTitleRowHeight + 16;
+    const auto caption = [&] (const juce::String& text, int x, int& y)
+    {
+        sectionCaptions.push_back ({ text, y, x });
+        y += 12 + effectRowGap + 2;
+    };
+
+    // ---- left: match your analyser, the window ----
+    auto x = cardPad;
+    auto controlX = x + labelWidth;
+    auto y = top;
+
+    caption ("Match your analyser", x, y);
+
+    rows.push_back ({ "Scale", y, x });
+    scale.setBounds (controlX, y, controlWidth, h);
+    y += h + effectRowGap;
+
+    rows.push_back ({ "Range", y, x });
+    const auto fieldWidth = (controlWidth - 24) / 2;
+    lowHz->setBounds (controlX, y, fieldWidth, h);
+    highHz->setBounds (controlX + controlWidth - fieldWidth, y, fieldWidth, h);
+    rangeDashArea = { lowHz->getRight(), y, highHz->getX() - lowHz->getRight(), h };
+    y += h + effectRowGap;
+
+    rows.push_back ({ "Slope", y, x });
+    const auto unitWidth = 48;
+    slope.setBounds (controlX, y, controlWidth - unitWidth, h);
+    slopeUnitArea = { slope.getRight() + 10, y, unitWidth - 10, h };
+    y += h + 8;
+
+    const auto noteHeight = static_cast<int> (std::ceil (wrappedText (noteText(), static_cast<float> (controlWidth)).getHeight()));
+    noteArea = { controlX, y, controlWidth, noteHeight };
+    y = noteArea.getBottom() + 16;
+
+    caption ("Window", x, y);
+    rows.push_back ({ "Size", y, x });
+    windowSize.setBounds (controlX, y, controlWidth, h);
+    const auto leftBottom = y + h;
+
+    // ---- right: playing, the drawing ----
+    x = cardPad + effectColumnWidth + effectColumnGap;
+    controlX = x + labelWidth;
+    columnDividerX = x - effectColumnGap / 2;
+    y = top;
+
+    caption ("Playing", x, y);
+
+    rows.push_back ({ "Trigger", y, x });
+    trigger->setBounds (controlX, y, 168, h);
+    y += h + 8;
+
+    const auto midiHeight = static_cast<int> (std::ceil (wrappedText (midiNoteText(), static_cast<float> (controlWidth)).getHeight()));
+    midiNoteArea = { controlX, y, controlWidth, midiHeight };
+    y = midiNoteArea.getBottom() + effectRowGap + 2;
+
+    rows.push_back ({ "Start", y, x });
+    startAt->setBounds (controlX, y, 148, h);
+    startBar->setBounds (startAt->getRight() + 8, y, 56, h);
+    startTextArea = { controlX, y, controlWidth, h };
+    y += h + effectRowGap;
+
+    rows.push_back ({ "Tempo", y, x });
+    tempoSource->setBounds (controlX, y, 116, h);
+    bpm->setBounds (tempoSource->getRight() + 8, y, controlWidth - 116 - 8, h);
+    tempoTextArea = { bpm->getX() + 2, y, bpm->getWidth() - 2, h };
+    y += h + 16;
+
+    caption ("Drawing", x, y);
+
+    const auto right = x + effectColumnWidth;
+    resetButton.setBounds (right - resetButton.getIdealWidth(), y, resetButton.getIdealWidth(), h);
+    confirmButton.setBounds (right - confirmButton.getIdealWidth(), y, confirmButton.getIdealWidth(), h);
+    cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
+    confirmTextArea = { x, y, cancelButton.getX() - 12 - x, h };
+
+    idealHeight = juce::jmax (leftBottom, y + h) + cardPad;
+}
+
 void SettingsPanel::resized()
 {
-    placeCloseButton (closeButton, getWidth());
-
     rows.clear();
     sectionCaptions.clear();
     dividers.clear();
+
+    if (effect)
+    {
+        layoutEffect();
+        return;
+    }
+
+    placeCloseButton (closeButton, getWidth());
 
     const auto controlX = cardPad + labelWidth;
     const auto controlWidth = getWidth() - cardPad - controlX;
@@ -267,21 +491,21 @@ void SettingsPanel::resized()
     auto y = titleRowHeight + sectionGap;
 
     // Match your analyser
-    sectionCaptions.push_back ({ "Match your analyser", y });
+    sectionCaptions.push_back ({ "Match your analyser", y, cardPad });
     y += 12 + rowGap + 4;
 
-    rows.push_back ({ "Scale", y });
+    rows.push_back ({ "Scale", y, cardPad });
     scale.setBounds (controlX, y, controlWidth, h);
     y += h + rowGap;
 
-    rows.push_back ({ "Range", y });
+    rows.push_back ({ "Range", y, cardPad });
     const auto fieldWidth = (controlWidth - 24) / 2;
     lowHz->setBounds (controlX, y, fieldWidth, h);
     highHz->setBounds (controlX + controlWidth - fieldWidth, y, fieldWidth, h);
     rangeDashArea = { lowHz->getRight(), y, highHz->getX() - lowHz->getRight(), h };
     y += h + rowGap;
 
-    rows.push_back ({ "Slope", y });
+    rows.push_back ({ "Slope", y, cardPad });
     const auto unitWidth = 48;
     slope.setBounds (controlX, y, controlWidth - unitWidth, h);
     slopeUnitArea = { slope.getRight() + 10, y, unitWidth - 10, h };
@@ -295,10 +519,10 @@ void SettingsPanel::resized()
     y += sectionGap;
 
     // Window
-    sectionCaptions.push_back ({ "Window", y });
+    sectionCaptions.push_back ({ "Window", y, cardPad });
     y += 12 + rowGap + 4;
 
-    rows.push_back ({ "Size", y });
+    rows.push_back ({ "Size", y, cardPad });
     windowSize.setBounds (controlX, y, controlWidth, h);
     y += h + sectionGap;
 
@@ -306,7 +530,7 @@ void SettingsPanel::resized()
     y += sectionGap;
 
     // Drawing
-    sectionCaptions.push_back ({ "Drawing", y });
+    sectionCaptions.push_back ({ "Drawing", y, cardPad });
     y += 12 + rowGap + 4;
 
     const auto right = getWidth() - cardPad;
@@ -362,31 +586,27 @@ namespace
                               "analyser will show." } },
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
                                                        "in the panel on the right. Density sets how many lines draw it." } },
-            { "6", { "Press play in your DAW.", "Or press Preview to hear the drawing while the DAW is stopped "
-                                                "(once, or on a loop with Repeat)." } },
+            { "6", { "Press play in your DAW.", "The drawing plays once from wherever you start. A DAW's export or "
+                                                "freeze starts it where the render starts: to keep it at a bar, "
+                                                "choose \"from bar\" under Trigger first." } },
             { "7", { "Bounce to WAV.", "Export renders one pass, and a new file after each change. Drag it into "
                                        "your DAW, or save it." } },
         };
         return steps;
     }
 
-    // ArtFreq FX: the same window on the audio passing through.
+    // ArtFreq FX: its own, short. (It has no preview and no export: carving needs the song.)
     const std::vector<std::pair<juce::String, Paragraph>>& effectSteps()
     {
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
-            { "1", { "Put ArtFreq FX on an audio track, a bus or the master.", "It works on the audio passing "
-                                                                               "through." } },
-            { "2", { "Open a spectrogram after it.", "MiniMeters on the master, or any scrolling spectrogram." } },
-            { "3", { "Match your analyser.", "In Settings (the gear): the same scale, range and slope. MiniMeters: "
-                                             "Log, 20 Hz to 20 kHz." } },
-            { "4", { "Draw.", "Add text, a picture or brush strokes. The canvas shows them over a stand-in for "
-                              "your song." } },
-            { "5", { "Choose a mode and the depth", "at the top. Depth is how far the drawing's frequencies drop "
-                                                    "(-80 dB looks black)." } },
-            { "6", { "Press play in your DAW.", "It carves from the bar set under Trigger. Preview runs the pass on "
-                                                "the audio coming in." } },
-            { "7", { "Bounce the track in your DAW.", "Carving needs the song. In the Draw modes, Export still "
-                                                      "bounces the sines." } },
+            { "1", { "Put ArtFreq FX on a track, a bus or the master,", "before the final limiter." } },
+            { "2", { "Open a spectrogram after it", "(MiniMeters) and match it in Settings, the gear." } },
+            { "3", { "Draw:", "add text or a picture, or paint. Click one to change it." } },
+            { "4", { "Choose a Mode.", "Depth is how far carved frequencies drop: -80 dB looks black." } },
+            { "5", { "Press play in your DAW.", "It runs once from there; Carve and Stencil wait for the "
+                                                "track's audio. Repeat loops it." } },
+            { "6", { "To keep it, bounce the track in your DAW,", "after choosing At bar in Settings: a bounce "
+                                                                  "starts it where the bounce starts." } },
         };
         return steps;
     }
@@ -394,27 +614,31 @@ namespace
     const std::vector<Paragraph>& effectModes()
     {
         static const std::vector<Paragraph> modes {
-            { "Carve.", "The drawing's frequencies are muted, so it shows as dark shapes in the song. The default." },
-            { "Carve + Draw.", "The drawing played in a hole carved a little wider: bright with a dark edge, "
-                               "even in a dense mix." },
-            { "Stencil.", "The opposite of Carve: only the drawing's frequencies pass." },
-            { "Draw.", "The drawing's sines on top of the audio. Density, Contrast, Level and Lows shape the "
-                       "sines of both Draw modes." },
+            { "Carve", "mutes the drawing: dark shapes." },
+            { "Carve + Draw", "plays it in a hole it carves." },
+            { "Stencil", "lets only the drawing through." },
+            { "Draw", "plays it on top of the song." },
+            { "Sound", "(the Draw modes) sets the drawing's level, density, contrast and lows." },
         };
         return modes;
     }
 
-    const std::vector<Paragraph>& effectTiming()
+    const std::vector<Paragraph>& effectNotes()
     {
         static const std::vector<Paragraph> list {
-            { "As in ArtFreq.", "Length, Trigger, Repeat and Tempo work as in the instrument; outside the pass the "
-                                "audio passes untouched." },
-            { "MIDI note", "works where the DAW sends MIDI to effects (Reaper, Bitwig, Cubase, Studio One, FL Studio). Ableton "
-                           "Live does not: use Transport there." },
-            { "Latency:", "85 ms, the same in every mode and in bypass. Your DAW makes up for it." },
+            { "Settings", "has the trigger (transport or MIDI notes), where a pass starts, and the tempo." },
+            { "Latency:", "85 ms; your DAW makes up for it." },
+            { "Keys:", "Space plays your DAW. V, B and E pick a tool." },
         };
         return list;
     }
+
+    // ArtFreq FX's panel, in its smaller window.
+    constexpr int effectHelpPad = 24;
+    constexpr int effectHelpColumnGap = 32;
+    constexpr int effectHelpTop = effectTitleRowHeight + 16;
+    constexpr int effectHelpBottom = 18;
+    constexpr float effectTextIndent = 28.0f;
 
     const std::vector<Paragraph>& layerTips()
     {
@@ -436,11 +660,11 @@ namespace
     const std::vector<Paragraph>& triggerModes()
     {
         static const std::vector<Paragraph> modes {
-            { "Transport.", "Plays once with the DAW, from the bar set under Trigger. With Repeat it loops "
-                            "every Length." },
+            { "Transport.", "Plays once when you press play, or from a bar you set under Trigger. With Repeat "
+                            "it loops every Length." },
             { "MIDI note.", "Each note plays the drawing once from the start. With Repeat it loops while a "
                             "note is held." },
-            { "Nothing plays by itself.", "Stop the DAW and it stops; Preview plays it without the DAW." },
+            { "Stop the DAW and it stops.", "Preview plays it without the DAW." },
         };
         return modes;
     }
@@ -464,6 +688,7 @@ namespace
             { "V|B|E", "Select, Brush, Erase" },
             { shortcutText ("Cmd+Z") + "|" + shortcutText ("Cmd+Shift+Z"), "Undo, redo" },
             { "Delete", "Remove the selected text or picture" },
+            { "Space", "Plays your DAW (a space while you type)" },
             { "Shift-drag", "Fine adjustment of knobs and fields" },
             { "Double-click", "Reset a knob; on a value, type one" },
         };
@@ -487,23 +712,31 @@ HelpPanel::HelpPanel (bool forEffect)
 {
     setComponentID ("help-panel");
     setWantsKeyboardFocus (true);
+    setKeepsKeyFocus (*this);   // as the settings panel
 
     closeButton.setFlat (true);
     closeButton.setTooltip ("Close (Esc)");
     closeButton.onClick = [this] { if (onClose != nullptr) onClose(); };
     addAndMakeVisible (closeButton);
 
-    setSize (width, getIdealHeight());
+    setSize (getPanelWidth(), getIdealHeight());
 }
 
 HelpPanel::~HelpPanel() = default;
 
+int HelpPanel::getColumnWidth() const
+{
+    return effect ? (effectWidth - 2 * effectHelpPad - effectHelpColumnGap) / 2
+                  : (width - 2 * helpPad - helpColumnGap) / 2;
+}
+
 std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWidth) const
 {
     std::vector<Block> result;
-    const auto x = static_cast<float> (helpPad + column * (columnWidth + helpColumnGap));
+    const auto x = static_cast<float> (effect ? effectHelpPad + column * (columnWidth + effectHelpColumnGap)
+                                              : helpPad + column * (columnWidth + helpColumnGap));
     const auto w = static_cast<float> (columnWidth);
-    auto y = static_cast<float> (helpTop);
+    auto y = static_cast<float> (effect ? effectHelpTop : helpTop);
 
     const auto heading = [&] (const juce::String& text)
     {
@@ -527,11 +760,38 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
         result.push_back (std::move (b));
     };
 
+    if (effect)
+    {
+        // Short, and its own: six steps on the left; the modes and three notes on the right.
+        if (column == 0)
+        {
+            heading ("Getting started");
+
+            for (const auto& [number, p] : effectSteps())
+                paragraph (Block::Kind::step, number, leadText (p), effectTextIndent, 9.0f);
+        }
+        else
+        {
+            heading ("Modes");
+
+            for (const auto& p : effectModes())
+                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 7.0f);
+
+            y += 9.0f;
+            heading ("Good to know");
+
+            for (const auto& p : effectNotes())
+                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 7.0f);
+        }
+
+        return result;
+    }
+
     if (column == 0)
     {
         heading ("Getting started");
 
-        for (const auto& [number, p] : effect ? effectSteps() : helpSteps())
+        for (const auto& [number, p] : helpSteps())
             paragraph (Block::Kind::step, number, leadText (p), textIndent, 14.0f);
 
         y += 4.0f;
@@ -542,15 +802,15 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
     }
     else
     {
-        heading (effect ? "Modes" : "Trigger modes");
+        heading ("Trigger modes");
 
-        for (const auto& p : effect ? effectModes() : triggerModes())
+        for (const auto& p : triggerModes())
             paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
 
         y += 14.0f;
-        heading (effect ? "Timing, MIDI and latency" : "Tips");
+        heading ("Tips");
 
-        for (const auto& p : effect ? effectTiming() : tips())
+        for (const auto& p : tips())
             paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
 
         y += 14.0f;
@@ -569,26 +829,27 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
 
 int HelpPanel::getIdealHeight() const
 {
-    const auto columnWidth = (width - 2 * helpPad - helpColumnGap) / 2;
     auto bottom = 0.0f;
 
     for (int column = 0; column < 2; ++column)
-        for (const auto& b : layoutColumn (column, columnWidth))
+        for (const auto& b : layoutColumn (column, getColumnWidth()))
             bottom = juce::jmax (bottom, b.area.getBottom());
 
-    return static_cast<int> (std::ceil (bottom)) + 28;
+    return static_cast<int> (std::ceil (bottom)) + (effect ? effectHelpBottom : 28);
 }
 
 void HelpPanel::paint (juce::Graphics& g)
 {
     paintCard (g, getLocalBounds());
-    paintTitle (g, effect ? "How to use ArtFreq FX" : "How to use ArtFreq", getWidth());
-
-    const auto columnWidth = (getWidth() - 2 * helpPad - helpColumnGap) / 2;
+    paintTitle (g, effect ? "How to use ArtFreq FX" : "How to use ArtFreq", getWidth(),
+                effect ? effectTitleRowHeight : titleRowHeight);
 
     // A hairline between the two columns.
-    const auto middle = helpPad + columnWidth + helpColumnGap / 2;
-    drawVerticalDivider (g, middle, helpTop, getHeight() - 28);
+    if (effect)
+        drawVerticalDivider (g, effectHelpPad + getColumnWidth() + effectHelpColumnGap / 2, effectHelpTop,
+                             getHeight() - effectHelpBottom);
+    else
+        drawVerticalDivider (g, helpPad + getColumnWidth() + helpColumnGap / 2, helpTop, getHeight() - 28);
 
     {
         for (const auto& b : blocks)
@@ -602,7 +863,8 @@ void HelpPanel::paint (juce::Graphics& g)
                 case Block::Kind::step:
                 {
                     // The number in a small accent disc, centred on the first line.
-                    const auto disc = juce::Rectangle<float> (b.area.getX() - textIndent, b.area.getY() - 1.0f, 20.0f, 20.0f);
+                    const auto disc = juce::Rectangle<float> (b.area.getX() - (effect ? effectTextIndent : textIndent),
+                                                              b.area.getY() - 1.0f, 20.0f, 20.0f);
                     g.setColour (theme::accent.withAlpha (0.18f));
                     g.fillEllipse (disc);
                     g.setColour (theme::accent.brighter (0.35f));
@@ -650,12 +912,11 @@ void HelpPanel::paint (juce::Graphics& g)
 
 void HelpPanel::resized()
 {
-    placeCloseButton (closeButton, getWidth());
+    placeCloseButton (closeButton, getWidth(), effect ? effectTitleRowHeight : titleRowHeight);
 
-    const auto columnWidth = (getWidth() - 2 * helpPad - helpColumnGap) / 2;
-    blocks = layoutColumn (0, columnWidth);
+    blocks = layoutColumn (0, getColumnWidth());
 
-    for (auto& b : layoutColumn (1, columnWidth))
+    for (auto& b : layoutColumn (1, getColumnWidth()))
         blocks.push_back (std::move (b));
 }
 

@@ -26,6 +26,13 @@ public:
     /** The area the drawing occupies (without the axes), in this component's coordinates. */
     juce::Rectangle<float> getDrawingArea() const;
 
+    /** Where an object lies on the canvas with its selection handles, in this component's
+        coordinates (empty if there is no such object). */
+    juce::Rectangle<float> getObjectBounds (const juce::Uuid& id) const;
+
+    /** How far the selection handles reach outside an object's rectangle. */
+    static constexpr float handleReach = 4.5f;
+
     void paint (juce::Graphics&) override;
     void resized() override;
 

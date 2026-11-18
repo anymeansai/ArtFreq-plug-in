@@ -68,6 +68,7 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | length | Length | 1 beat, 2 beats, 1 bar, 2 bars, 4 bars, 8 bars, 16 bars, 32 bars | 4 bars | yes |
 | trigger | Trigger | Transport, MIDI note | Transport | yes |
 | repeat | Repeat | Off, On | Off | yes |
+| startAt | Start at | On play, At bar | On play (see below for states from before it) | no |
 | startBar | Start bar | 1..999 | 1 | yes |
 | tempoSource | Tempo | Host, Manual | Host | yes |
 | bpm | BPM | 20..300 | 120 | yes |
@@ -95,6 +96,15 @@ the only look there was, and loads with Stripes rather than the default Smooth, 
 looks and sounds as it did (`prepareLoadedParameters`, before the defaults for other missing
 parameters are filled in).
 
+Start at was added after 0.4 (version hint 5). Until then a single Transport pass always
+started at its start bar, and bar 1 was the default: press play anywhere later in the song and
+nothing sounded. A saved tree without it loads by its start bar: bar 1, the default nobody
+chose, as On play; any other bar was chosen, and loads as At bar, so that project plays where it
+did (`prepareLoadedParameters`, with the Lows rule, before the defaults for other missing
+parameters are filled in; a tree with neither parameter, 0.1's, is On play). It is how the
+plug-in is used, not something to perform, and switching it while the DAW plays begins a pass:
+not an automation target.
+
 State = APVTS tree + document tree + editor size, saved as XML in binary (`copyXmlToBinary`).
 Neither the drawing nor the editor size is a parameter, so edits, undo/redo and resizes tell the
 host the project changed (`updateHostDisplay` with `nonParameterStateChanged`); loading state
@@ -105,12 +115,81 @@ the loaded tree as the state to save, so saving after an edit or a load encodes 
 ## Trigger
 
 When the drawing plays is the Trigger (Transport | MIDI note) and Repeat (off by default). The
-producer's rule: nothing plays by itself, and loops only while something is playing.
+producer's rule: nothing plays by itself, and loops only while something is playing. And, after
+0.4: press play and it plays. The defaults (Transport, Repeat off, On play) make sound, or carve,
+from the moment the DAW starts, wherever the playhead is.
 
 | | Repeat off | Repeat on |
 | --- | --- | --- |
-| **Transport** | Once: from the start of bar *Start bar* to *Length* later, following the DAW's timeline. Start the DAW inside it and it plays from there; before and after it is silent; a DAW loop over it plays it each time round. | Loops every *Length*, on the host's bar lines (bar 1, 1 + Length, ...), while the DAW plays. |
+| **Transport** | Once, from where the pass starts to *Length* later, following the DAW's timeline. **On play** (the default): it starts where the DAW starts playing. **At bar**: it starts at the start of bar *Start bar*; start the DAW inside it and it plays from there, before and after it is silent. Either way a DAW loop over it plays it each time round. | Loops every *Length*, on the host's bar lines (bar 1, 1 + Length, ...), while the DAW plays. |
 | **MIDI note** | Each note-on plays it once from the start (a new one restarts it); note-offs are ignored. | A note-on starts it (a new one restarts it) and it loops while any key is down; letting go of the last fades it out. |
+
+**On play** (`StartAt::play`; the rules are in `PlayheadTracker.h`, the tests in
+`trackerOnPlay...`):
+
+- A pass begins at the first sample of the block in which the DAW starts playing, wherever the
+  song is. Also in the first block the plug-in sees while the DAW is already playing: put on the
+  track during playback, after `reset()` (which is how a host that suspends a plug-in says so:
+  JUCE calls it from VST3's `setProcessing (false)`), coming out of bypass, and when Repeat, At
+  bar or the MIDI trigger is switched back to it while the DAW plays (switching to it counts as a
+  start). It lasts Length in the time signature of that block.
+- From there it follows the song exactly as the pass at a start bar does: the host's ppq at the
+  host's tempo (changes and ramps bend it, they do not move it); with a typed-in tempo it starts
+  at the DAW's place and plays at the typed tempo, counted on; without a ppq it is counted from
+  the host's time. It plays once, with the same gate fades, and then it is silent.
+- The DAW moving while it plays (a relocation, or its loop wrapping round: a position that does
+  not follow on from the last block) **forwards** to a place inside the pass carries on at that
+  place in the same pass. Moving **back** begins a new pass right there, unless it lands on the
+  pass's own start (give or take the jump tolerance, 5 ms: hosts round), where it carries on; so
+  does moving to **before its start** or **from its gate's close on** (where it can no longer
+  sound: its end). So every round of a DAW loop draws the drawing from its start at the loop's
+  start, wherever play was pressed: the same first part every round under a loop shorter than the
+  pass, the whole drawing and then silence under a longer one. (Until 0.4's review, a wrap that
+  landed inside the first pass carried on in it: with play pressed before the loop, as Cubase,
+  Reaper, Studio One and Bitwig do from the cursor, every round drew only the drawing's second
+  half, and the picture under a fixed loop depended on where play had been pressed.) The first
+  round starts where play was pressed; it is only from the second that rounds are alike.
+- ArtFreq FX carving a song (Carve and Stencil: `TrackerSettings::waitForSound`) has nothing to
+  show over silence, so a pass that is due begins at the first sample, from that place on, where
+  the input sounds (-60 dBFS on any channel: quieter than that, nothing of it shows on an
+  analyser, and carving it would show nothing either; digital silence, dither and a quiet noise
+  floor lie below it). The customer: "If I put it on a track and press play, a lot of times it
+  doesn't do anything": pressed at bar 1 on a vocal that comes in at bar 9, the pass ran out over
+  the silence. Until the audio comes in nothing plays, the processor says so
+  (`isWaitingForSound`) and the bottom bar reads "Waiting for audio to carve"; a relocation
+  meanwhile changes nothing, and stopping forgets it. Once the pass has begun, silences in the
+  input change nothing. The Draw modes, which make sound of their own, and the instrument begin
+  at once. The level is read from the input before the carver delays it, and the carver's
+  segments are on the input's timeline, so the carve begins with the audio.
+- The DAW stopping forgets the pass: every start is a new pass, also from the same place.
+- It never begins before the song does. At a negative position (a count-in before bar 1) it
+  begins at 0 and the count-in is silent. A pre-roll inside the song cannot be told from
+  playback (VST3 has no flag for it): the pass begins where the DAW starts playing. So does a
+  DAW's export, freeze or bounce in place, at its first block (in Carve and Stencil, where the
+  input first sounds after it): a render is a playback from where it starts, not from where the
+  drawing was heard while playing from bar 9. Nothing is guessed (a render looks like any other
+  playback, and placing it elsewhere would make a bounce differ from pressing play there): the
+  README, both help panels and the Start choice say to choose At bar before exporting.
+- A time-signature change while it plays moves and stretches nothing (it lines up with no bars).
+  A new Length changes its length at once, its start staying put: the position jumps (with the
+  jump fade), or the pass is over.
+- Under the preview the song is still followed, unheard, so the pass keeps its place and the
+  preview ending does not start it again.
+- A host that gives neither ppq nor time: it begins at the first playing block and runs on at the
+  tempo, once; relocations cannot be seen (stopping still forgets it).
+- What it cannot know: a host that stops calling the plug-in while it is stopped, without telling
+  it (`setProcessing`, `setActive`), and starts again exactly where it stopped looks like playback
+  that never stopped: a pass that was over stays over. No clock is consulted to guess (a slow
+  offline bounce would look the same, and would draw the picture twice). A host that stops
+  calling an effect while its input is silent (Cubase's "Suspend VST3 plug-in processing when no
+  audio signals are received", Reaper's auto-bypass on silence) and resumes at the next audio
+  would look like a relocation past the pass, and a second pass would begin there: so ArtFreq FX
+  reports an infinite tail (`getTailLengthSeconds`, VST3 `kInfiniteTail`), and such hosts never
+  suspend it (it makes sound of its own over silence, too: the Draw modes' sines). The instrument
+  needs no input and is never suspended for its silence.
+- The canvas numbers the drawing's own bars, 1 to N, as with Repeat.
+
+**At bar** (`StartAt::bar`): what 0.2 to 0.4 always did.
 
 - Bar N is the DAW's bar N, on the host's ppq, also with a typed-in tempo (which then only sets
   how fast the pass plays from where the DAW reaches its start bar); the pass lasts Length in the
@@ -125,6 +204,11 @@ producer's rule: nothing plays by itself, and loops only while something is play
   (also after moving back into bars already counted). Only starting the DAW between a signature
   change and the start bar, without having played through the change, places it by the
   assumption.
+- Its place belongs to the song, so `reset()` and stopping keep it; the canvas numbers the song's
+  bars.
+
+Both:
+
 - The edges of a single pass fade like a gate: the 5 ms fade-in starts at the pass's first
   sample, and the gate closes 5 ms (and a sample) before its end so the fade-out ends with the
   drawing, as a bounce and a MIDI one-shot do. A relocation into the middle fades the old sound
@@ -136,9 +220,11 @@ producer's rule: nothing plays by itself, and loops only while something is play
   on a loop until pressed again, without it once, after which the button turns itself off (the
   audio thread clears the press it played, never a newer one).
 - **Bounce WAV** always renders one pass.
-- Changing Trigger, Repeat or the start bar while playing moves to wherever the new setting puts
-  the position, with a jump fade when it does not follow on (turning Repeat off inside the single
-  pass, at the same place as the loop, carries on seamlessly).
+- Changing Trigger, Repeat, Start at or the start bar while playing moves to wherever the new
+  setting puts the position, with a jump fade when it does not follow on: nothing clicks (turning
+  Repeat off with At bar inside the single pass, at the same place as the loop, carries on
+  seamlessly; with On play it begins a pass, from the drawing's start).
+- ArtFreq FX uses the same tracker: Carve starts on play too.
 
 ## Smooth lows
 
@@ -242,7 +328,7 @@ its frequencies in the incoming audio, so it shows as dark shapes in the song's 
   (`MaskPlanExchange`: `PlanExchange` is now one template for both).
 - **The engine interface** (`dsp/SpectralCarver.h`): prepare (rate, block, channels), a constant
   latency, and an in-place process that takes the tracker's PlaySegments, so a carve follows
-  Length, Trigger, Repeat, start bar and tempo exactly as the sines do; the gate fades over
+  Length, Trigger, Repeat, where the pass starts and tempo exactly as the sines do; the gate fades over
   5 ms, a jump moves the mask at once (the audio jumped too). Outside the pass and with
   nothing drawn the audio passes unchanged apart from the latency (also in Stencil). Depth
   -120..0 dB; gain = 10 ^ (depth x amount / 20), amount = gate x mask (Carve) or gate x
@@ -348,10 +434,11 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
 (Fx, Filter; plug-in code FqFx, bundle id com.anymeans.artfreqfx), one installer for both.
 
 - **One code base.** `ArtFreqProcessor` takes a `Variant` (instrument | effect); the editor is the
-  same class and asks the processor which it is. Each CMake target (`artfreq_add_plugin`) adds
-  only its own `createPluginFilter` (`src/plugin/`). The effect has stereo or mono in and out (as
-  many out as in), takes MIDI (hosts that send effects MIDI can trigger it), and reports one
-  carver frame of latency.
+  same class and asks the processor which it is: it puts the instrument's shell or the effect's
+  own (see "The editor" below) around the same canvas, live view, inspector and panels. Each
+  CMake target (`artfreq_add_plugin`) adds only its own `createPluginFilter` (`src/plugin/`).
+  The effect has stereo or mono in and out (as many out as in), takes MIDI (hosts that send
+  effects MIDI can trigger it), and reports one carver frame of latency.
 - **Parameters.** Every instrument parameter, plus **Mode** (Carve, Carve + Draw, Stencil, Draw;
   default Carve) and **Depth** (-120..0 dB, default -80), both automatable and both acting on
   the audio thread at once: the exact and the halo masks are built together (`MaskPlanSet`) and
@@ -359,8 +446,9 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
   cells, so it takes 75 - 80 dB to reach a spectrogram's floor near -95 dB (the judge's sweep:
   visibility 58 / 60 at FFT 4096 / 8192 against 46 at -60; the cost, frequency edges 2.3 display
   rows wider and a little more kick smear).
-- **What it does per block.** The tracker makes the segments (Length, Trigger, Repeat, start bar,
-  tempo, MIDI, Preview: exactly the instrument's), the carver (engine 1) carves the block in
+- **What it does per block.** The tracker makes the segments (Length, Trigger, Repeat, On play or
+  At bar, tempo, MIDI, Preview: exactly the instrument's; so with the defaults a carve starts when
+  the DAW starts playing), the carver (engine 1) carves the block in
   place with them, and in Carve + Draw and Draw the sine engine renders the same segments, at
   Level (and through the safety clipper: the sines only, never the song), into a delay of the
   carver's latency, so the sines come out with the audio they were played against (Draw adds
@@ -382,6 +470,10 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
   at 96 kHz), set in prepareToPlay (and at 48 kHz in the constructor, for hosts that ask before
   they prepare), the same in every mode, with any drawing and in bypass. Switching modes never
   changes it, so the host's compensation never moves the song.
+- **Tail: infinite**, so a host never suspends it over silent input (see [Trigger](#trigger),
+  "What it cannot know"; `effectKeepsRunningOverSilence` plays a host that does). It was the
+  latency plus 50 ms: a suspending host skipped a gap in the track and resumed at the next audio,
+  where a second pass on play began.
 - **Transparency.** Outside the pass (before and after a single pass, DAW stopped), with nothing
   drawn or everything hidden (also in Stencil: the gate stays shut) and in Draw, the output is the
   input one latency late, bit for bit (plus the sines in Draw); carving fades in and out with the
@@ -406,9 +498,11 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
 - **Mode and Depth changes** never click: the carve's gains change from frame to frame and the
   frames overlap-add (sin^3 windows, 75 %), the sines fade (tested with every mode switched in
   turn and Depth jumping 80 dB).
-- **Preview** runs the pass from the start on whatever audio comes in, also while the DAW is
-  stopped (most hosts keep feeding effects), once or on a loop with Repeat, and plays the sines in
-  the Draw modes: the same as the instrument's Preview, on the song.
+- **Preview** (the processor's `setPreview`) runs the pass from the start on whatever audio comes
+  in, also while the DAW is stopped (most hosts keep feeding effects), once or on a loop with
+  Repeat, and plays the sines in the Draw modes: the same as the instrument's Preview, on the
+  song. The effect's window has no button for it (see below): with the DAW stopped there is
+  mostly silence to carve. The processor keeps it, and its tests.
 - **MIDI.** The effect asks for MIDI: Reaper, Bitwig, Cubase, Studio One and FL Studio (through
   the wrapper's MIDI input port) can send it to an audio effect, so Trigger = MIDI works there.
   Ableton Live never sends MIDI to audio effects: Transport needs none.
@@ -426,16 +520,65 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
   the `FreqArt*` tags of earlier versions are read too. The installer removes old `FreqArt.vst3`
   and `FreqArt FX.vst3` bundles from the system VST3 folder once their replacements are in, so a
   DAW does not list each plug-in twice.
-- **The editor** is the instrument's with:
-  - **Header**: "ArtFreq FX" (FX in accent2); Canvas | Live beside the wordmark; then, centred
-    between it and undo, MODE and a segmented Carve | Carve + Draw | Stencil | Draw (284 px; its
-    tooltip says what each does) and DEPTH with a number field (72 px, "-80 dB": drag, click to
-    type; greyed in Draw). 24 px either side of the group; it fits from 75 to 200 % (the
-    snapshot tool checks nothing overlaps).
+- **The editor** is a small window of its own (`ui/EffectShell.h`, and the compact layout of
+  `Content` in `ui/Editor.cpp`). Until 0.4 it was the instrument's 1120 x 720 window with Mode
+  and Depth added and whatever did not apply greyed. The customer: "ArtFreq FX looks just like
+  regular ArtFreq but has a lot of controls greyed out and you can't change. You should make
+  ArtFreq FX be a lot more compact and easy to use since it doesn't need all the extra controls.
+  Almost like it's own stand-alone smaller plug-in." So: **720 x 440** at 100 % (540 x 330 to
+  1440 x 880: the same 75 to 200 %, fixed aspect ratio, corner resizer and Settings choice as
+  the instrument), two bars with the canvas between them, and one rule: **nothing is greyed;
+  what does not apply is not shown.** (The snapshot tool walks the window's component tree in
+  every state and fails on a visible component that is disabled. The rule reaches the one
+  menu with items that can have nothing to do: an object's right-click menu lists Bring to
+  front and Send to back only where they would change something, so with one object it is
+  Hide and Delete.)
+
+  ```
+  +--------------------------------------------------------------------------------+
+  | Top bar 44: emblem ArtFreq FX [Carve|Carve + Draw|Stencil|Draw] DEPTH [-80 dB]  |
+  |                                          (undo) (redo) (Live) | ? gear         |
+  +--------------------------------------------------------------------------------+
+  | Sound strip 32, Carve + Draw and Draw only:                                    |
+  |   SOUND  LEVEL [-6.0 dB]  DENSITY [256 lines]  CONTRAST [40 dB]  LOWS [Smooth|Stripes] |
+  +--------------------------------------------------------------+-----------------+
+  | Hz axis | CANVAS, or the live view                           | Drawer 248,     |
+  |         |                                                    | over the canvas |
+  |         |                                                    | (a wide object: |
+  |         |                                                    | beside it):     |
+  |         | time axis, and over it, Brush and Erase only:      | layers / object |
+  +---------+----------------------------------------------------+-----------------+
+  | Brush strip 32: BRUSH  SIZE --o--  SOFT --o--  STRENGTH --o--                  |
+  +--------------------------------------------------------------------------------+
+  | Bottom bar 40: [Select|Brush|Erase] [+ Text] [+ Image] [Layers]                |
+  |                          Carves once when you press play  [4 bars v] [Repeat]  |
+  +--------------------------------------------------------------------------------+
+  ```
+
+  - **Top bar** (`EffectTopBar`, 44 px): the emblem (22 px) and "ArtFreq FX" (Inter SemiBold 16,
+    FX in accent2; no byline, the window is small). Mode: a segmented Carve | Carve + Draw |
+    Stencil | Draw (252 px; it needs no caption, its four choices name it; its tooltip says what
+    each does). DEPTH and a number field (62 px, "-80 dB": drag, click to type), shown in the
+    modes that carve and not in Draw. From the right: settings, help, a hairline, **Live**, redo,
+    undo. Live is one toggle instead of the instrument's Canvas | Live switch: a pill with a
+    dot, lit in accent2 (the playing colour, as the live view's own badge) while the live view
+    is shown. Undo and redo are each shown only while there is something to undo or redo, each
+    in its own place at the open end of the row, so nothing else moves when they come and go.
+  - **Sound strip** (`SoundStrip`, 32 px, under the top bar): Level, Density, Contrast (number
+    fields, 24 px tall: drag, click to type) and Lows (Smooth | Stripes), the four settings of
+    the drawing's sines, in the two modes that play them (Carve + Draw and Draw). In Carve and
+    Stencil it is not there and the canvas has its room. A strip rather than a popover: these
+    are turned while watching the canvas, which a popover would cover, and a strip shows at a
+    glance that the mode has a sound to set. It is the one thing that changes the canvas's
+    height, with the mode, which redraws the whole canvas anyway (carved shapes become drawn
+    ones); reserving its room in Carve would leave an empty band in the mode most use.
   - **Canvas** (`ui/EffectPreview.h`): the effect needs a song the canvas does not have, so a
     stand-in is drawn under the drawing: a texture with a song's shape (falling towards the highs,
     -22 to -40 dB of the 60 dB colour window, sixteen beats of kick in the lows and hats in the
-    highs, held chords, grain on a fixed grid so resizing does not shimmer), carved by the
+    highs, held chords, grain on a fixed grid so resizing does not shimmer; worked out once at
+    768 x 384 and resampled to the canvas's size: worked out pixel by pixel at that size, it cost
+    47 / 99 / 179 ms at a new size on a 2x display at window 100 / 150 / 200 %, the most of a
+    corner drag, now 10 / 17 / 37 ms for the whole canvas), carved by the
     processor's own masks as deep as Depth: Carve, dark shapes; Stencil, the shapes filled with the
     stand-in on black; Carve + Draw, the sines' picture (the instrument's canvas, as levels) in a
     hole carved with the halo masks; Draw, the sines over the stand-in. Nothing drawn: the
@@ -451,19 +594,97 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     it is on a full song, which is the customer's complaint. At -60 dB the sines are gone.
   - **Live** shows what comes out (the song, carved): the processor pushes its output (the
     channels' mean) to the analyser.
-  - **Footer**: Density, Contrast and Level are greyed in Carve and Stencil (they shape the sines
-    only; their tooltips say so; Level is the sines' level, the song keeps its own). Export: in
-    Carve and Stencil the column says "Bounce the track in your DAW" over "Carving needs the
-    song" (a bounce of the effect needs the song, which only the DAW has; no render runs then);
-    in the Draw modes Bounce WAV renders the sines as in the instrument ("The sines, one pass").
-    Preview's tooltip says it runs on the audio coming in.
-  - **Help**: its own steps (where it goes, the analyser, drawing, mode and depth, playing,
-    bouncing in the DAW), the modes, and timing, MIDI per host and the latency.
+  - **Bottom bar** (`EffectBottomBar`, 40 px): the three tools in one raised box (not shown in
+    the live view, where they have nothing to act on; V, B and E still choose one and go back to
+    the canvas), "+ Text", "+ Image", and "Layers" (lit while the layer list is open). On the
+    right Repeat (clear of the corner resizer) and Length, and before them **the line that says
+    what will happen** (`effectHint`), right-aligned, in accent2 while the pass runs: "Carves
+    once when you press play", "Carves once from bar 9", "Repeats every 4 bars", "Each note
+    carves it once", "Loops while a note is held", with the mode's verb (Carve carves, Stencil
+    stencils, Carve + Draw and Draw draw). Two states of the playing DAW come first: a pass on
+    play that waits for the track's audio, "Waiting for audio to carve" (or stencil); and a DAW
+    loop shorter than the drawing, on play or with Repeat, where every round shows the same part
+    of it: "Your loop shows 2 of 4 bars" (counted as Length counts, in bars or beats, the loop
+    cut to a tenth; from the host's loop points, while it says it loops). It is never clipped:
+    where the sentence does not fit it is said in fewer words ("Carves once on play", "Once per
+    note", "Loops with a held note", "Waiting for audio", "Loop shows 2 of 4 bars"). It is words
+    only; where a single pass starts is chosen in Settings.
+  - **Brush strip** (`BrushStrip`, 32 px, on the bottom bar): Size, Soft and Strength, while
+    the Brush or the Eraser is the tool and the canvas is shown. Its title names the tool. It
+    lies over the canvas's foot, its time axis: the canvas keeps that room under the drawing
+    always (and 6 px more, for the lowest Hz label, which is centred on the drawing's edge), so
+    B, E and V never resize the canvas. (When the strip took its room from the canvas, pressing B
+    squashed the drawing by 32 px and moved it under the brush just as painting began, and
+    redrew the canvas at the new size: 48 - 209 ms on a Retina display.)
+  - **Drawer**: the inspector (`ui/Inspector.h`, its compact layout: 248 px wide, captions beside
+    their controls, the selected object's frequencies under its Band, a bin for Delete, a close
+    button) laid over one side of the canvas, between the bars and strips, with a soft shadow on
+    the canvas beside it. It is open while an object is selected (its settings) or the Layers
+    button is on (the list), and gone otherwise. What the bars and strips hold is left out of
+    it: Add text, Add image, the brush, Lows, the Keys.
+    - It opens on the right. An object's settings open on the left instead if on the right they
+      would cover any of the object (its handles included) or the spot that was just clicked on
+      the canvas: the object stays in view while its settings change it, its handles stay free,
+      and the drawer never opens under the mouse, where the second click of a double-click
+      would land on one of its controls. After a drag it moves aside if the object went under
+      it (never to under the mouse). The layer list stays where it is while it is used.
+    - **An object too wide for either side** (more than about two thirds of the canvas: a new
+      text, which runs from 4 to 96 % of the length, Fill length, a new window's "ArtFreq") gets
+      its settings beside the canvas instead of over it: the canvas moves aside, narrower, on the
+      side away from the click, so all of the object and its handles stay in view (on the right
+      the drawer covered 35 % of the canvas: the end of the text being typed, and the handles
+      that resize it, were under it until it was closed). Not while the canvas is pressed (a
+      drag would lose the object under the mouse): on the release. The canvas stays beside the
+      drawer while that object's settings stay open, and an object that grows too wide while
+      they are (Fill length) moves it aside too; it comes back with the list, another object or
+      the drawer closing. Narrower objects keep the drawer over the canvas: the drawing does not
+      move for them. The snapshot tool checks, in every state with an object's settings open,
+      that the object and its handles are clear of the drawer.
+    - Closing: the close button puts it away and keeps the selection (a click on the selected
+      object brings its settings back); Esc or a click on empty canvas deselects, and the
+      settings go with the selection; with nothing selected, Esc or the Layers button closes
+      the list. A row clicked in the list selects its object and the list stays; its chevron
+      (or a double-click, or Return) shows its settings, and "< Layers" goes back.
+    - With both strips shown (Draw, painting) the drawer still has 292 px, and a text object's
+      settings, its tallest content, need 288 (`Inspector::compactMinimumHeight`).
+  - **Settings** (672 px, two columns, centred under the top bar): on the left the analyser
+    match and the window size; on the right what the instrument keeps in its footer and is
+    rarely changed, under "Playing": **Trigger** (Transport | MIDI, with the note "MIDI notes
+    reach an effect in Reaper, Bitwig, Cubase, Studio One and FL Studio; not in Ableton Live"),
+    **Start** (On play | At bar, and the bar's field while At bar is chosen) and **Tempo** (Host |
+    Manual, and the BPM field while Manual is chosen; with Host the row reads "DAW: 120 BPM").
+    Start is there for the one way of playing that has a single pass to place (Transport
+    without Repeat); otherwise the row says where passes start ("When a note is played", "On
+    the DAW's bars (Repeat is on)"). Then Reset drawing.
+  - **Left out**: Preview and Export. Carving needs the song, which only the DAW has; the help
+    says so once ("To keep it, bounce the track in your DAW, after choosing At bar in
+    Settings"). Also the instrument's Clear (the paint row's Clear and Reset drawing remain) and
+    the byline.
+  - **Help** (688 px): short and its own. Six steps (where it goes, the analyser, drawing, Mode
+    and Depth, play and where Carve and Stencil begin, bouncing in the DAW with At bar), the
+    four modes and Sound in a line each, and three notes: what Settings holds, the latency, the
+    keys.
+  - **The saved size.** The state holds the window's size in pixels, not a scale, and an
+    ArtFreq FX saved by 0.4 or earlier has the large window's. The two windows have different
+    shapes (1120 : 720 and 720 : 440), so the shape tells which one a size was saved with
+    (`ArtFreqEditor::scaleForSavedSize`): a size with the large window's shape opens at the same
+    scale of the small one (100 % stays 100 %: 720 x 440, not 1120 x 720 or its 156 %), and
+    the new size is saved once the window is resized.
+  - **Every control says what it is**: a caption or its own words, and a tooltip. Controls are
+    28 px tall in the bars (as in the instrument), 26 in the drawer and 24 in the strips, with
+    13 px control text (12 in the strips' fields) and 11 px captions, as in the instrument.
+    The layout is one design scaled as a whole, so what holds at one size holds at all; the
+    snapshot tool still checks, in every state and at 75, 100, 150 and 200 %, that the bars,
+    strips and canvas tile the window, that nothing inside a bar, a strip or the drawer
+    overlaps or leaves it, and that the bottom bar's line fits.
 
 ## Interface
 
 Window 1120 x 720 at 100 %, resizable from 75 % to 200 % with a fixed aspect ratio (corner
-resizer + window-size choice in Settings), remembered per instance.
+resizer + window-size choice in Settings), remembered per instance. This section describes the
+instrument's window. ArtFreq FX's is its own, 720 x 440 (see [ArtFreq FX](#artfreq-fx), "The
+editor"), built from the same parts: the canvas, the live view, the inspector (as a drawer),
+the panels, the look, and the keys.
 
 ### Look
 
@@ -520,9 +741,10 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   Faint frequency grid lines (from `gridFrequencies`) and bar/beat lines.
 - Hz labels on the left axis; bar/beat labels along the bottom (e.g. "1", "2", "3", "4" for
   4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
-  bar in 3/4, six eighths in 6/8). When the drawing plays once at a bar of the song (Transport,
-  Repeat off) they are the song's bars: "9", "10", "11", "12" for 4 bars from bar 9 (under a bar,
-  the beats of that bar: "9", "9.2").
+  bar in 3/4, six eighths in 6/8). They count the drawing's own bars (On play, Repeat, MIDI: the
+  drawing is not at one place in the song). Only when it plays once at a bar of the song
+  (Transport, Repeat off, At bar) are they the song's bars: "9", "10", "11", "12" for 4 bars from
+  bar 9 (under a bar, the beats of that bar: "9", "9.2").
 - Playhead: a 2 px accent2 vertical line at the play position while sounding.
 - **Select tool**: click an object to select it (the selected object if the point is inside it,
   so it can be moved even where another lies over it; else the front-most shown object whose
@@ -531,7 +753,8 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   Alt/Option-click, or clicking again on the same spot without moving the mouse in between,
   picks the next object down under the mouse (round to the front again; on release, so a press
   and drag still moves the selection). Right-click on an object selects it and opens its menu:
-  Bring to front, Send to back (greyed where they would change nothing), Hide (Show for a hidden
+  Bring to front, Send to back (greyed where they would change nothing; left out there in
+  ArtFreq FX, which greys nothing), Hide (Show for a hidden
   one), Delete. Selecting on the canvas shows the object's settings in the inspector.
   Delete/Backspace removes the selected object. Arrow keys nudge (Shift = 10x); a held
   arrow is one undo step, which ends when the keys are let go, on a click, on another object or
@@ -614,12 +837,20 @@ while visible.
   (Host | Manual) with a BPM field (editable when Manual; shows the host tempo greyed when Host).
   Columns at 100 %: Length 96, Trigger 124 + 6 + Repeat 78, Tempo 108 + 8 + BPM 56, 16 apart,
   ending 24 before the Preview column.
-- The hint line under each column says what it does: "8 s per pass"; under Trigger "Plays once
-  from bar [1]", "Repeats every 4 bars from bar 1", "Each note plays it once" or "Loops while a
-  note is held"; "From the DAW" / "Typed in". In "Plays once from bar [1]" the number is the
-  start bar field (shown only for Transport without Repeat): the BPM field's look at 20 px tall
-  with 12 px mono figures, as the knobs' values in the same line; drag up/down (Shift = fine),
-  click to type, Enter commits, Esc cancels, out-of-range values clamp to 1..999.
+- The hint line under each column says what it does, in plain words: "8 s per pass"; under
+  Trigger "Plays once when you press play", "Plays once from bar [9]", "Repeats every 4 bars",
+  "Each note plays it once" or "Loops while a note is held"; "From the DAW" / "Typed in".
+- For a single Transport pass the words after "Plays once" are the **start choice**
+  (`StartChoice`): "when you press play" or "from bar", in the hint's font on the hint's
+  baseline, a shade brighter than "Plays once" and followed by a small chevron, so the pair reads
+  as one sentence with a part that can be changed (raised on hover, pointing-hand cursor, a
+  tooltip). A click opens a menu inside the window with the two, the current one ticked: "When
+  you press play", "From a bar of the song". With "from bar" the **start bar field** follows the
+  words 3 px on: the BPM field's look at 20 px tall with 12 px mono figures, as the knobs' values
+  in the same line; drag up/down (Shift = fine), click to type, Enter commits, Esc cancels,
+  out-of-range values clamp to 1..999. The bar is kept while On play is chosen. Both end inside
+  the Trigger column's width at every window size (the snapshot tool checks 75, 100, 150 and
+  200 %). With Repeat or MIDI there is nothing to choose, and neither is shown.
 - Preview: a round play/stop button (accent2 when on). Plays the drawing from its start, on a
   loop with Repeat, else once (then it turns itself off).
 - Export: "Bounce WAV" renders one pass in the background ("Rendering..." on the button); then a
@@ -649,6 +880,79 @@ while visible.
     deleted when an editor opens. Closing the window stops running renders (the render checks once
     per block) instead of waiting for them.
 
+### Keys and the keyboard focus
+
+A plug-in cannot press the DAW's play button; it can only leave the key alone. On macOS JUCE
+passes a key on to the host's window only if nothing in the plug-in used it
+(`juce_NSViewComponentPeer_mac.mm`: `keyDown` -> `sendEventToInputContextOrComponent`, else
+`[super keyDown:]`). "Used" means: a text box that is being typed in took it (the peer's text
+input target gets all typing first); or `ComponentPeer::handleKeyUpOrDown` / `handleKeyPress`
+said so (the focused component, then its parents and their key listeners; an unused Tab moves
+the focus and counts as used); or a component is modal (JUCE then swallows every key). So
+(`ui/KeyFocus.h`, the editor's `Content`):
+
+- **The editor's own keys**, and nothing else, are used: V / B / E (tools), Cmd+Z and
+  Shift+Cmd+Z (Ctrl+Y elsewhere), Delete / Backspace and the arrows with a selection (also in the
+  live view, where the selection is still shown in the inspector or ArtFreq FX's drawer: passed
+  on, Delete could delete whatever is selected in the DAW), Esc with a panel open or a
+  selection, and in the layer list Up / Down, Return, Delete, Esc. Everything
+  else comes back unused in every focus state, also Delete, the arrows and Return when there is
+  nothing for them to do: the space bar plays the DAW, and the DAW's other shortcuts work.
+- **Where the focus rests**: the canvas; the layer list while a row was clicked; a panel while
+  it is open (then the canvas again). A click on anything else (a button, a chip, a segmented
+  control, a knob, a combo box, a background) is followed by handing the focus back to the
+  canvas (a mouse listener on the content, after the clicked component has dealt with the
+  click): JUCE gives a clicked button the focus, where Return would press it again. Combo boxes
+  take no focus at all (JUCE focuses a box when its menu closes, and the arrows would be its own).
+- **The object's text box is the one place where space types.** A number being typed (a number
+  field, a knob's or a bar's value: `shell::NumberTextBox`) has no use for a space: there the
+  space bar commits what was typed, as Return does, and is left unused, so the DAW plays. In
+  ArtFreq FX one click on Depth, Level or a settings field starts typing, and "a click on a
+  value, then the space bar" is exactly the customer's "press the normal play button ... it
+  should play instead of me having to click out". For the key to get out on macOS the number's
+  text box takes its keys as key presses, not through the system's text input (which takes every
+  printable key before anything else sees it; a number needs no input method), and does not
+  call a key going down used; a knob's value is a modal label while it is typed, and stops being
+  modal before the key is passed on. A text box has the focus only while it is typed in. Return
+  commits and Esc cancels a number or a value (the object's text is in the drawing as it is
+  typed: both keep it, and undo takes the typing back), Tab commits; each hands the focus back
+  to the canvas (to the panel, for a field in the settings). So does a press anywhere outside
+  it. In the object's text box Shift+Return (or
+  Alt+Return) is a new line, and while it has the focus it shows it: the accent outline, the
+  caret, and "Return: done  Shift+Return: new line" beside its caption.
+- **Selecting is not typing**: a click on a text object, or opening its settings from the layer
+  list, leaves the focus with the canvas. A double-click on it, and Add text, go to typing (on
+  the mouse's release, with the text selected so that typing replaces it).
+- **Nothing stays modal or a text target**: a value being typed into a label (modal while it is
+  edited) is set when the window loses the keyboard or its control is hidden; when a text box
+  goes while it has the focus (its object deleted, a value set), the focus goes to the canvas
+  rather than to the first control JUCE finds. Menus are modal only while open.
+- **Tab** is the DAW's as well: for the moment of the key press the focus is let go (so JUCE has
+  nothing to move it from), and taken up again right after.
+- **ArtFreq FX** follows the same rules in its own window. Its drawer is the inspector, so the
+  layer list in it keeps the focus while a row was clicked and the text box while it is typed
+  in; when the drawer goes while it has the focus (its close button, Esc, deselecting), the
+  focus goes back to the canvas. Esc there: a panel, else the selection, else the layer list.
+  The fields of its strips and of its settings (Level, Density, Contrast, Depth, the start bar,
+  the BPM) are number fields like the instrument's BPM: typed in, then handed back.
+- What is not in the plug-in's hands, and cannot be tested on the Linux build machine: real
+  DAWs on macOS. A host decides what it does with a key that comes back to it (the usual thing
+  is to act as if its own window had the keyboard), and a host that keeps the keyboard to itself,
+  or eats the space bar before the plug-in's window sees it, never asks.
+- **Windows** is not the Mac with another installer. There JUCE posts a key nothing used to the
+  host's parent window (`juce_Windowing_windows.cpp`, `forwardMessageToParent`, a `PostMessage`
+  of WM_KEYDOWN / WM_CHAR) rather than handing it to the superclass in the same call: whether a
+  host acts on a posted key is the host's business, and nothing here tests it. Before a Windows
+  build is said to behave as the Mac's, the space bar must be tried in the DAWs it is for
+  (Ableton Live, FL Studio, Cubase, Reaper). Other differences: pictures (PNG, JPEG and GIF only;
+  macOS decodes the rest), the carver's FFT (JUCE's portable one without IPP, several times
+  slower than vDSP: see "Work per audio callback"), and the packaging. The Windows branch
+  (`win`) was cut before On play, these keys and ArtFreq FX's own window, and has none of them.
+
+`KeyFocusTests.cpp` and the snapshot tool drive this through the real path: the editor in a
+window on a (virtual) display, clicks through `ComponentPeer::handleMouseEvent`, keys through
+`handleKeyUpOrDown` and `handleKeyPress`, in every focus state and for both plug-ins.
+
 ### Header
 
 The emblem (24 px, `ui/Emblem.h`, image in `docs/artfreq-emblem.png`): a capital A and F as
@@ -658,8 +962,7 @@ into horizontal lines in the spectrogram's colours with growing gaps, as a drawi
 has become sound. Vector paths, no fonts; the number of lines follows the size in physical
 pixels (whole-pixel lines and gaps at header size, about 30 lines when large).
 `ArtFreqEmblemLab <dir> [--docs file.png]` renders it to PNGs. Then the wordmark "ArtFreq"
-(Inter SemiBold 20; "ArtFreq FX" in the effect, FX in accent2) and "by AnyMeans" (11 px dim). Segmented Canvas | Live (in the effect beside the wordmark, with Mode and
-Depth after it: see [ArtFreq FX](#artfreq-fx)).
+(Inter SemiBold 20) and "by AnyMeans" (11 px dim). Segmented Canvas | Live, centred.
 Undo / Redo icon buttons (also Cmd+Z / Cmd+Shift+Z). "?" opens the help panel; gear opens
 settings. Icons are drawn with juce::Path (no image assets).
 
@@ -673,12 +976,14 @@ Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawin
 
 Short numbered steps: put ArtFreq on an instrument track; open a spectrogram (MiniMeters) on the
 output; match scale/range in Settings; add text/image/paint; choose a band and density; press
-play in the DAW (or Preview, once or on a loop); Trigger modes and Repeat explained (nothing
-plays by itself); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
+play in the DAW (it plays once from wherever you start; Preview plays it with the DAW stopped);
+Trigger modes and Repeat explained (once on play or from a bar, loops with Repeat; stop the DAW
+and it stops); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
 overlapping objects (Alt-click or click again, the right-click menu). Plus tips: highs show the
 sharpest detail; the lowest octaves are coarse in every analyser; Lows (Smooth fills shapes
 below about 2 kHz, Stripes plays separate lines there); raise Density for solid shapes, lower for
-a scan-line look.
+a scan-line look. Shortcuts, with "Space: plays your DAW (a space while you type)". Both panels
+must fit the window with room around them (a test).
 
 ## Tests
 
@@ -691,8 +996,14 @@ at low ends of 10, 20 and 30 Hz, a long-FFT analyser seeing the band filled, its
 the drawn band, leakage, determinism, crossfades, speed, the canvas drawing the band filled and as
 bright as the lines); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
-speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass from a
-start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
+speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass on
+play: starting anywhere in the song at any block sizes, in the first block the tracker sees and
+after reset, stop and start, a DAW loop longer and shorter than the pass and one beginning
+inside it, play pressed before a loop that begins inside the first pass, relocations forwards
+and back inside it, before and after it, waiting for sound (at any block sizes, a typed tempo, no
+position), tempo changes and ramps, a typed tempo, no ppq and no time, a count-in and a pre-roll, Length and the meter changing while it plays,
+switching Repeat, Start at and the trigger while it plays, the preview over it; the single pass
+from a start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
 a host loop over it, the host's meter and tempo, time-signature changes before, at, inside and
 after it and odd bars, a typed-in tempo starting on the DAW's bar, its fades through the engine;
 MIDI one-shots and their end, hold-to-loop with overlapping notes and releases, all-offs and stop;
@@ -701,7 +1012,10 @@ correlate with the canvas, and at FFT 8192 and 16384 Smooth must fill a block an
 where Stripes leaves gaps, correlate better with the drawing, and keep the band's level steady (no
 regular pulse); processor (state round trip, defaults, Lows on Smooth for new instances and on
 Stripes for states from before it, switching Lows back and forth while playing without a click,
-states from before Repeat and the Free-loop migration, a single pass and a held MIDI loop through the processor, a single pass
+states from before Repeat and the Free-loop migration, states from before Start at (bar 1 as On
+play, any other bar as At bar) and its round trip, sound within 10 ms of the DAW starting in bar
+33 with nothing touched (any block size, also first prepared while the DAW plays), once, and
+again after stop and start, a DAW loop and coming out of bypass, a single pass and a held MIDI loop through the processor, a single pass
 through time-signature changes and at a typed tempo, preview following Repeat, process with MIDI,
 panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (cancelling it, its
 progress, bounce file names);
@@ -710,7 +1024,13 @@ after each change a new file that matches a render of the new plan, the chip's "
 stopped renders, saving the current file; undo steps of wheel and arrow gestures,
 clicking and placing objects, the layer list: selecting, the keyboard, hiding, reordering,
 deleting, the paint row; clicking again, Alt-click and the right-click menu on the canvas; the
-live view's span, unreadable pictures; under a virtual display on Linux). Hidden layers: the
+live view's span, unreadable pictures; under a virtual display on Linux); the keyboard focus
+(`KeyFocusTests.cpp`, the editor in a real window, Linux only: the space bar unused after a
+click on anything, in both plug-ins; selecting text not typing; the text box, number fields and
+typed values giving the focus back on Return, Esc, Tab and a click elsewhere; one click on a
+number field and the space bar playing the DAW, the space bar setting a typed number or a
+knob's value; Tab; the panels; the live view, and Delete and the arrows acting there on the
+selection, in both plug-ins). Hidden layers: the
 document round trip (order, visibility, file names, old documents shown) and the compositor
 leaving them out. Carving: the mask plan (rows to Hz, columns, band averages, clipping, the
 halo), mask plans through the exchange, and the baseline engine (bit-exact with nothing to
@@ -730,23 +1050,44 @@ a drawn band at -80 and -40 dB, Carve + Draw's wider hole, its sines and Level, 
 exactly the instrument's output one latency late, bypass keeping the latency (and no clicks into
 and out of it), every mode switch and Depth jumps without clicks, states between the two
 variants, mono and stereo, 44.1 and 96 kHz, block sizes from 1 to 4096 (the carve exact, the
-sines as the instrument's), MIDI and Preview with the DAW stopped. Its editor
-(`EffectUiTests.cpp`): Mode and Depth in the header and not overlapping, automation moving
-them, what each mode greys, the export's hint, both help panels fitting the window, and the
-canvas in each mode (black where Carve carves at -80 dB, Stencil the other way round, Carve +
-Draw's halo dark and its sines bright, nothing drawn leaving the stand-in).
+sines as the instrument's), MIDI and Preview with the DAW stopped, and, as it comes, carving
+from where the DAW starts playing (bar 33) for one pass, Carve and Stencil waiting for a track's
+audio that comes in after play (and the Draw modes not), and its infinite tail, played through a
+host that suspends effects over silent input: one pass, not one per audio region. Its editor
+(`EffectUiTests.cpp`): the small window and what it leaves out, Mode and Depth and automation
+moving them, what each mode and tool shows and that nothing shown is greyed, the bottom bar's
+line in every way of playing (and its shorter form fitting; waiting for audio; a DAW loop
+shorter than the drawing), the drawer (objects, the list, the side it opens on, closing it; a
+wide object's settings beside the canvas, all of it in view, and Fill length moving the canvas
+aside), the Brush strip over the canvas's time axis, the timing in Settings, both panels fitting the window, the
+window sizes and a size saved with the old large window, and the canvas in each mode (black
+where Carve carves at -80 dB, Stencil the other way round, Carve + Draw's halo dark and its
+sines bright, nothing drawn leaving the stand-in) and following Level.
 
 `ArtFreqSnapshot <dir>` renders the editor in its main states to PNG (ArtFreq FX's as
-`artfreq-fx-*.png`: each mode, a shallow Depth typed in, the Mode tooltip, the live view of a
-stand-in song carved by the real processor, the help, 75 / 100 / 200 %, with checks of the
-header's layout, Mode and Depth driven with the mouse, what they grey, the export's hint, Preview
-carving the audio coming in; and the instrument's: Repeat, MIDI with Repeat,
-a start bar and typing one among them, "layers": five objects, one hidden, one selected from the
+`artfreq-fx-*.png`: a new window, its "ArtFreq" selected and "+ Text" typed into (the canvas
+beside the drawer), each mode, a shallow Depth typed in, the Mode tooltip, a text's settings in
+the drawer on the right, its right-click menu, a picture's settings on the
+left, the layer list, the brush, Draw while painting with the list open (both strips and the
+drawer: the least room there is), Repeat, the Length menu, the settings with On play and with
+At bar and a typed tempo, the live view of a stand-in song carved by the real processor, the
+help, an empty drawing, 75 / 100 / 150 / 200 %, with checks in each state that the bars,
+strips and canvas share the window (the Brush strip over the canvas's time axis, clear of the
+drawing), that nothing overlaps, leaves its bar or is greyed, that the bottom bar's line fits,
+and that an object whose settings are open is in view with its handles, clear of the drawer; Mode, Depth, the Sound strip, the drawer, the list, the brush
+and the settings driven with the mouse; a size saved with the old large window; and the
+instrument's: the default "Plays once when you press play", the start choice's menu, Repeat, MIDI with Repeat, a start bar and typing one, the footer's
+timing columns alone for On play and At bar at 75, 100, 150 and 200 % among them, "layers": five objects, one hidden, one selected from the
 list, and the window at 75, 100, 150 and 200 %), and checks the editor's controls by driving
 them: the canvas interactions, the layer list, Lows (at the foot of the list, clear of the keys
 and the brush settings; Stripes and back changing the plan and the canvas; hidden with an
-object's settings), and the footer's Trigger, Repeat, the start bar field (drag, type, Enter,
-Esc, clamping), the hint line, Preview stopping by itself without Repeat, and the layout.
+object's settings), and the footer's Trigger, Repeat, the start choice (its words, its menu,
+what each item does to the hint, the field and the canvas's bar numbers, in line at every
+window size), the start bar field (drag, type, Enter, Esc, clamping), the hint line, Preview
+stopping by itself without Repeat, and the layout. Last, for both plug-ins (on Linux, where the
+virtual display gives a window the keyboard), with the window on the display and the keyboard in
+it: the space bar through the peer in every focus state (see
+"Keys and the keyboard focus"), typing where text is typed, and the hand-back.
 
 `ArtFreqLab <dir> [--lows stripes|smooth]` (tools/LowsLab.cpp) is the bench the lows were chosen
 on: it renders four drawings through the real plan and engine, analyses them like a spectrogram

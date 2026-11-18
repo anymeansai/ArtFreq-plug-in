@@ -396,9 +396,18 @@ juce::PopupMenu objectMenu (const ArtFreqProcessor& processor, const juce::Uuid&
     const auto inFront = objects.back().id == id;
     const auto atBack = objects.front().id == id;
 
-    menu.addItem (menuItems::bringToFront, "Bring to front", ! inFront);
-    menu.addItem (menuItems::sendToBack, "Send to back", ! atBack);
-    menu.addSeparator();
+    // An item that would change nothing is greyed out; in ArtFreq FX, whose window greys
+    // nothing, it is left out (with one object the menu is Hide and Delete).
+    const auto leaveOut = processor.isEffect();
+
+    if (! (leaveOut && inFront))
+        menu.addItem (menuItems::bringToFront, "Bring to front", ! inFront);
+
+    if (! (leaveOut && atBack))
+        menu.addItem (menuItems::sendToBack, "Send to back", ! atBack);
+
+    if (menu.getNumItems() > 0)
+        menu.addSeparator();
 
     if (object->visible)
         menu.addItem (menuItems::hide, "Hide");
@@ -439,6 +448,10 @@ void showObjectMenu (ArtFreqProcessor& processor, EditorState& state, const juce
     // Inside the window: scaled like the rest, never a separate desktop window.
     if (auto* parent = ArtFreqLookAndFeel::findPopupParent (target))
         options = options.withParentComponent (parent);
+
+    // The window's look, from the start: a menu looks its look-and-feel up before it joins its
+    // parent, and would otherwise be opaque, with square corners left unpainted.
+    menu.setLookAndFeel (&target.getLookAndFeel());
 
     // The processor and editor state outlive the target; if it has gone, so has the editor.
     juce::Component::SafePointer<juce::Component> safeTarget (&target);

@@ -1,6 +1,6 @@
 #pragma once
 
-// ArtFreq FX's own controls, in the header: Mode (Carve | Carve + Draw | Stencil | Draw) and
+// ArtFreq FX's own controls, in its top bar: Mode (Carve | Carve + Draw | Stencil | Draw) and
 // Depth. See docs/DESIGN.md, "ArtFreq FX".
 
 #include "PluginProcessor.h"
@@ -17,17 +17,17 @@ namespace artfreq::ui::shell
 class EffectControls final : public juce::Component
 {
 public:
-    static constexpr int modeWidth = 284;
-    static constexpr int depthWidth = 72;
+    static constexpr int modeWidth = 252;
+    static constexpr int depthWidth = 62;
 
     explicit EffectControls (ArtFreqProcessor& processor);
     ~EffectControls() override;
 
-    /** The width the controls and their captions take. */
+    /** The width Mode and Depth (with its caption) take. */
     static int getIdealWidth();
 
-    /** Follows the mode: Depth is greyed in Draw, which carves nothing. The editor calls this
-        from its timer. */
+    /** Follows the mode: Depth is shown in the modes that carve, and not in Draw, where it does
+        nothing. The editor calls this from its timer. */
     void refresh();
 
     void paint (juce::Graphics&) override;
@@ -47,7 +47,7 @@ public:
 private:
     ArtFreqProcessor& processor;
     std::unique_ptr<ChoiceSegments> modeAttachment;
-    juce::Rectangle<int> modeCaption, depthCaption;
+    juce::Rectangle<int> depthCaption;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EffectControls)
 };

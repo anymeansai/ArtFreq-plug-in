@@ -1,6 +1,7 @@
 #include "LayerList.h"
 
 #include "Actions.h"
+#include "KeyFocus.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -505,6 +506,7 @@ LayerList::LayerList (ArtFreqProcessor& processor, EditorState& state)
     : impl (std::make_unique<Impl> (*this, processor, state))
 {
     setWantsKeyboardFocus (true);
+    setKeepsKeyFocus (*this);   // Up, Down, Return, Delete and Esc walk and act on the list from here
     setTitle ("Layers");
     setDescription ("Every text and picture, front first, and the paint layer. Up and Down move the selection.");
 

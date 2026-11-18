@@ -4,6 +4,7 @@
 #include "CanvasAxes.h"
 #include "CanvasPlanImage.h"
 #include "EffectPreview.h"
+#include "KeyFocus.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "core/Compositor.h"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <utility>
 
 namespace artfreq::ui
 {
@@ -923,6 +925,7 @@ struct CanvasView::Impl
     juce::Point<float> lastClickPoint;
     juce::Uuid lastClickSelection = juce::Uuid::null();
     bool cycleOnRelease = false;
+    bool typeOnRelease = false;   // a double-click on text: its text box gets the focus on the release
 
     // Arrow-key nudges: one undo step per gesture (see keyPressed).
     double lastNudgeTime = -1.0e9;
@@ -937,6 +940,7 @@ CanvasView::CanvasView (ArtFreqProcessor& processor, EditorState& state)
 {
     setOpaque (true);
     setWantsKeyboardFocus (true);
+    setKeepsKeyFocus (*this);   // Delete, the arrows and Esc act on the selection from here
     setTitle ("Canvas");
     setDescription ("The drawing: time across, frequency up. Click an object to select it; Alt-click, or click "
                     "again, for the one underneath; right-click for its menu.");
@@ -960,6 +964,12 @@ CanvasView::~CanvasView()
 juce::Rectangle<float> CanvasView::getDrawingArea() const
 {
     return axes::plotArea (getLocalBounds(), axisWidth, axisHeight).toFloat();
+}
+
+juce::Rectangle<float> CanvasView::getObjectBounds (const juce::Uuid& id) const
+{
+    const auto* object = impl->processor.getDocument().find (id);
+    return object != nullptr ? impl->screenRectOf (*object).expanded (handleReach) : juce::Rectangle<float>();
 }
 
 void CanvasView::paint (juce::Graphics& g)
@@ -1001,6 +1011,7 @@ void CanvasView::mouseDown (const juce::MouseEvent& e)
     d.scale = d.processor.getScale();  // what the drag converts with, from start to end
     d.nudging = false;
     d.cycleOnRelease = false;
+    d.typeOnRelease = false;
 
     // Right-click on an object: select it and offer Bring to front, Send to back, Hide, Delete.
     if (e.mods.isPopupMenu())
@@ -1055,12 +1066,13 @@ void CanvasView::mouseDown (const juce::MouseEvent& e)
         d.dragMode = Impl::DragMode::pendingMove;
         d.cycleOnRelease = clickedAgain;
 
-        // Double-clicking text goes straight to typing.
+        // Double-clicking text goes straight to typing: on the release, as every click that
+        // gives a text box the focus does (a press anywhere else is what ends typing).
         if (e.getNumberOfClicks() >= 2 && object->type == ArtObject::Type::text && d.state.focusTextField != nullptr)
         {
             d.dragMode = Impl::DragMode::none;
             d.cycleOnRelease = false;
-            d.state.focusTextField();
+            d.typeOnRelease = true;
         }
 
         return;
@@ -1133,6 +1145,9 @@ void CanvasView::mouseUp (const juce::MouseEvent& e)
     d.hasLastClick = clickedObject;
     d.lastClickPoint = d.dragStartMouse;
     d.lastClickSelection = d.state.getSelected();
+
+    if (std::exchange (d.typeOnRelease, false) && d.state.focusTextField != nullptr)
+        d.state.focusTextField();
 
     if (wasEditing)
     {

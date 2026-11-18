@@ -271,7 +271,11 @@ juce::Label* ArtFreqLookAndFeel::createSliderTextBox (juce::Slider& slider)
     if (dynamic_cast<shell::Knob*> (&slider) != nullptr)
         return new shell::ValueLabel();
 
-    auto* label = juce::LookAndFeel_V4::createSliderTextBox (slider);
+    // Any other slider's value (a bar's): coloured as JUCE colours its own, typed into a
+    // shell::NumberTextBox, which hands the space bar on to the DAW.
+    const std::unique_ptr<juce::Label> model (juce::LookAndFeel_V4::createSliderTextBox (slider));
+    auto* label = new shell::ValueLabel (true);
+    model->copyAllExplicitColoursTo (*label);
     label->setFont (fonts::mono (12.0f));
     label->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label->setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
@@ -467,6 +471,11 @@ juce::PopupMenu::Options ArtFreqLookAndFeel::getOptionsForComboBoxPopupMenu (juc
     // Inside the window: scaled like the rest and never a separate desktop window.
     if (auto* parent = findPopupParent (box))
         options = options.withParentComponent (parent);
+
+    // When its menu closes, JUCE gives a combo box the keyboard focus, and the arrow keys and
+    // Return would then be the box's instead of going on to the DAW. A box here is only ever
+    // clicked, so it takes no focus (see ui/KeyFocus.h).
+    box.setWantsKeyboardFocus (false);
 
     return options;
 }

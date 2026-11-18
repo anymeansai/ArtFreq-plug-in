@@ -82,12 +82,6 @@ public:
     /** The last error, empty if the last bounce worked. */
     juce::String getLastError() const;
 
-    /** ArtFreq FX in Carve or Stencil: the column asks for a bounce in the DAW instead (nothing
-        can be bounced here without the song). */
-    bool isAskingForDawBounce() const noexcept { return look == Look::daw; }
-
-    static constexpr const char* dawBounceText = "Bounce the track in your DAW";
-
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -111,8 +105,7 @@ private:
         button,     // "Bounce WAV" (or "Rendering..." for the first file, or after an error)
         ready,      // the chip with the current file
         updating,   // the chip waiting for the next file
-        empty,      // the chip with nothing to export
-        daw         // ArtFreq FX carving: "Bounce the track in your DAW"
+        empty       // the chip with nothing to export
     };
 
     Take takeFor (const ArtPlan& plan) const;
@@ -121,7 +114,6 @@ private:
     void collectFinishedRenders();
     void finishPendingSave();
     bool isOnShow() const;
-    bool needsTheSong() const;
     void updateLook();
     juce::String hintText() const;
     void chooseSaveTarget();

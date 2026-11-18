@@ -80,7 +80,8 @@ void clearPaint (ArtFreqProcessor& processor);
 
 /** The menu an object's right-click opens (on the canvas and in the layer list): Bring to
     front, Send to back, Hide (Show for a hidden object), Delete. Items that would change
-    nothing are greyed out. performObjectMenuItem carries out the item with that id. */
+    nothing are greyed out (in ArtFreq FX, which greys nothing, they are left out).
+    performObjectMenuItem carries out the item with that id. */
 juce::PopupMenu objectMenu (const ArtFreqProcessor& processor, const juce::Uuid& id);
 void performObjectMenuItem (ArtFreqProcessor& processor, EditorState& state, const juce::Uuid& id, int itemId);
 

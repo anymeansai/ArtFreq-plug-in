@@ -1,10 +1,12 @@
 #include "Editor.h"
 
 #include "Actions.h"
+#include "CanvasAxes.h"
 #include "CanvasView.h"
 #include "EditorState.h"
-#include "EffectControls.h"
+#include "EffectShell.h"
 #include "Inspector.h"
+#include "KeyFocus.h"
 #include "LiveView.h"
 #include "LookAndFeel.h"
 #include "ShellFooter.h"
@@ -13,6 +15,7 @@
 #include "ShellToolbar.h"
 
 #include <cmath>
+#include <optional>
 
 namespace artfreq
 {
@@ -39,7 +42,25 @@ namespace
         constexpr int canvasLeft = 4;
 
         constexpr int settingsTop = headerHeight + 4;
+
+        // ArtFreq FX: two bars and the canvas between them (and, while they apply, the strips);
+        // the inspector is a drawer over the canvas.
+        namespace fx = ui::shell::effectMetrics;
+        constexpr int effectCanvasTop = 8;
+        constexpr int effectCanvasRight = 10;
+        constexpr int effectCanvasLeft = 2;
+
+        // Under the drawing the canvas keeps the room of the Brush strip, which lies over its
+        // time axis while it is there (and clear of the lowest Hz label, which is centred on the
+        // drawing's edge): choosing a tool never resizes the canvas.
+        constexpr int effectCanvasBottom = fx::stripHeight + 6 - ui::CanvasView::axisHeight;
+        constexpr int drawerWidth = ui::Inspector::compactWidth;
+        constexpr int drawerShadow = 14;
+        constexpr int effectSettingsTop = fx::topBarHeight + 6;
     } // namespace layout
+
+    // The drawer keeps clear of a canvas click for this long after it (see placeDrawer).
+    constexpr juce::uint32 canvasPressMilliseconds = 1500;
 
     constexpr float helpDim = 0.55f;
     constexpr int refreshHz = 30;
@@ -95,22 +116,62 @@ namespace
     };
 
     //==============================================================================
-    /** The whole interface at its design size (1120 x 720). The editor scales it to the window. */
+    /** The soft edge ArtFreq FX's drawer casts on the canvas beside it. Clicks pass through. */
+    class DrawerShadow final : public juce::Component
+    {
+    public:
+        DrawerShadow()   { setInterceptsMouseClicks (false, false); }
+
+        void setOnLeft (bool shouldBeOnLeft)
+        {
+            if (onLeft != shouldBeOnLeft)
+            {
+                onLeft = shouldBeOnLeft;
+                repaint();
+            }
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            // Darkest against the drawer, gone at the far edge.
+            const auto bounds = getLocalBounds().toFloat();
+            const auto dark = juce::Colours::black.withAlpha (0.42f);
+            const auto clear = juce::Colours::transparentBlack;
+            g.setGradientFill (onLeft ? juce::ColourGradient (dark, bounds.getX(), 0.0f, clear, bounds.getRight(), 0.0f, false)
+                                      : juce::ColourGradient (clear, bounds.getX(), 0.0f, dark, bounds.getRight(), 0.0f, false));
+            g.fillRect (bounds);
+        }
+
+    private:
+        bool onLeft = false;
+    };
+
+    //==============================================================================
+    /** The whole interface at its design size (1120 x 720; ArtFreq FX's, 720 x 440). The editor
+        scales it to the window.
+
+        ArtFreq (the instrument): header, toolbar, canvas with the inspector beside it, footer.
+        ArtFreq FX (`compact`): a top bar, the canvas, a bottom bar; the sines' settings and the
+        brush's in strips that are there only while they apply; the inspector as a drawer over
+        the canvas, open while the layer list is asked for or an object is selected. */
     class Content final : public juce::Component,
+                          public ui::KeyFocusHome,
                           private juce::ChangeListener,
+                          private juce::FocusChangeListener,
                           private juce::Timer
     {
     public:
         explicit Content (ArtFreqProcessor& p)
             : processor (p),
-              header (p.isEffect()),
-              toolbar (state),
+              compact (p.isEffect()),
+              header (compact ? nullptr : std::make_unique<ui::shell::Header>()),
+              toolbar (compact ? nullptr : std::make_unique<ui::shell::Toolbar> (state)),
               canvas (p, state),
               liveView (p),
-              inspector (p, state),
-              footer (p, layout::inspectorLeft),
+              inspector (p, state, compact),
+              footer (compact ? nullptr : std::make_unique<ui::shell::Footer> (p, layout::inspectorLeft)),
               settings (p),
-              help (p.isEffect())
+              help (compact)
         {
             setOpaque (true);
             setWantsKeyboardFocus (true);
@@ -119,50 +180,67 @@ namespace
             canvas.setComponentID ("canvas");
             liveView.setComponentID ("live-view");
             inspector.setComponentID ("inspector");
-            header.setComponentID ("header");
-            toolbar.setComponentID ("toolbar");
-            footer.setComponentID ("footer");
 
-            addAndMakeVisible (header);
-            addAndMakeVisible (toolbar);
-            addAndMakeVisible (canvas);
-            addChildComponent (liveView);
-            addAndMakeVisible (inspector);
-            addAndMakeVisible (footer);
+            if (compact)
+            {
+                buildEffectShell();
+            }
+            else
+            {
+                header->setComponentID ("header");
+                toolbar->setComponentID ("toolbar");
+                footer->setComponentID ("footer");
+
+                addAndMakeVisible (*header);
+                addAndMakeVisible (*toolbar);
+                addAndMakeVisible (canvas);
+                addChildComponent (liveView);
+                addAndMakeVisible (inspector);
+                addAndMakeVisible (*footer);
+            }
+
             addChildComponent (notice);
             addChildComponent (scrim);
             addChildComponent (settings);
             addChildComponent (help);
 
-            // ArtFreq FX: Mode and Depth in the header.
-            if (processor.isEffect())
+            if (! compact)
             {
-                effectControls = std::make_unique<ui::shell::EffectControls> (processor);
-                header.setEffectControls (effectControls.get(), ui::shell::EffectControls::getIdealWidth());
+                // Header
+                header->viewSwitch.onChange = [this] (int index) { setLiveView (index == 1); };
+                header->undoButton.onClick = [this] { undo(); };
+                header->redoButton.onClick = [this] { redo(); };
+                header->helpButton.onClick = [this] { setHelpOpen (! help.isVisible()); };
+                header->settingsButton.onClick = [this] { setSettingsOpen (! settings.isVisible()); };
+
+                // Toolbar
+                // Adding something from the live view goes back to the canvas, where it can be seen.
+                toolbar->addTextButton.onClick = [this]
+                {
+                    setLiveView (false);
+                    ui::actions::addText (processor, state);
+                };
+                toolbar->addImageButton.onClick = [this]
+                {
+                    setLiveView (false);
+                    ui::actions::chooseImage (processor, state, *this, false);
+                };
+                toolbar->clearButton.onClick = [this] { ui::actions::clearDrawing (processor, state); };
             }
 
-            // Header
-            header.viewSwitch.onChange = [this] (int index) { setLiveView (index == 1); };
-            header.undoButton.onClick = [this] { undo(); };
-            header.redoButton.onClick = [this] { redo(); };
-            header.helpButton.onClick = [this] { setHelpOpen (! help.isVisible()); };
-            header.settingsButton.onClick = [this] { setSettingsOpen (! settings.isVisible()); };
-
-            // Toolbar
-            // Adding something from the live view goes back to the canvas, where it can be seen.
-            toolbar.addTextButton.onClick = [this]
+            state.focusTextField = [this]
             {
-                setLiveView (false);
-                ui::actions::addText (processor, state);
-            };
-            toolbar.addImageButton.onClick = [this]
-            {
-                setLiveView (false);
-                ui::actions::chooseImage (processor, state, *this, false);
-            };
-            toolbar.clearButton.onClick = [this] { ui::actions::clearDrawing (processor, state); };
+                // Typing needs the text box: ArtFreq FX's drawer opens for it, right away (the
+                // selection's own message is still on its way).
+                if (compact)
+                {
+                    settingsDismissed = false;
+                    state.showLayerList (false);
+                    updateDrawer();
+                }
 
-            state.focusTextField = [this] { inspector.focusTextField(); };
+                inspector.focusTextField();
+            };
             state.showNotice = [this] (const juce::String& text) { notice.show (text); };
 
             // Panels
@@ -184,6 +262,10 @@ namespace
             tooltips = std::make_unique<juce::TooltipWindow> (this, 700);
             tooltips->setComponentID ("tooltips");
 
+            // The keyboard focus: see "The keyboard focus" below.
+            addMouseListener (&clickWatcher, true);
+            juce::Desktop::getInstance().addFocusChangeListener (this);
+
             processor.addChangeListener (this);
             state.addChangeListener (this);
             updateFromProcessor();
@@ -193,6 +275,8 @@ namespace
         ~Content() override
         {
             stopTimer();
+            juce::Desktop::getInstance().removeFocusChangeListener (this);
+            removeMouseListener (&clickWatcher);
             state.removeChangeListener (this);
             processor.removeChangeListener (this);
             state.focusTextField = nullptr;
@@ -204,6 +288,9 @@ namespace
         {
             g.fillAll (theme::bg);
 
+            if (compact)
+                return;
+
             // The inspector's column, with its divider (the inspector fills the rest).
             const auto main = getMainArea();
             g.setColour (theme::panel);
@@ -213,9 +300,15 @@ namespace
 
         void resized() override
         {
-            header.setBounds (0, 0, getWidth(), layout::headerHeight);
-            toolbar.setBounds (0, layout::headerHeight, getWidth(), layout::toolbarHeight);
-            footer.setBounds (0, getHeight() - layout::footerHeight, getWidth(), layout::footerHeight);
+            if (compact)
+            {
+                layoutEffectShell();
+                return;
+            }
+
+            header->setBounds (0, 0, getWidth(), layout::headerHeight);
+            toolbar->setBounds (0, layout::headerHeight, getWidth(), layout::toolbarHeight);
+            footer->setBounds (0, getHeight() - layout::footerHeight, getWidth(), layout::footerHeight);
 
             const auto main = getMainArea();
             inspector.setBounds (main.withLeft (layout::inspectorLeft + 1));
@@ -245,20 +338,43 @@ namespace
         }
 
         /** The editor's shortcuts. Keys arrive here only when the focused control had no use
-            for them (a text field keeps its own typing, undo and Delete). */
+            for them (a text field keeps its own typing, undo and Delete). Whatever comes back
+            unused from here goes on to the DAW: its play key (the space bar, mostly) and all its
+            other shortcuts work while this window has the focus. */
         bool handleKey (const juce::KeyPress& key)
         {
             const auto mods = key.getModifiers();
             const auto code = key.getKeyCode();
             const auto letter = juce::CharacterFunctions::toUpperCase (static_cast<juce::juce_wchar> (code));
 
+            if (key.isKeyCode (juce::KeyPress::tabKey))
+                return handleTab();
+
             if (key.isKeyCode (juce::KeyPress::escapeKey))
             {
-                if (! isPanelOpen())
-                    return false;
+                if (isPanelOpen())
+                {
+                    closePanels();
+                    return true;
+                }
 
-                closePanels();
-                return true;
+                // Esc lets go of the selection, wherever the focus is in the window.
+                if (canvas.isVisible() && canvas.keyPressed (key))
+                    return true;
+
+                // ArtFreq FX's drawer: Esc lets go of the selection there too (in the live view),
+                // and closes the layer list once nothing is selected.
+                if (compact && inspector.isVisible())
+                {
+                    if (state.hasSelection())
+                        state.setSelected (juce::Uuid::null());
+                    else
+                        setLayersOpen (false);
+
+                    return true;
+                }
+
+                return false;
             }
 
             if (mods.isCommandDown())
@@ -295,11 +411,10 @@ namespace
                 return true;
             }
 
-            if (liveView.isVisible())
-                return false;
-
             // Delete and the arrows belong to the canvas; it handles them while it has the focus.
-            // From anywhere else in the window, hand them over.
+            // From anywhere else in the window, hand them over: also from the live view, where
+            // the selection is still shown (the inspector, ArtFreq FX's drawer) and acted on.
+            // With nothing selected they are no keys of ours, and the DAW gets them.
             if (key.isKeyCode (juce::KeyPress::deleteKey) || key.isKeyCode (juce::KeyPress::backspaceKey)
                 || key.isKeyCode (juce::KeyPress::leftKey) || key.isKeyCode (juce::KeyPress::rightKey)
                 || key.isKeyCode (juce::KeyPress::upKey) || key.isKeyCode (juce::KeyPress::downKey))
@@ -325,9 +440,57 @@ namespace
         }
 
         //==============================================================================
+        // The keyboard focus (see ui/KeyFocus.h). The DAW only gets a key that nothing here used,
+        // so the focus rests where the editor's own few keys are handled, and with a text box
+        // only while it is being typed in.
+
+        void takeKeyFocusBack() override
+        {
+            if (! windowHasKeyboard())
+                return;
+
+            auto& home = settings.isVisible() ? static_cast<juce::Component&> (settings)
+                       : help.isVisible()     ? static_cast<juce::Component&> (help)
+                       : canvas.isVisible()   ? static_cast<juce::Component&> (canvas)
+                                              : static_cast<juce::Component&> (*this);
+            home.grabKeyboardFocus();
+        }
+
+        /** After a press (or a release) anywhere in the interface, once the component under the
+            mouse has dealt with it. JUCE gives a clicked button, menu or chip the focus, and
+            leaves it in a text box when the click was on something that takes none: neither
+            may keep it. */
+        void tidyKeyFocusAfterClick (const juce::MouseEvent& e, bool pressed)
+        {
+            auto* focused = juce::Component::getCurrentlyFocusedComponent();
+
+            // (A menu that is open, or a value being typed into a label, is modal and deals
+            // with clicks itself.)
+            if (focused == nullptr || ! isParentOf (focused) || juce::Component::getCurrentlyModalComponent() != nullptr)
+                return;
+
+            if (ui::isTextBox (focused))
+            {
+                // A press anywhere but in the text box ends the typing. Not a release: that is
+                // when a click gives a text box the focus (Add text, a number field, a
+                // double-click on text).
+                if (pressed && e.eventComponent != focused && ! focused->isParentOf (e.eventComponent))
+                    takeKeyFocusBack();
+
+                return;
+            }
+
+            if (! mayKeepKeyFocus (*focused))
+                takeKeyFocusBack();
+        }
+
+        //==============================================================================
         void setLiveView (bool live)
         {
-            header.viewSwitch.setSelectedIndex (live ? 1 : 0, juce::dontSendNotification);
+            if (compact)
+                topBar->liveButton.setToggleState (live, juce::dontSendNotification);
+            else
+                header->viewSwitch.setSelectedIndex (live ? 1 : 0, juce::dontSendNotification);
 
             if (live == liveView.isVisible())
                 return;
@@ -336,8 +499,17 @@ namespace
             canvas.setVisible (! live);
             liveView.setVisible (live);
 
-            // The drawing tools have nothing to act on in the live view.
-            toolbar.setDrawingToolsEnabled (! live);
+            // The drawing tools have nothing to act on in the live view: the instrument greys
+            // them, ArtFreq FX does not show them (nor the brush's settings).
+            if (compact)
+            {
+                bottomBar->setToolsShown (! live);
+                updateStrips();
+            }
+            else
+            {
+                toolbar->setDrawingToolsEnabled (! live);
+            }
         }
 
         bool isLiveViewShown() const noexcept   { return liveView.isVisible(); }
@@ -354,14 +526,19 @@ namespace
 
                 if (getWindowScale != nullptr)
                     settings.setCurrentWindowScale (getWindowScale());
+
+                settings.refresh();
             }
 
             settings.setVisible (open);
-            header.settingsButton.setToggleState (open, juce::dontSendNotification);
+            settingsButton().setToggleState (open, juce::dontSendNotification);
             updateScrim();
 
+            // The panel has the keys while it is open (Esc closes it); then the canvas again.
             if (open && isShowing())
                 settings.grabKeyboardFocus();
+            else
+                takeKeyFocusBack();
         }
 
         void setHelpOpen (bool open)
@@ -373,11 +550,13 @@ namespace
                 setSettingsOpen (false);
 
             help.setVisible (open);
-            header.helpButton.setToggleState (open, juce::dontSendNotification);
+            helpButton().setToggleState (open, juce::dontSendNotification);
             updateScrim();
 
             if (open && isShowing())
                 help.grabKeyboardFocus();
+            else
+                takeKeyFocusBack();
         }
 
         bool isPanelOpen() const noexcept   { return settings.isVisible() || help.isVisible(); }
@@ -386,9 +565,7 @@ namespace
         {
             setSettingsOpen (false);
             setHelpOpen (false);
-
-            if (isShowing())
-                grabKeyboardFocus();
+            takeKeyFocusBack();
         }
 
         void selectObject (const juce::Uuid& id)
@@ -400,7 +577,41 @@ namespace
         }
 
         juce::Uuid getSelectedObject() const   { return state.getSelected(); }
-        bool isLayerListShown() const          { return state.isLayerListShown(); }
+
+        bool isLayerListShown() const
+        {
+            return state.isLayerListShown() && (! compact || inspector.isVisible());
+        }
+
+        //==============================================================================
+        // ArtFreq FX's drawer: the inspector over one side of the canvas. It is open while the
+        // layer list is asked for (the Layers button) or an object is selected, and goes away
+        // on deselect, Esc, the button or its own close button.
+
+        bool isDrawerOpen() const noexcept     { return compact && inspector.isVisible(); }
+        bool isDrawerOnLeft() const noexcept   { return compact && drawerOnLeft; }
+
+        /** The Layers button: opens the drawer on the list, or closes it. An object selected in
+            the list stays selected (its handles on the canvas are then free of the drawer). */
+        void setLayersOpen (bool open)
+        {
+            if (! compact)
+                return;
+
+            layersWanted = open;
+
+            if (open)
+            {
+                if (state.hasSelection())
+                    state.showLayerList (true);
+            }
+            else
+            {
+                settingsDismissed = state.hasSelection();
+            }
+
+            updateDrawer();
+        }
 
         /** Called when the window's scale changes, so the settings show it. */
         void windowScaleChanged (float scale)
@@ -412,6 +623,474 @@ namespace
         std::function<float()> getWindowScale;
 
     private:
+        /** Clicks anywhere in the interface, after the component clicked has dealt with them. */
+        struct ClickWatcher final : public juce::MouseListener
+        {
+            explicit ClickWatcher (Content& c) : content (c) {}
+
+            void mouseDown (const juce::MouseEvent& e) override
+            {
+                content.noteCanvasPress (e);
+                content.tidyKeyFocusAfterClick (e, true);
+            }
+
+            void mouseUp (const juce::MouseEvent& e) override
+            {
+                content.tidyKeyFocusAfterClick (e, false);
+                content.noteCanvasRelease (e);
+            }
+
+            Content& content;
+        };
+
+        //==============================================================================
+        // ArtFreq FX's shell
+
+        void buildEffectShell()
+        {
+            topBar = std::make_unique<ui::shell::EffectTopBar> (processor);
+            bottomBar = std::make_unique<ui::shell::EffectBottomBar> (processor, state);
+            soundStrip = std::make_unique<ui::shell::SoundStrip> (processor);
+            brushStrip = std::make_unique<ui::shell::BrushStrip> (state);
+
+            addAndMakeVisible (*topBar);
+            addChildComponent (*soundStrip);
+            addAndMakeVisible (canvas);
+            addChildComponent (liveView);
+            addChildComponent (*brushStrip);
+            addAndMakeVisible (*bottomBar);
+            addChildComponent (drawerShadow);
+            addChildComponent (inspector);
+
+            topBar->liveButton.onClick = [this] { setLiveView (! liveView.isVisible()); };
+            topBar->undoButton.onClick = [this] { undo(); };
+            topBar->redoButton.onClick = [this] { redo(); };
+            topBar->helpButton.onClick = [this] { setHelpOpen (! help.isVisible()); };
+            topBar->settingsButton.onClick = [this] { setSettingsOpen (! settings.isVisible()); };
+
+            // Adding something from the live view goes back to the canvas, where it can be seen.
+            bottomBar->addTextButton.onClick = [this]
+            {
+                setLiveView (false);
+                ui::actions::addText (processor, state);
+            };
+            bottomBar->addImageButton.onClick = [this]
+            {
+                setLiveView (false);
+                ui::actions::chooseImage (processor, state, *this, false);
+            };
+            bottomBar->layersButton.onClick = [this] { setLayersOpen (! isLayerListShown()); };
+
+            // The drawer's own close button: out of the way, whatever it shows. What is selected
+            // stays selected.
+            inspector.onClose = [this] { setLayersOpen (false); };
+        }
+
+        void layoutEffectShell()
+        {
+            const auto width = getWidth(), height = getHeight();
+
+            topBar->setBounds (0, 0, width, layout::fx::topBarHeight);
+            bottomBar->setBounds (0, height - layout::fx::bottomBarHeight, width, layout::fx::bottomBarHeight);
+            soundStrip->setBounds (0, topBar->getBottom(), width, layout::fx::stripHeight);
+            brushStrip->setBounds (0, bottomBar->getY() - layout::fx::stripHeight, width, layout::fx::stripHeight);
+
+            // The canvas has what the bars and the Sound strip (while there is one) leave. The
+            // Brush strip lies over the canvas's time axis, which the canvas keeps the strip's
+            // room for (effectCanvasBottom): pressing B, E or V never resizes the canvas, so the
+            // drawing does not move or squash under the brush (and nothing is redrawn at a new
+            // size). The Sound strip comes and goes only with the mode, which redraws the
+            // canvas anyway.
+            effectMain = { 0, topBar->getBottom(), width, bottomBar->getY() - topBar->getBottom() };
+
+            if (soundStrip->isVisible())
+                effectMain.removeFromTop (layout::fx::stripHeight);
+
+            auto view = effectMain.withTrimmedLeft (layout::effectCanvasLeft)
+                                  .withTrimmedTop (layout::effectCanvasTop)
+                                  .withTrimmedRight (layout::effectCanvasRight)
+                                  .withTrimmedBottom (layout::effectCanvasBottom);
+
+            // An object too wide for the room beside the drawer: the canvas moves aside (see
+            // placeDrawer), so all of it stays in view, handles included.
+            if (canvasBeside)
+            {
+                const auto drawer = drawerBounds (drawerOnLeft);
+                view = drawerOnLeft ? view.withLeft (drawer.getRight() + layout::effectCanvasLeft)
+                                    : view.withRight (drawer.getX() - layout::effectCanvasRight);
+            }
+
+            canvas.setBounds (view);
+            liveView.setBounds (view);
+            layoutDrawer();
+
+            notice.setBounds (view.withTrimmedLeft (ui::CanvasView::axisWidth)
+                                  .withTrimmedBottom (ui::CanvasView::axisHeight + 10)
+                                  .removeFromBottom (noticeHeight)
+                                  .reduced (12, 0));
+
+            scrim.setBounds (getLocalBounds());
+            layoutPanels();
+        }
+
+        /** The strips are there only while they have something to act on: the sines' settings in
+            the modes that play the sines, the brush's while the brush or the eraser is the tool
+            (and the canvas is shown). */
+        void updateStrips()
+        {
+            const auto sound = playsSines (processor.getEffectMode());
+            const auto brush = state.getTool() != ui::Tool::select && ! liveView.isVisible();
+
+            if (soundStrip->isVisible() == sound && brushStrip->isVisible() == brush)
+                return;
+
+            soundStrip->setVisible (sound);
+            brushStrip->setVisible (brush);
+            resized();
+        }
+
+        /** The drawer's place: one side of the canvas's room, between the strips that are
+            there (the Brush strip lies over the canvas, not over the drawer). */
+        juce::Rectangle<int> drawerBounds (bool onLeft) const
+        {
+            auto room = effectMain;
+
+            if (brushStrip->isVisible())
+                room.removeFromBottom (layout::fx::stripHeight);
+
+            return onLeft ? room.withWidth (layout::drawerWidth)
+                          : room.withLeft (room.getRight() - layout::drawerWidth);
+        }
+
+        /** Where the canvas would be with the window's whole width. */
+        juce::Rectangle<int> fullCanvasBounds() const
+        {
+            return effectMain.withTrimmedLeft (layout::effectCanvasLeft)
+                             .withTrimmedTop (layout::effectCanvasTop)
+                             .withTrimmedRight (layout::effectCanvasRight)
+                             .withTrimmedBottom (layout::effectCanvasBottom);
+        }
+
+        void layoutDrawer()
+        {
+            const auto bounds = drawerBounds (drawerOnLeft);
+            inspector.setOnLeft (drawerOnLeft);
+            inspector.setBounds (bounds);
+            drawerShadow.setOnLeft (drawerOnLeft);
+            drawerShadow.setBounds (drawerOnLeft ? bounds.withX (bounds.getRight()).withWidth (layout::drawerShadow)
+                                                 : bounds.withX (bounds.getX() - layout::drawerShadow).withWidth (layout::drawerShadow));
+        }
+
+        /** Moves the canvas aside for the drawer, or back to the window's whole width. Not while
+            the canvas is pressed: a drag would lose the object under the mouse. The change then
+            waits for the release (noteCanvasRelease). */
+        void setCanvasBeside (bool beside)
+        {
+            if (canvas.isMouseButtonDown())
+            {
+                besideAfterPress = beside;
+                return;
+            }
+
+            besideAfterPress.reset();
+
+            if (beside == canvasBeside)
+                return;
+
+            canvasBeside = beside;
+            layoutEffectShell();
+
+            // (Beside the canvas, the drawer casts no shadow on it.)
+            drawerShadow.setVisible (inspector.isVisible() && ! canvasBeside);
+        }
+
+        /** Whether the drawer is open, what it shows, and on which side. Called on every change
+            of the drawing or the selection, and by whatever opens or closes it. */
+        void updateDrawer()
+        {
+            const auto selected = state.getSelected();
+            const auto selectionChanged = selected != drawerSelection;
+            drawerSelection = selected;
+
+            // A dismissal (the close button) lasts as long as its selection.
+            if (selectionChanged || selected.isNull())
+                settingsDismissed = false;
+
+            // Picked in the list, or back to it from an object's settings: the list is wanted, and
+            // stays when the object is let go of.
+            if (state.hasSelection() && state.isLayerListShown() && ! settingsDismissed)
+                layersWanted = true;
+
+            const auto open = layersWanted || (state.hasSelection() && ! settingsDismissed);
+            const auto showsSettings = open && state.hasSelection() && ! state.isLayerListShown();
+            const auto wasOpen = inspector.isVisible();
+            const auto showedSettings = drawerShowsSettings;
+            drawerShowsSettings = showsSettings;
+
+            if (showsSettings)
+                settingsDismissed = false;
+
+            // The canvas beside the drawer belongs to an object's settings: anything else lies
+            // over the canvas. While the same object's settings stay open the canvas never comes
+            // back from beside them (that would move the drawing for nothing); an object that
+            // grows under them (Fill length, a resize) moves it aside.
+            auto beside = besideAfterPress.value_or (canvasBeside);
+
+            if (! open)
+            {
+                drawerOnLeft = false;                // it opens on the right
+                beside = false;
+            }
+            else if (! showsSettings)
+            {
+                beside = false;
+            }
+            else if (! wasOpen || ! showedSettings || selectionChanged)
+            {
+                beside = placeDrawer (true, {});
+            }
+            else if (! beside && ! canvas.isMouseButtonDown() && coversObject (drawerOnLeft) && coversObject (! drawerOnLeft))
+            {
+                beside = true;   // grown too wide for either side (a drag decides on its release)
+            }
+
+            const auto hadFocus = wasOpen && inspector.hasKeyboardFocus (true);
+
+            setCanvasBeside (beside);
+            layoutDrawer();
+            inspector.setVisible (open);
+            drawerShadow.setVisible (open && ! canvasBeside);
+            bottomBar->layersButton.setToggleState (open && state.isLayerListShown(), juce::dontSendNotification);
+
+            // (JUCE hands the focus of something hidden to its parent: the canvas is its home.)
+            if (hadFocus && ! open)
+                takeKeyFocusBack();
+        }
+
+        /** Where the selected object lies across the canvas at its whole width, with its
+            handles, in this component's x (empty if nothing is selected). */
+        juce::Range<float> objectSpan() const
+        {
+            const auto* object = processor.getDocument().find (state.getSelected());
+
+            if (object == nullptr)
+                return {};
+
+            const auto drawing = ui::axes::plotArea (fullCanvasBounds(), ui::CanvasView::axisWidth, ui::CanvasView::axisHeight).toFloat();
+            const auto reach = ui::CanvasView::handleReach;
+            return { drawing.getX() + object->startTime * drawing.getWidth() - reach,
+                     drawing.getX() + object->endTime * drawing.getWidth() + reach };
+        }
+
+        /** Whether the drawer on that side would lie over any of the selected object (or its
+            handles) on the canvas at its whole width. */
+        bool coversObject (bool onLeft) const
+        {
+            const auto span = objectSpan();
+            const auto drawer = drawerBounds (onLeft).toFloat();
+            return ! span.isEmpty() && span.getStart() < drawer.getRight() && span.getEnd() > drawer.getX();
+        }
+
+        /** The drawer gets out of the way of what it is for. An object's settings open on the
+            right, unless there they would cover any of the object or the spot just clicked on
+            the canvas: then on the left. So the object stays in view while its settings change
+            it, its handles stay free, and the drawer never opens under the mouse, where the
+            second click of a double-click would land on one of its controls. An object too wide
+            for either side (more than about two thirds of the canvas: new text, Fill length, a
+            new window's "ArtFreq") gets the room it needs: the canvas moves aside, beside the
+            drawer, on the side away from the click. `mouse` (in this component's coordinates),
+            if given, is somewhere the drawer must not move to. Returns whether the canvas is to
+            be beside the drawer; the side is set. */
+        bool placeDrawer (bool usePress, std::optional<juce::Point<int>> mouse)
+        {
+            if (processor.getDocument().find (state.getSelected()) == nullptr)
+                return false;
+
+            const auto pressed = usePress && pressOnCanvas
+                              && juce::Time::getMillisecondCounter() - canvasPressTime < canvasPressMilliseconds;
+
+            const auto inTheWay = [&] (bool onLeft)
+            {
+                const auto bounds = drawerBounds (onLeft);
+                return (pressed && bounds.contains (canvasPress)) || (mouse.has_value() && bounds.contains (*mouse));
+            };
+
+            const auto free = [&] (bool onLeft) { return ! coversObject (onLeft) && ! inTheWay (onLeft); };
+
+            if (free (drawerOnLeft))
+                return false;
+
+            if (free (! drawerOnLeft))
+            {
+                drawerOnLeft = ! drawerOnLeft;
+                return false;
+            }
+
+            // Too wide for either side: beside the canvas, away from the click.
+            if (inTheWay (drawerOnLeft))
+                drawerOnLeft = ! drawerOnLeft;
+
+            return true;
+        }
+
+        /** A press on the canvas: where, and when (see placeDrawer). */
+        void noteCanvasPress (const juce::MouseEvent& e)
+        {
+            if (! compact)
+                return;
+
+            pressOnCanvas = e.eventComponent == &canvas;
+
+            if (pressOnCanvas)
+            {
+                canvasPress = getLocalPoint (&canvas, e.position).roundToInt();
+                canvasPressTime = juce::Time::getMillisecondCounter();
+            }
+        }
+
+        /** The canvas let go of, after it has dealt with the release. A click on the selected
+            object brings its settings back if they were closed; after a drag the drawer moves
+            aside if the object went under it. */
+        void noteCanvasRelease (const juce::MouseEvent& e)
+        {
+            if (! compact || e.eventComponent != &canvas)
+                return;
+
+            // What waited for the release: the canvas moving aside for (or back from) the drawer.
+            if (besideAfterPress.has_value())
+                setCanvasBeside (*besideAfterPress);
+
+            if (! state.hasSelection())
+                return;
+
+            if (! e.mouseWasDraggedSinceMouseDown())
+            {
+                if (settingsDismissed && ! layersWanted)
+                {
+                    settingsDismissed = false;
+                    updateDrawer();
+                }
+            }
+            else if (inspector.isVisible() && ! state.isLayerListShown() && ! canvasBeside)
+            {
+                // Dragged under the drawer: it moves aside (never to under the mouse), or the
+                // canvas does.
+                const auto side = drawerOnLeft;
+                const auto beside = placeDrawer (false, getLocalPoint (&canvas, e.position).roundToInt());
+
+                if (beside)
+                    setCanvasBeside (true);
+                else if (side != drawerOnLeft)
+                    layoutDrawer();
+            }
+        }
+
+        juce::Button& helpButton()       { return compact ? static_cast<juce::Button&> (topBar->helpButton) : header->helpButton; }
+        juce::Button& settingsButton()   { return compact ? static_cast<juce::Button&> (topBar->settingsButton) : header->settingsButton; }
+
+        /** Whether this window has the keyboard: only then is the focus taken (or taken back),
+            never from another window. */
+        bool windowHasKeyboard() const
+        {
+            if (! isShowing())
+                return false;
+
+            const auto* peer = getPeer();
+            return peer != nullptr && peer->isFocused();
+        }
+
+        bool isInThisWindow (const juce::Component* component) const
+        {
+            return component != nullptr && (component == this || isParentOf (component) || component->isParentOf (this));
+        }
+
+        /** Where the focus may rest: with something that handles keys of its own, or in a text box. */
+        bool mayKeepKeyFocus (const juce::Component& component) const
+        {
+            return &component == this || ui::keepsKeyFocus (component) || ui::isTextBox (&component);
+        }
+
+        /** Ends the typing in a text box: what was typed stays (a value typed into a label is
+            set, and the label stops being modal), and the focus goes back to the canvas. */
+        void finishTyping (juce::Component& textBox)
+        {
+            if (auto* label = dynamic_cast<juce::Label*> (textBox.getParentComponent()))
+                label->hideEditor (false);
+
+            takeKeyFocusBack();
+        }
+
+        /** Tab is no key of ours, but JUCE takes it wherever a component has the focus: it
+            moves the focus to the next control and calls the key used, so the DAW never sees
+            it (and the focus would sit on a button nobody clicked, where Return presses it). */
+        bool handleTab()
+        {
+            auto* focused = juce::Component::getCurrentlyFocusedComponent();
+
+            // In a text box, Tab ends the typing as Return does.
+            if (ui::isTextBox (focused) && isInThisWindow (focused))
+            {
+                finishTyping (*focused);
+                return true;
+            }
+
+            // (An open menu has the keys.)
+            if (focused == nullptr || ! isInThisWindow (focused) || juce::Component::getCurrentlyModalComponent() != nullptr)
+                return false;
+
+            // So the focus is let go of for the moment of the key press, which then comes back
+            // unused, and taken up again right after, if the window still has the keyboard (the
+            // DAW may have done something with its Tab).
+            juce::Component::SafePointer<juce::Component> previous (focused);
+            juce::Component::unfocusAllComponents();
+
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<Content> (this), previous]
+            {
+                if (safe == nullptr || juce::Component::getCurrentlyFocusedComponent() != nullptr || ! safe->windowHasKeyboard())
+                    return;
+
+                if (previous != nullptr && previous->isShowing())
+                    previous->grabKeyboardFocus();
+                else
+                    safe->takeKeyFocusBack();
+            });
+
+            return false;
+        }
+
+        /** The focus has moved (JUCE reports it a moment later). Two things a click does not
+            cover are put right here, both about a text box that is done with. */
+        void globalFocusChanged (juce::Component* focused) override
+        {
+            const auto wasTyping = typing;
+            const auto textBox = typingBox;
+
+            typing = ui::isTextBox (focused) && isInThisWindow (focused);
+            typingBox = typing ? focused : nullptr;
+
+            if (! wasTyping || typing)
+                return;
+
+            if (textBox != nullptr && textBox->isShowing())
+            {
+                // The text box is still there and the focus went nowhere: the window lost the
+                // keyboard (the user clicked in the DAW). A value being typed into a label is
+                // set: the label is modal while it is edited, and a modal component left behind
+                // would swallow every key once the window has the keyboard again.
+                if (focused == nullptr)
+                    if (auto* label = dynamic_cast<juce::Label*> (textBox->getParentComponent()))
+                        label->hideEditor (false);
+
+                return;
+            }
+
+            // The text box has gone (a value typed into a bar was set, the object it belonged to
+            // was deleted): JUCE gives the focus to the first control it finds, a button or a
+            // menu, where it must not stay.
+            if (focused == nullptr || (isParentOf (focused) && ! mayKeepKeyFocus (*focused)))
+                takeKeyFocusBack();
+        }
+
         juce::Rectangle<int> getMainArea() const
         {
             return { 0, layout::mainTop, getWidth(), getHeight() - layout::mainTop - layout::footerHeight };
@@ -420,12 +1099,18 @@ namespace
         void layoutPanels()
         {
             const auto settingsHeight = settings.getIdealHeight();
-            settings.setBounds (getWidth() - layout::pad - ui::shell::SettingsPanel::width, layout::settingsTop,
-                                ui::shell::SettingsPanel::width, settingsHeight);
+
+            // ArtFreq FX's settings are nearly as wide as its window: centred under the top bar.
+            if (compact)
+                settings.setBounds ((getWidth() - settings.getPanelWidth()) / 2, layout::effectSettingsTop,
+                                    settings.getPanelWidth(), settingsHeight);
+            else
+                settings.setBounds (getWidth() - layout::pad - ui::shell::SettingsPanel::width, layout::settingsTop,
+                                    ui::shell::SettingsPanel::width, settingsHeight);
 
             const auto helpHeight = juce::jmin (help.getIdealHeight(), getHeight() - 32);
-            help.setBounds ((getWidth() - ui::shell::HelpPanel::width) / 2, (getHeight() - helpHeight) / 2,
-                            ui::shell::HelpPanel::width, helpHeight);
+            help.setBounds ((getWidth() - help.getPanelWidth()) / 2, (getHeight() - helpHeight) / 2,
+                            help.getPanelWidth(), helpHeight);
         }
 
         void updateScrim()
@@ -449,13 +1134,26 @@ namespace
 
         void updateFromProcessor()
         {
-            header.undoButton.setEnabled (processor.canUndo());
-            header.redoButton.setEnabled (processor.canRedo());
-            toolbar.clearButton.setEnabled (! processor.getDocument().isEmpty());
+            if (compact)
+            {
+                topBar->setUndoState (processor.canUndo(), processor.canRedo());
+            }
+            else
+            {
+                header->undoButton.setEnabled (processor.canUndo());
+                header->redoButton.setEnabled (processor.canRedo());
+                toolbar->clearButton.setEnabled (! processor.getDocument().isEmpty());
+            }
 
             // An undo can take the selected object away.
             if (state.hasSelection() && processor.getDocument().find (state.getSelected()) == nullptr)
                 state.setSelected (juce::Uuid::null());
+
+            if (compact)
+            {
+                updateStrips();
+                updateDrawer();
+            }
         }
 
         void changeListenerCallback (juce::ChangeBroadcaster*) override
@@ -465,30 +1163,60 @@ namespace
 
         void timerCallback() override
         {
-            footer.refresh();
-
-            if (effectControls != nullptr)
+            if (! compact)
             {
-                effectControls->refresh();
-                inspector.refreshEffectMode();
+                footer->refresh();
+                return;
             }
+
+            // What follows the parameters, which automation moves too.
+            topBar->refresh();
+            bottomBar->refresh();
+            updateStrips();
+
+            if (settings.isVisible())
+                settings.refresh();
         }
 
         ArtFreqProcessor& processor;
+        const bool compact;   // ArtFreq FX's window
         ui::EditorState state;
 
-        ui::shell::Header header;
-        ui::shell::Toolbar toolbar;
+        std::unique_ptr<ui::shell::Header> header;     // the instrument's shell: header, toolbar ...
+        std::unique_ptr<ui::shell::Toolbar> toolbar;
         ui::CanvasView canvas;
         ui::LiveView liveView;
         ui::Inspector inspector;
-        ui::shell::Footer footer;
+        std::unique_ptr<ui::shell::Footer> footer;     // ... and footer
         Notice notice;
         ui::shell::Scrim scrim;
         ui::shell::SettingsPanel settings;
         ui::shell::HelpPanel help;
-        std::unique_ptr<ui::shell::EffectControls> effectControls;   // ArtFreq FX only
+
+        // ArtFreq FX's shell.
+        std::unique_ptr<ui::shell::EffectTopBar> topBar;
+        std::unique_ptr<ui::shell::EffectBottomBar> bottomBar;
+        std::unique_ptr<ui::shell::SoundStrip> soundStrip;
+        std::unique_ptr<ui::shell::BrushStrip> brushStrip;
+        DrawerShadow drawerShadow;
+        juce::Rectangle<int> effectMain;                 // between the bars and strips: the canvas's room
+        bool layersWanted = false;                       // the Layers button is on
+        bool settingsDismissed = false;                  // the drawer was closed on the current selection
+        bool drawerOnLeft = false;
+        bool drawerShowsSettings = false;                // an object's settings, not the list
+        bool canvasBeside = false;                       // the canvas lies beside the drawer, not under it
+        std::optional<bool> besideAfterPress;            // ... changing when the canvas is let go of
+        juce::Uuid drawerSelection = juce::Uuid::null(); // the selection the drawer last saw
+        bool pressOnCanvas = false;                      // the last press was on the canvas, there and then:
+        juce::Point<int> canvasPress;
+        juce::uint32 canvasPressTime = 0;
+
         std::unique_ptr<juce::TooltipWindow> tooltips;
+
+        // The keyboard focus: the text box that had it when it last moved (see globalFocusChanged).
+        ClickWatcher clickWatcher { *this };
+        bool typing = false;
+        juce::Component::SafePointer<juce::Component> typingBox;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Content)
     };
@@ -498,7 +1226,10 @@ namespace
 struct ArtFreqEditor::Impl final : private juce::KeyListener
 {
     Impl (ArtFreqEditor& owner, ArtFreqProcessor& p)
-        : editor (owner), processor (p), content (p)
+        : editor (owner), processor (p),
+          baseW (p.isEffect() ? effectBaseWidth : baseWidth),
+          baseH (p.isEffect() ? effectBaseHeight : baseHeight),
+          content (p)
     {
         // Setting the look-and-feel after the content has been added tells every child about
         // it, which is when the sliders create their value boxes.
@@ -527,17 +1258,11 @@ struct ArtFreqEditor::Impl final : private juce::KeyListener
         editor.setLookAndFeel (nullptr);
     }
 
-    static float scaleForWidth (int width)
-    {
-        return juce::jlimit (minWindowScale, maxWindowScale,
-                             static_cast<float> (width) / static_cast<float> (baseWidth));
-    }
-
     void setWindowScale (float scale)
     {
         scale = juce::jlimit (minWindowScale, maxWindowScale, scale);
-        editor.setSize (juce::roundToInt (static_cast<float> (baseWidth) * scale),
-                        juce::roundToInt (static_cast<float> (baseHeight) * scale));
+        editor.setSize (juce::roundToInt (static_cast<float> (baseW) * scale),
+                        juce::roundToInt (static_cast<float> (baseH) * scale));
     }
 
     /** Scales the interface to fill the window. If a host forces another aspect ratio the
@@ -547,22 +1272,22 @@ struct ArtFreqEditor::Impl final : private juce::KeyListener
         const auto width = static_cast<float> (editor.getWidth());
         const auto height = static_cast<float> (editor.getHeight());
 
-        currentScale = juce::jmax (0.1f, juce::jmin (width / static_cast<float> (baseWidth),
-                                                     height / static_cast<float> (baseHeight)));
+        currentScale = juce::jmax (0.1f, juce::jmin (width / static_cast<float> (baseW),
+                                                     height / static_cast<float> (baseH)));
 
-        const auto offsetX = std::round ((width - static_cast<float> (baseWidth) * currentScale) * 0.5f);
-        const auto offsetY = std::round ((height - static_cast<float> (baseHeight) * currentScale) * 0.5f);
+        const auto offsetX = std::round ((width - static_cast<float> (baseW) * currentScale) * 0.5f);
+        const auto offsetY = std::round ((height - static_cast<float> (baseH) * currentScale) * 0.5f);
 
         content.setTransform ({});
-        content.setBounds (0, 0, baseWidth, baseHeight);
+        content.setBounds (0, 0, baseW, baseH);
         content.setTransform (juce::AffineTransform::scale (currentScale).translated (offsetX, offsetY));
         content.windowScaleChanged (currentScale);
     }
 
     bool contentFillsWindow() const
     {
-        return std::abs (static_cast<float> (baseWidth) * currentScale - static_cast<float> (editor.getWidth())) < 0.75f
-            && std::abs (static_cast<float> (baseHeight) * currentScale - static_cast<float> (editor.getHeight())) < 0.75f;
+        return std::abs (static_cast<float> (baseW) * currentScale - static_cast<float> (editor.getWidth())) < 0.75f
+            && std::abs (static_cast<float> (baseH) * currentScale - static_cast<float> (editor.getHeight())) < 0.75f;
     }
 
     bool keyPressed (const juce::KeyPress& key, juce::Component*) override
@@ -578,6 +1303,7 @@ struct ArtFreqEditor::Impl final : private juce::KeyListener
 
     ArtFreqEditor& editor;
     ArtFreqProcessor& processor;
+    const int baseW, baseH;   // this plug-in's window at 100 %
     std::shared_ptr<ui::ArtFreqLookAndFeel> lookAndFeel = std::make_shared<ui::ArtFreqLookAndFeel>();   // outlives the content
     Content content;
     float currentScale = 1.0f;
@@ -595,6 +1321,7 @@ ArtFreqEditor::ArtFreqEditor (ArtFreqProcessor& p)
     // The size this instance had last time (0 = never resized: 100 %). Read first: setting the
     // limits below resizes the window, which would overwrite it.
     const auto savedWidth = p.getEditorWidth();
+    const auto savedHeight = p.getEditorHeight();
 
     impl = std::make_unique<Impl> (*this, p);
 
@@ -604,13 +1331,13 @@ ArtFreqEditor::ArtFreqEditor (ArtFreqProcessor& p)
     const auto limit = [] (int base, float scale) { return juce::roundToInt (static_cast<float> (base) * scale); };
 
     setResizable (true, true);
-    setResizeLimits (limit (baseWidth, minWindowScale), limit (baseHeight, minWindowScale),
-                     limit (baseWidth, maxWindowScale), limit (baseHeight, maxWindowScale));
+    setResizeLimits (limit (impl->baseW, minWindowScale), limit (impl->baseH, minWindowScale),
+                     limit (impl->baseW, maxWindowScale), limit (impl->baseH, maxWindowScale));
 
     if (auto* limits = getConstrainer())
-        limits->setFixedAspectRatio (static_cast<double> (baseWidth) / static_cast<double> (baseHeight));
+        limits->setFixedAspectRatio (static_cast<double> (impl->baseW) / static_cast<double> (impl->baseH));
 
-    impl->setWindowScale (savedWidth > 0 ? Impl::scaleForWidth (savedWidth) : 1.0f);
+    impl->setWindowScale (scaleForSavedSize (p.isEffect(), savedWidth, savedHeight));
     impl->updateLayout();
     impl->rememberSize = true;
 }
@@ -618,6 +1345,33 @@ ArtFreqEditor::ArtFreqEditor (ArtFreqProcessor& p)
 ArtFreqEditor::~ArtFreqEditor()
 {
     impl.reset();
+}
+
+int ArtFreqEditor::getBaseWidth() const noexcept    { return impl->baseW; }
+int ArtFreqEditor::getBaseHeight() const noexcept   { return impl->baseH; }
+
+float ArtFreqEditor::scaleForSavedSize (bool effect, int width, int height) noexcept
+{
+    if (width <= 0)
+        return 1.0f;   // never resized
+
+    auto base = effect ? effectBaseWidth : baseWidth;
+
+    // ArtFreq FX had the instrument's window until 0.4, and what is saved is a size in pixels,
+    // not a scale. The two windows have different shapes (1120 : 720 and 720 : 440), so the
+    // shape says which one a size was saved with: one saved with the large window opens at the
+    // same scale of the small one, rather than as large as it was.
+    if (effect && height > 0)
+    {
+        const auto shape = static_cast<float> (width) / static_cast<float> (height);
+        const auto large = static_cast<float> (baseWidth) / static_cast<float> (baseHeight);
+        const auto small = static_cast<float> (effectBaseWidth) / static_cast<float> (effectBaseHeight);
+
+        if (std::abs (shape - large) < std::abs (shape - small))
+            base = baseWidth;
+    }
+
+    return juce::jlimit (minWindowScale, maxWindowScale, static_cast<float> (width) / static_cast<float> (base));
 }
 
 void ArtFreqEditor::paint (juce::Graphics& g)
@@ -666,6 +1420,21 @@ juce::Uuid ArtFreqEditor::getSelectedObject() const
 bool ArtFreqEditor::isLayerListShown() const
 {
     return impl->content.isLayerListShown();
+}
+
+void ArtFreqEditor::showLayers (bool shouldShow)
+{
+    impl->content.setLayersOpen (shouldShow);
+}
+
+bool ArtFreqEditor::isDrawerOpen() const
+{
+    return impl->content.isDrawerOpen();
+}
+
+bool ArtFreqEditor::isDrawerOnLeft() const
+{
+    return impl->content.isDrawerOnLeft();
 }
 
 } // namespace artfreq
