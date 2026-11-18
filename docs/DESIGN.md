@@ -999,8 +999,9 @@ bright as the lines); exchange (versions, garbage); engine
 speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass on
 play: starting anywhere in the song at any block sizes, in the first block the tracker sees and
 after reset, stop and start, a DAW loop longer and shorter than the pass and one beginning
-inside it, relocations inside, before and after it, tempo changes and ramps, a typed tempo, no
-ppq and no time, a count-in and a pre-roll, Length and the meter changing while it plays,
+inside it, play pressed before a loop that begins inside the first pass, relocations forwards
+and back inside it, before and after it, waiting for sound (at any block sizes, a typed tempo, no
+position), tempo changes and ramps, a typed tempo, no ppq and no time, a count-in and a pre-roll, Length and the meter changing while it plays,
 switching Repeat, Start at and the trigger while it plays, the preview over it; the single pass
 from a start bar: its start and end, starting the DAW inside it, relocations before, after and into it,
 a host loop over it, the host's meter and tempo, time-signature changes before, at, inside and
@@ -1026,8 +1027,10 @@ deleting, the paint row; clicking again, Alt-click and the right-click menu on t
 live view's span, unreadable pictures; under a virtual display on Linux); the keyboard focus
 (`KeyFocusTests.cpp`, the editor in a real window, Linux only: the space bar unused after a
 click on anything, in both plug-ins; selecting text not typing; the text box, number fields and
-typed values giving the focus back on Return, Esc, Tab and a click elsewhere; Tab; the panels;
-the live view). Hidden layers: the
+typed values giving the focus back on Return, Esc, Tab and a click elsewhere; one click on a
+number field and the space bar playing the DAW, the space bar setting a typed number or a
+knob's value; Tab; the panels; the live view, and Delete and the arrows acting there on the
+selection, in both plug-ins). Hidden layers: the
 document round trip (order, visibility, file names, old documents shown) and the compositor
 leaving them out. Carving: the mask plan (rows to Hz, columns, band averages, clipping, the
 halo), mask plans through the exchange, and the baseline engine (bit-exact with nothing to
@@ -1048,24 +1051,30 @@ exactly the instrument's output one latency late, bypass keeping the latency (an
 and out of it), every mode switch and Depth jumps without clicks, states between the two
 variants, mono and stereo, 44.1 and 96 kHz, block sizes from 1 to 4096 (the carve exact, the
 sines as the instrument's), MIDI and Preview with the DAW stopped, and, as it comes, carving
-from where the DAW starts playing (bar 33) for one pass. Its editor
+from where the DAW starts playing (bar 33) for one pass, Carve and Stencil waiting for a track's
+audio that comes in after play (and the Draw modes not), and its infinite tail, played through a
+host that suspends effects over silent input: one pass, not one per audio region. Its editor
 (`EffectUiTests.cpp`): the small window and what it leaves out, Mode and Depth and automation
 moving them, what each mode and tool shows and that nothing shown is greyed, the bottom bar's
-line in every way of playing (and its shorter form fitting), the drawer (objects, the list, the
-side it opens on, closing it), the timing in Settings, both panels fitting the window, the
+line in every way of playing (and its shorter form fitting; waiting for audio; a DAW loop
+shorter than the drawing), the drawer (objects, the list, the side it opens on, closing it; a
+wide object's settings beside the canvas, all of it in view, and Fill length moving the canvas
+aside), the Brush strip over the canvas's time axis, the timing in Settings, both panels fitting the window, the
 window sizes and a size saved with the old large window, and the canvas in each mode (black
 where Carve carves at -80 dB, Stencil the other way round, Carve + Draw's halo dark and its
 sines bright, nothing drawn leaving the stand-in) and following Level.
 
 `ArtFreqSnapshot <dir>` renders the editor in its main states to PNG (ArtFreq FX's as
-`artfreq-fx-*.png`: a new window, each mode, a shallow Depth typed in, the Mode tooltip, a
-text's settings in the drawer on the right, its right-click menu, a picture's settings on the
+`artfreq-fx-*.png`: a new window, its "ArtFreq" selected and "+ Text" typed into (the canvas
+beside the drawer), each mode, a shallow Depth typed in, the Mode tooltip, a text's settings in
+the drawer on the right, its right-click menu, a picture's settings on the
 left, the layer list, the brush, Draw while painting with the list open (both strips and the
 drawer: the least room there is), Repeat, the Length menu, the settings with On play and with
 At bar and a typed tempo, the live view of a stand-in song carved by the real processor, the
 help, an empty drawing, 75 / 100 / 150 / 200 %, with checks in each state that the bars,
-strips and canvas share the window, that nothing overlaps, leaves its bar or is greyed, and
-that the bottom bar's line fits; Mode, Depth, the Sound strip, the drawer, the list, the brush
+strips and canvas share the window (the Brush strip over the canvas's time axis, clear of the
+drawing), that nothing overlaps, leaves its bar or is greyed, that the bottom bar's line fits,
+and that an object whose settings are open is in view with its handles, clear of the drawer; Mode, Depth, the Sound strip, the drawer, the list, the brush
 and the settings driven with the mouse; a size saved with the old large window; and the
 instrument's: the default "Plays once when you press play", the start choice's menu, Repeat, MIDI with Repeat, a start bar and typing one, the footer's
 timing columns alone for On play and At bar at 75, 100, 150 and 200 % among them, "layers": five objects, one hidden, one selected from the
