@@ -15,6 +15,11 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# Windows (MSVC): link the C and C++ runtime into each binary, so the plug-ins need no Visual C++
+# redistributable on the buyer's machine. Set before any target (JUCE's included) is created:
+# targets take it from here when they are made. CI checks the plug-ins' imports.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 option(ARTFREQ_BUILD_TESTS "Build the test runner" ON)
 option(ARTFREQ_BUILD_TOOLS "Build the headless UI snapshot tool and the lows and carving labs" ON)
 option(ARTFREQ_COPY_PLUGIN_AFTER_BUILD "Copy the built plug-in into the user's VST3 folder" OFF)
@@ -68,6 +73,9 @@ target_link_libraries(ArtFreqBuildFlags INTERFACE
 if(ARTFREQ_ENABLE_LTO)
     target_link_libraries(ArtFreqBuildFlags INTERFACE juce::juce_recommended_lto_flags)
 endif()
+# MSVC reads a source file without a byte order mark in the system's code page; read every
+# file as UTF-8 (as GCC and Clang do), and keep string literals UTF-8.
+target_compile_options(ArtFreqBuildFlags INTERFACE $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 
 set(ARTFREQ_JUCE_MODULES
     juce::juce_audio_processors
