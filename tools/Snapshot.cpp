@@ -112,6 +112,7 @@
 #include "ui/CanvasAxes.h"
 #include "ui/EffectShell.h"
 #include "ui/Inspector.h"
+#include "ui/KeyFocus.h"
 #include "ui/LayerList.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
@@ -2292,8 +2293,12 @@ struct KeyRig
 
     // ---- the keyboard, through the window -------------------------------------------------------
     /** Whether a text box is being typed in: macOS then sends the keys there, as text, before
-        anything else gets to see them. */
+        anything else gets to see them. (A number typed into a field, a knob or a bar is not: its
+        keys come as key presses, so the space bar can still go on; see editing().) */
     bool typing() const   { return peer()->findCurrentTextInputTarget() != nullptr; }
+
+    /** Whether a text box has the focus: the object's text, or a number being typed. */
+    bool editing() const   { return artfreq::ui::isTextBox (juce::Component::getCurrentlyFocusedComponent()); }
 
     /** Presses a key and lets it go. Returns whether it was used, so that the DAW would not get
         it. */
@@ -2575,12 +2580,17 @@ void checkKeys (const juce::File& outputDir, float pixelScale)
         spaceIsTheDaws ("with the start bar field shown, not edited");
 
         rig.click ("start-bar");
-        check (rig.typing(), name + ": a click on the start bar field starts typing into it");
-        check (rig.usesSpace(), name + ": ... where the space bar is the field's");
+        check (rig.editing() && ! rig.typing(), name + ": a click on the start bar field starts typing a number into it");
+        rig.type ("9");
+        check (! rig.usesSpace() && juce::roundToInt (processor.getParameters().getRawParameterValue (params::id::startBar)->load()) == 9,
+               name + ": ... where the space bar sets the typed bar and is the DAW's (a number has no spaces)");
+        check (! rig.editing() && rig.hasFocus ("canvas"), name + ": ... and the focus is the canvas's again");
+
+        rig.click ("start-bar");
         rig.type ("12");
         check (rig.uses (returnKey) && juce::roundToInt (processor.getParameters().getRawParameterValue (params::id::startBar)->load()) == 12,
                name + ": Return sets the typed bar");
-        check (! rig.typing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
+        check (! rig.editing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
         spaceIsTheDaws ("after typing a start bar");
 
         rig.click ("start-bar");
@@ -2596,7 +2606,7 @@ void checkKeys (const juce::File& outputDir, float pixelScale)
 
     // A knob's value, typed (its label is modal while it is edited).
     rig.doubleClick (rig.get ("level"), { 38.0f, 72.0f });
-    check (rig.typing() && juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a double-click on a knob's value types into it");
+    check (rig.editing() && juce::Component::getCurrentlyModalComponent() != nullptr, name + ": a double-click on a knob's value types into it");
     rig.type ("-12");
     check (rig.uses (returnKey) && std::abs (processor.getParameters().getRawParameterValue (params::id::level)->load() + 12.0f) < 1.0e-3f,
            name + ": Return sets the typed level");
@@ -2768,6 +2778,9 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     // Depth, dragged; the Sound strip (Draw): Lows clicked, Level dragged and typed.
     rig.drag (rig.get ("depth"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
     spaceIsTheDaws ("after dragging Depth");
+    rig.click ("depth");
+    check (rig.editing() && ! rig.usesSpace() && ! rig.editing() && rig.hasFocus ("canvas"),
+           name + ": a click on Depth starts typing, and the space bar after it is the DAW's");
 
     setParameter (processor, params::id::mode, 3.0f);
     pump (80);
@@ -2778,19 +2791,32 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     rig.drag (rig.get ("level"), { 30.0f, 12.0f }, { 30.0f, 4.0f });
     spaceIsTheDaws ("after dragging Level");
 
+    // One click on a value and then the space bar: the DAW plays (the customer's "press the
+    // normal play button ... it should play instead of me having to click out").
+    for (const auto* id : { "level", "density", "contrast" })
+    {
+        rig.click (id);
+        check (rig.editing() && ! rig.typing(), name + ": a click on " + juce::String (id) + " starts typing a number into it");
+        check (! rig.usesSpace() && ! rig.editing() && rig.hasFocus ("canvas"),
+               name + ": ... and the space bar after it is the DAW's, and ends the typing");
+    }
+
     rig.click ("level");
-    check (rig.typing(), name + ": a click on Level starts typing into it");
     rig.type ("-12");
-    check (rig.uses (returnKey) && std::abs (parameterValue (params::id::level) + 12.0f) < 1.0e-3f, name + ": Return sets the typed level");
-    check (! rig.typing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
+    check (! rig.usesSpace() && std::abs (parameterValue (params::id::level) + 12.0f) < 1.0e-3f,
+           name + ": the space bar sets a typed level and is the DAW's");
+    rig.click ("level");
+    rig.type ("-9");
+    check (rig.uses (returnKey) && std::abs (parameterValue (params::id::level) + 9.0f) < 1.0e-3f, name + ": Return sets the typed level");
+    check (! rig.editing() && rig.hasFocus ("canvas"), name + ": ... and hands the focus back to the canvas");
     spaceIsTheDaws ("after typing a level");
 
     // A value being typed when its strip goes (automation changes the mode): nothing keeps the keys.
     rig.click ("density");
-    check (rig.typing(), name + ": (typing a density)");
+    check (rig.editing(), name + ": (typing a density)");
     setParameter (processor, params::id::mode, 0.0f);
     pump (120);
-    check (! rig.get ("sound-strip").isVisible() && ! rig.typing(), name + ": the Sound strip goes with the mode, and the typing with it");
+    check (! rig.get ("sound-strip").isVisible() && ! rig.editing(), name + ": the Sound strip goes with the mode, and the typing with it");
     spaceIsTheDaws ("after the Sound strip went while a value was typed");
     setParameter (processor, params::id::lowEnd, 0.0f);
     setParameter (processor, params::id::level, -6.0f);
@@ -2823,11 +2849,14 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     check (juce::roundToInt (parameterValue (params::id::startAt)) == params::atBarStartIndex && rig.get ("start-bar").isShowing()
                && rig.get ("bpm").isShowing(), name + ": (At bar and a typed tempo: their fields are there)");
     rig.click ("start-bar");
-    check (rig.typing(), name + ": a click on the start bar field starts typing into it");
-    check (rig.usesSpace(), name + ": ... where the space bar is the field's");
+    check (rig.editing() && ! rig.typing(), name + ": a click on the start bar field starts typing a number into it");
+    rig.type ("9");
+    check (! rig.usesSpace() && juce::roundToInt (parameterValue (params::id::startBar)) == 9 && rig.hasFocus ("settings-panel"),
+           name + ": ... where the space bar sets the typed bar, is the DAW's, and hands the focus back to the settings");
+    rig.click ("start-bar");
     rig.type ("12");
     check (rig.uses (returnKey) && juce::roundToInt (parameterValue (params::id::startBar)) == 12, name + ": Return sets the typed bar");
-    check (! rig.typing() && rig.hasFocus ("settings-panel"), name + ": ... and hands the focus back to the settings");
+    check (! rig.editing() && rig.hasFocus ("settings-panel"), name + ": ... and hands the focus back to the settings");
     spaceIsTheDaws ("after typing a start bar");
     rig.drag (rig.get ("bpm"), { 30.0f, 14.0f }, { 30.0f, 4.0f });
     spaceIsTheDaws ("after dragging the BPM field");

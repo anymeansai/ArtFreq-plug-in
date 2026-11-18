@@ -8,6 +8,13 @@ namespace artfreq::ui::shell
 {
 namespace
 {
+    /** A segmented control that also explains itself in a tooltip. */
+    struct TippedChoice final : public SegmentedControl,
+                                public juce::SettableTooltipClient
+    {
+        using SegmentedControl::SegmentedControl;
+    };
+
     constexpr int cardPad = 20;
     constexpr int titleRowHeight = 56;
     constexpr int closeSize = 28;
@@ -191,7 +198,12 @@ SettingsPanel::SettingsPanel (ArtFreqProcessor& p)
         triggerAttachment = std::make_unique<ChoiceSegments> (*trigger, *state.getParameter (params::id::trigger));
         addAndMakeVisible (*trigger);
 
-        startAt = std::make_unique<SegmentedControl> (juce::StringArray { "On play", "At bar" });
+        // (Its tooltip says what On play means for an export, which is when At bar is wanted.)
+        auto tipped = std::make_unique<TippedChoice> (juce::StringArray { "On play", "At bar" });
+        tipped->setTooltip ("Where a single pass starts. On play: wherever the DAW starts playing (an export or "
+                            "freeze starts it where the render starts). At bar: at a bar of the song, which an "
+                            "export keeps");
+        startAt = std::move (tipped);
         startAt->setTitle ("Start");
         startAt->setComponentID ("start-at");
         startAtAttachment = std::make_unique<ChoiceSegments> (*startAt, *state.getParameter (params::id::startAt));
@@ -574,8 +586,9 @@ namespace
                               "analyser will show." } },
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
                                                        "in the panel on the right. Density sets how many lines draw it." } },
-            { "6", { "Press play in your DAW.", "The drawing plays once from wherever you start. Preview plays it "
-                                                "while the DAW is stopped." } },
+            { "6", { "Press play in your DAW.", "The drawing plays once from wherever you start. A DAW's export or "
+                                                "freeze starts it where the render starts: to keep it at a bar, "
+                                                "choose \"from bar\" under Trigger first." } },
             { "7", { "Bounce to WAV.", "Export renders one pass, and a new file after each change. Drag it into "
                                        "your DAW, or save it." } },
         };
@@ -588,12 +601,12 @@ namespace
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
             { "1", { "Put ArtFreq FX on a track, a bus or the master,", "before the final limiter." } },
             { "2", { "Open a spectrogram after it", "(MiniMeters) and match it in Settings, the gear." } },
-            { "3", { "Draw:", "add text or a picture, or paint. Click one to change it. The canvas shows it on a "
-                              "stand-in for your song." } },
+            { "3", { "Draw:", "add text or a picture, or paint. Click one to change it." } },
             { "4", { "Choose a Mode.", "Depth is how far carved frequencies drop: -80 dB looks black." } },
-            { "5", { "Press play in your DAW.", "It runs once from wherever you start. Repeat loops it." } },
-            { "6", { "To keep it, bounce the track in your DAW.", "Carving needs the song, so there is no "
-                                                                  "preview or export here." } },
+            { "5", { "Press play in your DAW.", "It runs once from there; Carve and Stencil wait for the "
+                                                "track's audio. Repeat loops it." } },
+            { "6", { "To keep it, bounce the track in your DAW,", "after choosing At bar in Settings: a bounce "
+                                                                  "starts it where the bounce starts." } },
         };
         return steps;
     }

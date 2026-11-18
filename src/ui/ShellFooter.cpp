@@ -78,8 +78,8 @@ namespace
 StartChoice::StartChoice() : juce::Button ("Start at")
 {
     setTitle ("Start at");
-    setTooltip ("Where the drawing starts: when you press play in your DAW (wherever the playhead is), "
-                "or at a bar of the song");
+    setTooltip ("Where the drawing starts: when you press play in your DAW (wherever the playhead is; a DAW's "
+                "export or freeze starts it where the render starts), or at a bar of the song, which an export keeps");
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
 }
 

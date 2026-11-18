@@ -138,18 +138,38 @@ from the moment the DAW starts, wherever the playhead is.
   at the DAW's place and plays at the typed tempo, counted on; without a ppq it is counted from
   the host's time. It plays once, with the same gate fades, and then it is silent.
 - The DAW moving while it plays (a relocation, or its loop wrapping round: a position that does
-  not follow on from the last block) to a place **inside** the pass carries on at that place in
-  the same pass, so a DAW loop over it draws the same picture every round. A place **before its
-  start** (by more than the jump tolerance, 5 ms: hosts round) or **from its gate's close on**
-  (where it can no longer sound: its end) begins a new pass right there. So a DAW loop shorter
-  than the pass draws the same first part every round (the first round starts where play was
-  pressed, the wrap begins a pass at the loop start, and every later wrap lands on that start);
-  a longer one draws the whole drawing and then silence, every round.
+  not follow on from the last block) **forwards** to a place inside the pass carries on at that
+  place in the same pass. Moving **back** begins a new pass right there, unless it lands on the
+  pass's own start (give or take the jump tolerance, 5 ms: hosts round), where it carries on; so
+  does moving to **before its start** or **from its gate's close on** (where it can no longer
+  sound: its end). So every round of a DAW loop draws the drawing from its start at the loop's
+  start, wherever play was pressed: the same first part every round under a loop shorter than the
+  pass, the whole drawing and then silence under a longer one. (Until 0.4's review, a wrap that
+  landed inside the first pass carried on in it: with play pressed before the loop, as Cubase,
+  Reaper, Studio One and Bitwig do from the cursor, every round drew only the drawing's second
+  half, and the picture under a fixed loop depended on where play had been pressed.) The first
+  round starts where play was pressed; it is only from the second that rounds are alike.
+- ArtFreq FX carving a song (Carve and Stencil: `TrackerSettings::waitForSound`) has nothing to
+  show over silence, so a pass that is due begins at the first sample, from that place on, where
+  the input sounds (-60 dBFS on any channel: quieter than that, nothing of it shows on an
+  analyser, and carving it would show nothing either; digital silence, dither and a quiet noise
+  floor lie below it). The customer: "If I put it on a track and press play, a lot of times it
+  doesn't do anything": pressed at bar 1 on a vocal that comes in at bar 9, the pass ran out over
+  the silence. Until the audio comes in nothing plays, the processor says so
+  (`isWaitingForSound`) and the bottom bar reads "Waiting for audio to carve"; a relocation
+  meanwhile changes nothing, and stopping forgets it. Once the pass has begun, silences in the
+  input change nothing. The Draw modes, which make sound of their own, and the instrument begin
+  at once. The level is read from the input before the carver delays it, and the carver's
+  segments are on the input's timeline, so the carve begins with the audio.
 - The DAW stopping forgets the pass: every start is a new pass, also from the same place.
 - It never begins before the song does. At a negative position (a count-in before bar 1) it
   begins at 0 and the count-in is silent. A pre-roll inside the song cannot be told from
-  playback (VST3 has no flag for it): the pass begins where the DAW starts playing. So does an
-  offline bounce, at its first block.
+  playback (VST3 has no flag for it): the pass begins where the DAW starts playing. So does a
+  DAW's export, freeze or bounce in place, at its first block (in Carve and Stencil, where the
+  input first sounds after it): a render is a playback from where it starts, not from where the
+  drawing was heard while playing from bar 9. Nothing is guessed (a render looks like any other
+  playback, and placing it elsewhere would make a bounce differ from pressing play there): the
+  README, both help panels and the Start choice say to choose At bar before exporting.
 - A time-signature change while it plays moves and stretches nothing (it lines up with no bars).
   A new Length changes its length at once, its start staying put: the position jumps (with the
   jump fade), or the pass is over.
@@ -160,7 +180,13 @@ from the moment the DAW starts, wherever the playhead is.
 - What it cannot know: a host that stops calling the plug-in while it is stopped, without telling
   it (`setProcessing`, `setActive`), and starts again exactly where it stopped looks like playback
   that never stopped: a pass that was over stays over. No clock is consulted to guess (a slow
-  offline bounce would look the same, and would draw the picture twice).
+  offline bounce would look the same, and would draw the picture twice). A host that stops
+  calling an effect while its input is silent (Cubase's "Suspend VST3 plug-in processing when no
+  audio signals are received", Reaper's auto-bypass on silence) and resumes at the next audio
+  would look like a relocation past the pass, and a second pass would begin there: so ArtFreq FX
+  reports an infinite tail (`getTailLengthSeconds`, VST3 `kInfiniteTail`), and such hosts never
+  suspend it (it makes sound of its own over silence, too: the Draw modes' sines). The instrument
+  needs no input and is never suspended for its silence.
 - The canvas numbers the drawing's own bars, 1 to N, as with Repeat.
 
 **At bar** (`StartAt::bar`): what 0.2 to 0.4 always did.
@@ -444,6 +470,10 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
   at 96 kHz), set in prepareToPlay (and at 48 kHz in the constructor, for hosts that ask before
   they prepare), the same in every mode, with any drawing and in bypass. Switching modes never
   changes it, so the host's compensation never moves the song.
+- **Tail: infinite**, so a host never suspends it over silent input (see [Trigger](#trigger),
+  "What it cannot know"; `effectKeepsRunningOverSilence` plays a host that does). It was the
+  latency plus 50 ms: a suspending host skipped a gap in the track and resumed at the next audio,
+  where a second pass on play began.
 - **Transparency.** Outside the pass (before and after a single pass, DAW stopped), with nothing
   drawn or everything hidden (also in Stencil: the gate stays shut) and in Draw, the output is the
   input one latency late, bit for bit (plus the sines in Draw); carving fades in and out with the
@@ -564,9 +594,14 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     what will happen** (`effectHint`), right-aligned, in accent2 while the pass runs: "Carves
     once when you press play", "Carves once from bar 9", "Repeats every 4 bars", "Each note
     carves it once", "Loops while a note is held", with the mode's verb (Carve carves, Stencil
-    stencils, Carve + Draw and Draw draw). It is never clipped: where the sentence does not fit
-    it is said in fewer words ("Carves once on play", "Once per note", "Loops with a held
-    note"). It is words only; where a single pass starts is chosen in Settings.
+    stencils, Carve + Draw and Draw draw). Two states of the playing DAW come first: a pass on
+    play that waits for the track's audio, "Waiting for audio to carve" (or stencil); and a DAW
+    loop shorter than the drawing, on play or with Repeat, where every round shows the same part
+    of it: "Your loop shows 2 of 4 bars" (counted as Length counts, in bars or beats, the loop
+    cut to a tenth; from the host's loop points, while it says it loops). It is never clipped:
+    where the sentence does not fit it is said in fewer words ("Carves once on play", "Once per
+    note", "Loops with a held note", "Waiting for audio", "Loop shows 2 of 4 bars"). It is words
+    only; where a single pass starts is chosen in Settings.
   - **Brush strip** (`BrushStrip`, 32 px, over the bottom bar): Size, Soft and Strength, while
     the Brush or the Eraser is the tool and the canvas is shown. Its title names the tool.
   - **Drawer**: the inspector (`ui/Inspector.h`, its compact layout: 248 px wide, captions beside
@@ -598,11 +633,13 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     without Repeat); otherwise the row says where passes start ("When a note is played", "On
     the DAW's bars (Repeat is on)"). Then Reset drawing.
   - **Left out**: Preview and Export. Carving needs the song, which only the DAW has; the help
-    says so once ("To keep it, bounce the track in your DAW"). Also the instrument's Clear
-    (the paint row's Clear and Reset drawing remain) and the byline.
+    says so once ("To keep it, bounce the track in your DAW, after choosing At bar in
+    Settings"). Also the instrument's Clear (the paint row's Clear and Reset drawing remain) and
+    the byline.
   - **Help** (688 px): short and its own. Six steps (where it goes, the analyser, drawing, Mode
-    and Depth, play, bouncing in the DAW), the four modes and Sound in a line each, and three
-    notes: what Settings holds, the latency, the keys.
+    and Depth, play and where Carve and Stencil begin, bouncing in the DAW with At bar), the
+    four modes and Sound in a line each, and three notes: what Settings holds, the latency, the
+    keys.
   - **The saved size.** The state holds the window's size in pixels, not a scale, and an
     ArtFreq FX saved by 0.4 or earlier has the large window's. The two windows have different
     shapes (1120 : 720 and 720 : 440), so the shape tells which one a size was saved with
@@ -831,8 +868,10 @@ the focus and counts as used); or a component is modal (JUCE then swallows every
 (`ui/KeyFocus.h`, the editor's `Content`):
 
 - **The editor's own keys**, and nothing else, are used: V / B / E (tools), Cmd+Z and
-  Shift+Cmd+Z (Ctrl+Y elsewhere), Delete / Backspace and the arrows with a selection, Esc with a
-  panel open or a selection, and in the layer list Up / Down, Return, Delete, Esc. Everything
+  Shift+Cmd+Z (Ctrl+Y elsewhere), Delete / Backspace and the arrows with a selection (also in the
+  live view, where the selection is still shown in the inspector or ArtFreq FX's drawer: passed
+  on, Delete could delete whatever is selected in the DAW), Esc with a panel open or a
+  selection, and in the layer list Up / Down, Return, Delete, Esc. Everything
   else comes back unused in every focus state, also Delete, the arrows and Return when there is
   nothing for them to do: the space bar plays the DAW, and the DAW's other shortcuts work.
 - **Where the focus rests**: the canvas; the layer list while a row was clicked; a panel while
@@ -841,12 +880,20 @@ the focus and counts as used); or a component is modal (JUCE then swallows every
   canvas (a mouse listener on the content, after the clicked component has dealt with the
   click): JUCE gives a clicked button the focus, where Return would press it again. Combo boxes
   take no focus at all (JUCE focuses a box when its menu closes, and the arrows would be its own).
-- **Text entry is the one place where space types**: the object's text box, a number field
-  being edited, a knob's or bar's value being typed. A text box has the focus only while it is
-  typed in. Return commits and Esc cancels a number or a value (the object's text is in the
-  drawing as it is typed: both keep it, and undo takes the typing back), Tab commits; each hands
-  the focus back to the canvas (to the panel, for a field in the settings). So does a press
-  anywhere outside it. In the object's text box Shift+Return (or
+- **The object's text box is the one place where space types.** A number being typed (a number
+  field, a knob's or a bar's value: `shell::NumberTextBox`) has no use for a space: there the
+  space bar commits what was typed, as Return does, and is left unused, so the DAW plays. In
+  ArtFreq FX one click on Depth, Level or a settings field starts typing, and "a click on a
+  value, then the space bar" is exactly the customer's "press the normal play button ... it
+  should play instead of me having to click out". For the key to get out on macOS the number's
+  text box takes its keys as key presses, not through the system's text input (which takes every
+  printable key before anything else sees it; a number needs no input method), and does not
+  call a key going down used; a knob's value is a modal label while it is typed, and stops being
+  modal before the key is passed on. A text box has the focus only while it is typed in. Return
+  commits and Esc cancels a number or a value (the object's text is in the drawing as it is
+  typed: both keep it, and undo takes the typing back), Tab commits; each hands the focus back
+  to the canvas (to the panel, for a field in the settings). So does a press anywhere outside
+  it. In the object's text box Shift+Return (or
   Alt+Return) is a new line, and while it has the focus it shows it: the accent outline, the
   caret, and "Return: done  Shift+Return: new line" beside its caption.
 - **Selecting is not typing**: a click on a text object, or opening its settings from the layer
