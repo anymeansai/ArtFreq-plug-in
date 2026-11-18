@@ -112,6 +112,9 @@ juce::AudioProcessor::BusesProperties ArtFreqProcessor::busesFor (Variant varian
 ArtFreqProcessor::ArtFreqProcessor (Variant variantToUse)
     : juce::AudioProcessor (busesFor (variantToUse)),
       variant (variantToUse),
+      license (std::make_unique<anymeans::license::LicenseManager> (variantToUse == Variant::effect
+                                                                        ? anymeans::license::artFreqEffectLicensing()
+                                                                        : anymeans::license::artFreqInstrumentLicensing())),
       parameters (*this, nullptr, "ArtFreqParameters", params::createLayout (variantToUse == Variant::effect)),
       history (40)
 {
@@ -149,6 +152,9 @@ ArtFreqProcessor::ArtFreqProcessor (Variant variantToUse)
         parameters.addParameterListener (id, this);
 
     effectiveTempo.store (static_cast<double> (bpmParam->load()));
+
+    licenseGain.reset (currentSampleRate.load(), licenseFadeSeconds);
+    licenseGain.setCurrentAndTargetValue (isLicensed() ? 1.0f : 0.0f);
 
     // A fresh instance shows (and plays) something straight away.
     document = ArtDocument::createDefault();
@@ -216,6 +222,10 @@ void ArtFreqProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamp
     outputGain.reset (rate, 0.02);
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (levelParam->load()));
 
+    licenseGain.reset (rate, licenseFadeSeconds);
+    licenseGain.setCurrentAndTargetValue (isLicensed() ? 1.0f : 0.0f);
+    lockedSilent = false;
+
     if (! juce::exactlyEqual (analyzer.getSampleRate(), rate))
         analyzer.prepare (rate);
 
@@ -232,7 +242,7 @@ void ArtFreqProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamp
         setLatencySamples (sineDelayLength);
 
         drawGain.reset (rate, 0.02);
-        drawGain.setCurrentAndTargetValue (playsSines (getEffectMode()) ? 1.0f : 0.0f);
+        drawGain.setCurrentAndTargetValue (isLicensed() && playsSines (getEffectMode()) ? 1.0f : 0.0f);
         sinesRunning = false;
 
         // The carver starts afresh: it reads no older masks.
@@ -281,7 +291,7 @@ void ArtFreqProcessor::reset()
     sineDelaySilence = sineDelayLength;
 
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (levelParam->load(), -100.0f));
-    drawGain.setCurrentAndTargetValue (playsSines (getEffectMode()) ? 1.0f : 0.0f);
+    drawGain.setCurrentAndTargetValue (isLicensed() && playsSines (getEffectMode()) ? 1.0f : 0.0f);
 
     playPosition.store (0.0);
     sounding.store (false);
@@ -333,10 +343,11 @@ void ArtFreqProcessor::renderChunk (float* out, int numSamples, const HostTiming
 void ArtFreqProcessor::writeOutput (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept
 {
     // The level and the safety clipper on the mono render, then every channel and the analyser.
+    // Locking or activating fades the whole output (after the clipper, so the fade is a fade).
     auto* out = mono.get();
 
     for (int i = 0; i < numSamples; ++i)
-        out[i] = softClip (out[i] * outputGain.getNextValue());
+        out[i] = softClip (out[i] * outputGain.getNextValue()) * licenseGain.getNextValue();
 
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
         buffer.copyFrom (channel, start, out, numSamples);
@@ -381,9 +392,22 @@ void ArtFreqProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 {
     juce::ScopedNoDenormals noDenormals;
 
+    // Whether this computer is activated: the licence core's atomic flag, lock-free. Activating
+    // (in this window, another instance or another AnyMeans plug-in) or deactivating sets it on
+    // the message thread, and the next block follows. Locked, Preview is off (setPreview refuses
+    // it, and one that was on stops).
+    const auto licensed = isLicensed();
+
+    if (! licensed)
+        previewToken.store (0);
+
+    // Locked, ArtFreq FX lets the song through untouched: it must never mute a master. The
+    // bypass path does exactly that, one latency late as always (so nothing moves when it is
+    // activated), after fading out what it was carving or playing; activated, it comes back as
+    // from a bypass.
     if (isEffect())
     {
-        processEffect (buffer, midi, false);
+        processEffect (buffer, midi, ! licensed);
         return;
     }
 
@@ -395,6 +419,19 @@ void ArtFreqProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         midi.clear();
         return;
     }
+
+    // Locked, the instrument fades out over 10 ms (whatever it was playing), then stays silent and
+    // ignores MIDI and Preview. Activated, it starts afresh and fades in: a pass begins (or picks
+    // up where the song is) as when the plug-in is first put on a playing track.
+    licenseGain.setTargetValue (licensed ? 1.0f : 0.0f);
+
+    if (! licensed && ! licenseGain.isSmoothing())
+    {
+        processLocked (buffer, midi);
+        return;
+    }
+
+    lockedSilent = false;
 
     // Pick up the newest drawing (the engine crossfades to it) and tell the exchange which
     // plans are still being read, so older ones can be freed on the message thread.
@@ -467,6 +504,34 @@ void ArtFreqProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
     // An instrument that makes no MIDI: nothing goes out.
     midi.clear();
+}
+
+void ArtFreqProcessor::processLocked (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) noexcept
+{
+    // The instrument, locked and faded out: silence, whatever the transport, MIDI or Preview do.
+    buffer.clear();
+    midi.clear();
+
+    // New drawings are still taken up, so the exchange can free the old ones (and the engine
+    // holds the newest when it is activated).
+    auto* plan = planExchange.acquire();
+
+    if (plan != nullptr)
+        engine.setPlan (plan);
+
+    // Nothing sounds: the engine lets go of the pass (and any crossfade), so it starts afresh,
+    // with a fade-in; the tracker forgets the pass, so one begins when it is activated.
+    if (! lockedSilent || plan != nullptr)
+        engine.reset();
+
+    if (! lockedSilent)
+        tracker.reset();
+
+    lockedSilent = true;
+
+    planExchange.reportInUse (versionOf (engine.getPlan()), versionOf (engine.getFadingPlan()));
+    playPosition.store (0.0);
+    sounding.store (false);
 }
 
 void ArtFreqProcessor::processBlockBypassed (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -784,7 +849,8 @@ void ArtFreqProcessor::buildMasks (const FrequencyScale& scale)
 
 void ArtFreqProcessor::setPreview (bool shouldPreview) noexcept
 {
-    if (! shouldPreview)
+    // Preview needs an activated plug-in.
+    if (! shouldPreview || ! isLicensed())
     {
         previewToken.store (0);
         return;

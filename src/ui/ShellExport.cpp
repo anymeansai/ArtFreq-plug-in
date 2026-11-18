@@ -362,6 +362,15 @@ ExportPanel::Take ExportPanel::takeFor (const ArtPlan& plan) const
 
 void ExportPanel::startBounce()
 {
+    // Locked, there is nothing to bounce: the instrument is silent until it is activated. (The
+    // activation screen covers the button then; this is for anything that asks all the same.)
+    if (! processor.isLicensed())
+    {
+        lastError = "Activate ArtFreq to bounce";
+        refresh();
+        return;
+    }
+
     following = true;
     failedTake.reset();
     lastError.clear();
@@ -553,16 +562,19 @@ void ExportPanel::refresh()
     }
 
     // A render of something no longer drawn is of no use: stop it (it leaves nothing behind).
-    // While an edit waits for its plan the render goes on: the edit may change nothing.
-    if (job != nullptr && settled && ! job->take.sameAs (wanted))
+    // While an edit waits for its plan the render goes on: the edit may change nothing. Locked,
+    // nothing renders and nothing is handed out (a deactivation stops a render on its way).
+    const auto licensed = processor.isLicensed();
+
+    if (job != nullptr && ((settled && ! job->take.sameAs (wanted)) || ! licensed))
         stopRender();
 
-    fileReady = settled && bounceTake.sameAs (wanted) && bounceFile.existsAsFile();
+    fileReady = licensed && settled && bounceTake.sameAs (wanted) && bounceFile.existsAsFile();
     settledSilent = settled && plan->silent;
 
     // Following the drawing: once it has stayed the same for a moment, render it (but not
     // again something that has just failed: it would fail again, over and over).
-    if (following && job == nullptr && settled && ! settledSilent && ! fileReady
+    if (following && licensed && job == nullptr && settled && ! settledSilent && ! fileReady
         && ! (failedTake.has_value() && failedTake->sameAs (wanted))
         && now - lastChange >= static_cast<juce::uint32> (updateDelayMilliseconds)
         && isOnShow())
@@ -672,7 +684,7 @@ void ExportPanel::finishPendingSave()
 
     // Nothing is on its way (an empty drawing, or a render that failed): say so rather than
     // wait for ever.
-    if (settledSilent || ! following || lastError.isNotEmpty())
+    if (settledSilent || ! following || lastError.isNotEmpty() || ! processor.isLicensed())
     {
         saveError = "Nothing to save: " + pendingSave.getFileName();
         pendingSave = juce::File();

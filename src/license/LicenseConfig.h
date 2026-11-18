@@ -31,6 +31,10 @@ inline constexpr const char* SIGNING_PUBLIC_KEY_HEX = "7acdbd078095b8d36a9c91dfa
 
 inline constexpr const char* SUPPORT_EMAIL = "support@anymeansaudio.com";
 
+/** The store, where keys are bought and orders (with their keys) can be found again: the link on
+    the activation screen. */
+inline constexpr const char* STORE_URL = "https://anymeansaudio.com";
+
 /** How long one request may take before the plug-in gives up and says the server can't be reached. */
 inline constexpr int REQUEST_TIMEOUT_MS = 15000;
 

@@ -23,6 +23,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -389,5 +390,109 @@ inline void pump (int milliseconds)
 {
     juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
 }
+
+//==============================================================================
+// Plug-in instances in the test runner and the snapshot tool. A processor makes its
+// LicenseManager the ordinary way, with the default environment: these set it, so no instance
+// ever reads the user's real folder or reaches the real server.
+
+/** What every plug-in instance gets unless a test says otherwise: activated with an ArtFreq Pro
+    key (both plug-ins) on this test computer, in a folder of its own, against a fake server that
+    answers nothing it was not told to. So the tests and snapshots of everything but licensing see
+    the plug-ins as a buyer does once activated.
+*/
+struct RunnerLicensing
+{
+    RunnerLicensing()
+    {
+        anymeans::license::LicenseStore (folder.folder).put (storedActivationFrom (activateProFresh, keyPro));
+        environment = makeEnvironment (folder.folder, server);
+        environment.checkIntervalMs = 1000;   // as in a plug-in: hundreds of instances, nothing changes
+    }
+
+    TemporaryFolder folder;
+    std::shared_ptr<FakeServer> server = std::make_shared<FakeServer>();
+    anymeans::license::LicenseManager::Environment environment;
+};
+
+inline std::unique_ptr<RunnerLicensing>& runnerLicensing()
+{
+    static std::unique_ptr<RunnerLicensing> licensing;
+    return licensing;
+}
+
+/** Makes the activated environment the default (before the first test or snapshot). */
+inline void installRunnerLicensing()
+{
+    runnerLicensing() = std::make_unique<RunnerLicensing>();
+    anymeans::license::LicenseManager::setDefaultEnvironmentForTesting (runnerLicensing()->environment);
+}
+
+/** Puts the runner's environment back as the default, after a test that replaced it. */
+inline void restoreRunnerLicensing()
+{
+    anymeans::license::LicenseManager::setDefaultEnvironmentForTesting (
+        runnerLicensing() != nullptr ? std::optional<anymeans::license::LicenseManager::Environment> (runnerLicensing()->environment)
+                                     : std::nullopt);
+}
+
+/** At the end: back to no default, and the folder deleted. */
+inline void removeRunnerLicensing()
+{
+    anymeans::license::LicenseManager::setDefaultEnvironmentForTesting (std::nullopt);
+    runnerLicensing().reset();
+}
+
+/** For one test (or one part of the snapshot tool): plug-in instances made while this exists are
+    not activated. They share a folder of their own, empty, and a fake server the test scripts,
+    and they look for changes to the shared file every `checkIntervalMs`. activatePro() and
+    deactivate() write and remove an activation there as another instance (or another AnyMeans
+    plug-in) would; every instance follows within the interval, or at once after
+    LicenseManager::reload(). Make it before the instances, so they go before it does.
+*/
+struct ScopedLockedLicensing
+{
+    explicit ScopedLockedLicensing (int checkIntervalMs = 20)
+    {
+        environment = makeEnvironment (folder.folder, server);
+        environment.checkIntervalMs = checkIntervalMs;
+        anymeans::license::LicenseManager::setDefaultEnvironmentForTesting (environment);
+    }
+
+    ~ScopedLockedLicensing()
+    {
+        restoreRunnerLicensing();
+    }
+
+    /** An ArtFreq Pro activation for this computer: both plug-ins unlock. */
+    bool activatePro() const
+    {
+        return anymeans::license::LicenseStore (folder.folder).put (storedActivationFrom (activateProFresh, keyPro));
+    }
+
+    /** An ArtFreq activation for this computer: the instrument unlocks, ArtFreq FX does not. */
+    bool activateArtFreq() const
+    {
+        return anymeans::license::LicenseStore (folder.folder).put (storedActivationFrom (activateArtFreqFresh, keyArtFreq));
+    }
+
+    /** Removes every activation (as deactivating elsewhere does). */
+    bool deactivate() const
+    {
+        const anymeans::license::LicenseStore store (folder.folder);
+        auto removed = true;
+
+        for (const auto& entry : store.read().activations)
+            removed = store.remove (entry.productId, entry.key, entry.machineId) && removed;
+
+        return removed;
+    }
+
+    TemporaryFolder folder;
+    std::shared_ptr<FakeServer> server = std::make_shared<FakeServer>();
+    anymeans::license::LicenseManager::Environment environment;
+
+    JUCE_DECLARE_NON_COPYABLE (ScopedLockedLicensing)
+};
 
 } // namespace licensetest

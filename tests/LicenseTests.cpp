@@ -1346,7 +1346,8 @@ ARTFREQ_TEST (licenseDefaultEnvironmentCanBeReplacedByTests)
         CHECK (effect.getMachineId() == machineHere);
     }
 
-    LicenseManager::setDefaultEnvironmentForTesting (std::nullopt);
+    // Back to the runner's own (the plug-in instances of later tests are activated in it).
+    restoreRunnerLicensing();
 
     // The real folder: the user's application data, in an AnyMeans folder.
     const auto real = LicenseStore::defaultDirectory();
