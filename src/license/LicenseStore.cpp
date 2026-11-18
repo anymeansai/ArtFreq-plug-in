@@ -2,6 +2,7 @@
 
 #include "LicenseConfig.h"
 #include "LicenseKey.h"
+#include "SafeJson.h"
 
 #include <utility>
 
@@ -218,7 +219,7 @@ LicenseStore::Contents LicenseStore::read() const
 
     juce::var root;
 
-    if (juce::JSON::parse (text, root).failed() || ! root.isObject())
+    if (parseShallowJson (text, root).failed() || ! root.isObject())
     {
         contents.status = Contents::Status::corrupt;
         return contents;
@@ -280,7 +281,7 @@ bool LicenseStore::modify (const std::function<void (juce::Array<juce::var>&)>& 
             text = in.readEntireStreamAsString();
         }
 
-        if (juce::JSON::parse (text, root).failed() || ! root.isObject())
+        if (parseShallowJson (text, root).failed() || ! root.isObject())
         {
             // Unusable (it unlocked nothing anyway): keep a copy for support and start afresh.
             file.copyFileTo (file.getSiblingFile ("Licenses.unreadable.json"));

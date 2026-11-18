@@ -2,6 +2,7 @@
 
 #include "LicenseKey.h"
 #include "MachineId.h"
+#include "SafeJson.h"
 #include "SignedLicense.h"
 
 #include <initializer_list>
@@ -105,7 +106,14 @@ juce::String stringField (const juce::var& object, const char* name)
 int intField (const juce::var& object, const char* name)
 {
     const auto value = object.getProperty (name, {});
-    return (value.isInt() || value.isInt64() || value.isDouble()) ? static_cast<int> (value) : -1;
+
+    if (! (value.isInt() || value.isInt64() || value.isDouble()))
+        return -1;
+
+    // These counts are only shown. A number no real answer has (1e300, say) counts as unknown:
+    // converting it to int would be undefined behaviour.
+    const auto number = static_cast<double> (value);
+    return (number >= 0.0 && number <= 1.0e6) ? static_cast<int> (number) : -1;
 }
 
 ServerReply parseReply (const juce::String& body)
@@ -113,7 +121,7 @@ ServerReply parseReply (const juce::String& body)
     ServerReply reply;
     juce::var root;
 
-    if (juce::JSON::parse (body, root).failed() || ! root.isObject())
+    if (parseShallowJson (body, root).failed() || ! root.isObject())
         return reply;
 
     const auto ok = root.getProperty ("ok", {});

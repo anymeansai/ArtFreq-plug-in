@@ -10,7 +10,8 @@
 //   - the public key built into the plug-ins: a point of the curve, of prime order;
 //   - the shared folder's lock against writers in the same process (as a second AnyMeans plug-in
 //     module in one host is), an activation the folder can't take, the machine ID JUCE gives a
-//     computer it knows nothing about, and deactivating while the server's records catch up.
+//     computer it knows nothing about, deactivating while the server's records catch up, and
+//     answers or files nested deep enough to overflow the JSON parser's stack.
 //
 // Nothing here uses the network.
 
@@ -24,6 +25,7 @@
 #include "license/LicenseStore.h"
 #include "license/MachineId.h"
 #include "license/Monocypher.h"
+#include "license/SafeJson.h"
 #include "license/SignedLicense.h"
 
 #include <juce_events/juce_events.h>
@@ -622,4 +624,81 @@ ARTFREQ_TEST (licenseMachineIdRefusesJucesIdForNoHardware)
 
     // This computer's own ID is never JUCE's "0".
     CHECK (MachineId::get (first.folder) != MachineId::hash ("0"));
+}
+
+//==============================================================================
+// Text nested deep enough to overflow the parser's stack
+//==============================================================================
+
+ARTFREQ_TEST (licenseJsonTooDeepIsRefusedNotParsed)
+{
+    const auto nested = [] (int depth, const juce::String& inside = {})
+    {
+        return juce::String::repeatedString ("[", depth) + inside + juce::String::repeatedString ("]", depth);
+    };
+
+    juce::var result;
+    CHECK (parseShallowJson (nested (32), result).wasOk());
+    CHECK (parseShallowJson (nested (33), result).failed());
+    CHECK (parseShallowJson ("{\"a\": [ {\"b\": 1} ]}", result).wasOk() && result["a"][0]["b"].equals (1));
+
+    // Brackets inside strings, in either kind of quotes, with escaped quotes, don't count ...
+    CHECK (parseShallowJson ("[\"" + juce::String::repeatedString ("[", 100) + "\\\"[[[\"]", result).wasOk());
+    CHECK (parseShallowJson ("['" + juce::String::repeatedString ("{", 100) + "\\'{{{']", result).wasOk());
+
+    // ... and a quote of the other kind inside a string doesn't hide what follows it.
+    CHECK (parseShallowJson ("['\"'," + nested (40) + "]", result).failed());
+    CHECK (parseShallowJson ("[\"'\"," + nested (40) + "]", result).failed());
+
+    // What a few thousand levels did to the parser: it never gets them.
+    CHECK (parseShallowJson (nested (200000), result).failed());
+}
+
+ARTFREQ_TEST (licenseHostileAnswersAndFilesCantCrashThePlugin)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+
+    // An answer nested 200 000 deep (no real server sends one; something between it and the
+    // plug-in that the computer trusts could): an error, not a crash on the request thread.
+    {
+        const TemporaryFolder temporary;
+        const auto server = std::make_shared<FakeServer>();
+        server->replyWithBody (200, juce::String::repeatedString ("[", 200000) + juce::String::repeatedString ("]", 200000));
+
+        LicenseManager instrument (artFreqInstrumentLicensing(), makeEnvironment (temporary.folder, server));
+        const auto result = activateNow (instrument, keyArtFreq);
+        CHECK (result.outcome == Outcome::serverError);
+        CHECK (! instrument.isActivated());
+    }
+
+    // The same in the shared file, read on the message thread as the plug-in loads: no activation,
+    // and the next activation replaces the file.
+    {
+        const TemporaryFolder temporary;
+        const LicenseStore store (temporary.folder);
+        CHECK (store.getFile().replaceWithText ("{\"activations\": " + juce::String::repeatedString ("[", 200000)
+                                                + juce::String::repeatedString ("]", 200000) + "}"));
+        CHECK (store.read().status == LicenseStore::Contents::Status::corrupt);
+
+        const auto server = std::make_shared<FakeServer>();
+        server->reply (activateArtFreqFresh);
+        LicenseManager instrument (artFreqInstrumentLicensing(), makeEnvironment (temporary.folder, server));
+        CHECK (! instrument.isActivated());
+        CHECK (activateNow (instrument, keyArtFreq).outcome == Outcome::activated);
+        CHECK (store.read().status == LicenseStore::Contents::Status::ok && store.read().activations.size() == 1);
+    }
+
+    // Counts no real answer has are shown as unknown (converting them would be undefined).
+    {
+        const TemporaryFolder temporary;
+        const auto server = std::make_shared<FakeServer>();
+        server->replyWithBody (200, juce::String::fromUTF8 (activateArtFreqFresh.body)
+                                        .replace ("\"activationsUsed\":1", "\"activationsUsed\":1e300")
+                                        .replace ("\"maxActivations\":2", "\"maxActivations\":-7"));
+
+        LicenseManager instrument (artFreqInstrumentLicensing(), makeEnvironment (temporary.folder, server));
+        const auto result = activateNow (instrument, keyArtFreq);
+        CHECK (result.outcome == Outcome::activated);
+        CHECK (result.activationsUsed == -1 && result.maxActivations == -1);
+    }
 }

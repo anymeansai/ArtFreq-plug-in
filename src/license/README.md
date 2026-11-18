@@ -35,7 +35,8 @@ with a licence signed by the server's private key, for this computer.
 | `SignedLicense.*` | The licence string and its check. |
 | `Crypto.*`, `Monocypher.*` | SHA-512, strict base64 and hex, Ed25519 verification (Monocypher's own pieces, as its optional `monocypher-ed25519.c` does). |
 | `MachineId.*` | The hashed machine ID. |
-| `LicenseStore.*` | The shared file. |
+| `LicenseStore.*` | The shared file, and the lock its writers take. |
+| `SafeJson.h` | `juce::JSON::parse` for text from outside, refused when nested deep enough to overflow the parser's stack. |
 | `LicenseTransport.*` | HTTPS through `juce::WebInputStream`, behind an interface tests replace with a fake server. |
 | `third_party/monocypher/` | Monocypher 4.0.3, unmodified (BSD-2-Clause or CC0, see `LICENCE.md`). |
 
@@ -66,7 +67,10 @@ Linux `~/.config/AnyMeans/Licenses.json`:
 At most one activation per product, key and computer (a second key for the same product gets its
 own entry, so its place on the server can still be freed). Activations for other computers (a
 migrated or roaming user folder) are kept but not used. Readers skip what they don't understand, writers keep it.
-Writes replace the file whole (temporary file, then swap) under an inter-process lock. A damaged file
+Writes replace the file whole (temporary file, then swap) under a lock on the folder
+(`LicenseStore::FolderLock`: `flock()` on a hidden `.Licenses.lock` on macOS and Linux, a named mutex on
+Windows), which also keeps out the other AnyMeans plug-ins loaded into the same host process; JUCE's
+`InterProcessLock` can't, on macOS and Linux, as its locks belong to the whole process. A damaged file
 never crashes anything: it holds no activations, and the next activation replaces it (a copy is kept
 as `Licenses.unreadable.json`).
 
@@ -75,8 +79,11 @@ as `Licenses.unreadable.json`).
 1. Copy this folder; compile its `.cpp` files (not `third_party/monocypher/monocypher.c`, which
    `Monocypher.cpp` includes) and link `juce::juce_cryptography`.
 2. In `LicenseConfig.h`, replace the "plug-ins of this repository" section with that plug-in's own
-   `PluginLicensing` (for Crème: `{ "Crème", { PRODUCT_ID_CREME }, {}, {}, {} }`). Leave the server,
-   the public key and the products alone: they are shared.
+   `PluginLicensing`; for Crème:
+   `{ juce::String (juce::CharPointer_UTF8 ("Cr\xc3\xa8me")), { PRODUCT_ID_CREME }, {}, {}, {} }`.
+   Spell anything outside ASCII as UTF-8 escapes like this: a plain `"Crème"` literal depends on the
+   compiler's source encoding (MSVC without `/utf-8` reads the system code page), and `juce::String`
+   asserts on 8-bit text. Leave the server, the public key and the products alone: they are shared.
 3. Make one `LicenseManager` per plug-in instance (in the processor), read `isActivated()` on the
    audio thread, and show `getStatusText()`, `activate()` and `deactivate()` in the editor. Never call
    the server while a host scans or renders; call `cancelRequest()` when the editor closes, if it
@@ -85,7 +92,11 @@ as `Licenses.unreadable.json`).
 ## Tests
 
 `tests/LicenseTests.cpp`, with `tests/LicenseTestSupport.h` (the Worker's real answers as vectors, a
-fake server and a test environment). Tests and tools never reach the server: a `LicenseManager` takes
+fake server and a test environment), and `tests/LicenseVectorTests.cpp`, which checks the same code
+against a second, independent set, `tests/data/license-vectors.json`: the Worker's own code run with a
+throwaway key of its own, WebCrypto's verdicts on a few hundred Ed25519 signatures and their
+alterations, Node's SHA-512 and the server's checksum verdicts on typed keys. That file was made by
+`tests/data/make-license-vectors.mjs` (Node 22, with a copy of the Worker's sources next to it). Tests and tools never reach the server: a `LicenseManager` takes
 an `Environment` (folder, transport, machine ID, public key), and
 `LicenseManager::setDefaultEnvironmentForTesting()` sets one for code that makes plug-in instances the
 ordinary way. Only code can do either; no file, setting or switch changes a shipping plug-in.
