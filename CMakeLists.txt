@@ -284,4 +284,23 @@ if(ARTFREQ_BUILD_TOOLS)
             juce::juce_gui_basics
         PUBLIC
             ArtFreqBuildFlags)
+
+    # The AnyMeans logo lab: renders the company mark (src/brand/AnyMeansMark.h), its lockup
+    # with the wordmark and the ArtFreq emblem beside it to PNG files. Not part of the plug-ins.
+    juce_add_console_app(AnyMeansLogoLab PRODUCT_NAME "AnyMeansLogoLab")
+    target_sources(AnyMeansLogoLab PRIVATE
+        tools/AnyMeansLogoLab.cpp
+        src/brand/AnyMeansMark.cpp
+        src/ui/Emblem.cpp
+        src/core/Fonts.cpp)
+    target_include_directories(AnyMeansLogoLab PRIVATE src)
+    target_compile_definitions(AnyMeansLogoLab PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(AnyMeansLogoLab
+        PRIVATE
+            ArtFreqAssets
+            juce::juce_gui_basics
+        PUBLIC
+            ArtFreqBuildFlags)
 endif()
