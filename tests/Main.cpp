@@ -1,3 +1,4 @@
+#include "LicenseTestSupport.h"
 #include "TestFramework.h"
 
 #include <juce_events/juce_events.h>
@@ -11,5 +12,11 @@ int main (int argc, char* argv[])
     juce::JUCEApplicationBase::createInstance = [] () -> juce::JUCEApplicationBase* { return nullptr; };
    #endif
 
-    return test::runAll (argc, argv);
+    // Every plug-in instance the tests make is activated, in a folder of the runner's own,
+    // unless a test says otherwise: none reads the user's real licence file or reaches the
+    // real server (see LicenseTestSupport.h).
+    licensetest::installRunnerLicensing();
+    const auto result = test::runAll (argc, argv);
+    licensetest::removeRunnerLicensing();
+    return result;
 }

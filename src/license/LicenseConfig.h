@@ -31,6 +31,10 @@ inline constexpr const char* SIGNING_PUBLIC_KEY_HEX = "7acdbd078095b8d36a9c91dfa
 
 inline constexpr const char* SUPPORT_EMAIL = "support@anymeansaudio.com";
 
+/** The store, where keys are bought and orders (with their keys) can be found again: the link on
+    the activation screen. */
+inline constexpr const char* STORE_URL = "https://anymeansaudio.com";
+
 /** How long one request may take before the plug-in gives up and says the server can't be reached. */
 inline constexpr int REQUEST_TIMEOUT_MS = 15000;
 
@@ -49,15 +53,17 @@ struct Product
     const char* id;
     const char* name;             // as the buyer knows it (UTF-8)
     const char* pluginsUnlocked;  // what an activation of it unlocks on a computer, for messages
+    const char* plugins;          // the same plug-ins one by one, separated by '|': what another
+                                  // key on the computer may keep unlocked when this one goes
 };
 
 /** Every product, so any AnyMeans plug-in can name an activation it finds in the shared file. */
 inline constexpr Product PRODUCTS[] =
 {
-    { PRODUCT_ID_ARTFREQ,     "ArtFreq",          "ArtFreq" },
-    { PRODUCT_ID_ARTFREQ_PRO, "ArtFreq Pro",      "ArtFreq and ArtFreq FX" },
-    { PRODUCT_ID_CREME,       "Cr\xc3\xa8me",     "Cr\xc3\xa8me" },
-    { PRODUCT_ID_VOCALYST,    "Vocalyst",         "Vocalyst" },
+    { PRODUCT_ID_ARTFREQ,     "ArtFreq",          "ArtFreq",                "ArtFreq" },
+    { PRODUCT_ID_ARTFREQ_PRO, "ArtFreq Pro",      "ArtFreq and ArtFreq FX", "ArtFreq|ArtFreq FX" },
+    { PRODUCT_ID_CREME,       "Cr\xc3\xa8me",     "Cr\xc3\xa8me",           "Cr\xc3\xa8me" },
+    { PRODUCT_ID_VOCALYST,    "Vocalyst",         "Vocalyst",               "Vocalyst" },
 };
 
 /** The product with this ID, or nullptr. */

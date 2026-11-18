@@ -58,6 +58,16 @@ juce::String stillActivated()
     return " This computer stays activated.";
 }
 
+/** A refusal (403) with the support address: a genuine key can be refused too (a mix-up with the
+    order, a key from another purchase), and "check for typos" is then no help. */
+juce::String withSupportAddress (const juce::String& refusal)
+{
+    if (refusal.containsIgnoreCase (SUPPORT_EMAIL))
+        return refusal;
+
+    return refusal + " If you think this is wrong, " + supportSentenceEnd();
+}
+
 juce::String pluginsUnlockedBy (const juce::String& productId, const juce::String& fallback)
 {
     if (const auto* product = findProduct (productId))
@@ -72,6 +82,48 @@ juce::String productNameOf (const juce::String& productId)
         return fromUtf8 (product->name);
 
     return productId;
+}
+
+/** The plug-ins an activation of a product unlocks, one by one. */
+juce::StringArray pluginsOf (const juce::String& productId, const juce::String& fallback)
+{
+    if (const auto* product = findProduct (productId))
+        return juce::StringArray::fromTokens (fromUtf8 (product->plugins), "|", {});
+
+    return { fallback };
+}
+
+/** "ArtFreq", "ArtFreq and ArtFreq FX", "A, B and C". */
+juce::String joinNames (const juce::StringArray& names)
+{
+    if (names.size() <= 1)
+        return names.joinIntoString ({});
+
+    return names.joinIntoString (", ", 0, names.size() - 1) + " and " + names[names.size() - 1];
+}
+
+/** The plug-ins of `activation` that deactivating it locks: those no other key keeps unlocked. */
+juce::StringArray pluginsLockedWithout (const LicenseManager::Activation& activation, const juce::String& fallback)
+{
+    auto locked = pluginsOf (activation.productId, fallback);
+
+    for (const auto& kept : activation.pluginsKeptByAnotherKey)
+        locked.removeString (kept);
+
+    return locked;
+}
+
+/** "ArtFreq stays activated with your ArtFreq key." (empty when no other key keeps anything). */
+juce::String keptSentence (const LicenseManager::Activation& activation)
+{
+    const auto& kept = activation.pluginsKeptByAnotherKey;
+
+    if (kept.isEmpty())
+        return {};
+
+    const auto other = activation.anotherKeyProduct == activation.productName ? "your other " + activation.anotherKeyProduct
+                                                                              : "your " + activation.anotherKeyProduct;
+    return joinNames (kept) + (kept.size() > 1 ? " stay" : " stays") + " activated with " + other + " key.";
 }
 
 /** The server's error text, made safe to show: one line, of a sensible length. */
@@ -216,6 +268,10 @@ struct LicenseManager::PendingRequest
 
     /** When the POST in progress began (0: none), for the manager's backstop deadline. */
     std::atomic<juce::int64> attemptStartedMs { 0 };
+
+    /** Cut off by the manager (it went, or stopped waiting), rather than by its deadline: what the
+        server made of the request is then unknown. */
+    std::atomic<bool> abandoned { false };
 };
 
 /** The background thread of one request. */
@@ -239,7 +295,7 @@ namespace
 struct RequestContext
 {
     PluginLicensing plugin;
-    juce::File sharedFolder;
+    std::vector<LicenseStore> stores;   // the computer's first, then the account's own (if read)
     std::shared_ptr<Transport> transport;
     juce::String machineId, publicKeyHex;
     int timeoutMs = REQUEST_TIMEOUT_MS;
@@ -267,13 +323,35 @@ bool isStored (const LicenseStore& store, const StoredActivation& activation)
     return false;
 }
 
-bool isActivatedHereFor (const LicenseStore& store, const juce::String& productId, const juce::String& key, const juce::String& machineId)
+bool isActivatedHereFor (const std::vector<LicenseStore>& stores, const juce::String& productId, const juce::String& key,
+                         const juce::String& machineId)
 {
-    for (const auto& entry : store.read().activations)
-        if (entry.productId == productId && LicenseKey::normalise (entry.key) == key && entry.machineId == machineId)
-            return true;
+    for (const auto& store : stores)
+        for (const auto& entry : store.read().activations)
+            if (entry.productId == productId && LicenseKey::normalise (entry.key) == key && entry.machineId == machineId)
+                return true;
 
     return false;
+}
+
+/** Marks (or unmarks: `since` empty) the activation as being deactivated, in every store that
+    holds it. False if none holds it, or one couldn't be written. */
+bool markDeactivating (const std::vector<LicenseStore>& stores, const LicenseManager::Activation& activation,
+                       const juce::String& machineId, const juce::String& since)
+{
+    auto found = false;
+    auto written = true;
+
+    for (const auto& store : stores)
+    {
+        if (! isActivatedHereFor ({ store }, activation.productId, activation.key, machineId))
+            continue;
+
+        found = true;
+        written = store.setDeactivating (activation.productId, activation.key, machineId, since) && written;
+    }
+
+    return found && written;
 }
 
 /** What one answer to /api/activate means. */
@@ -305,15 +383,28 @@ Result interpretActivation (const RequestContext& context, const juce::String& k
         activation.activatedAt = juce::Time::getCurrentTime().toISO8601 (true);
         activation.activatedIn = context.plugin.pluginName;
 
-        const LicenseStore store (context.sharedFolder);
+        // In the computer's folder, so every account on it has the activation; in the account's
+        // own if that can't be written to (another account made it and couldn't open it to the
+        // others, or the system doesn't allow it). The same activation left in the other folder
+        // goes: it could be an older one, or one whose deactivation was cut off.
+        const auto& stores = context.stores;
+        auto savedIn = stores.size();
 
-        if (! store.put (activation) || ! isStored (store, activation))
+        for (size_t i = 0; i < stores.size() && savedIn == stores.size(); ++i)
+            if (stores[i].put (activation) && isStored (stores[i], activation))
+                savedIn = i;
+
+        if (savedIn == stores.size())
             return makeResult (Outcome::notSaved,
                                "The key was accepted, but the activation couldn't be saved in "
-                                 + store.getDirectory().getFullPathName()
+                                 + stores.front().getDirectory().getFullPathName()
                                  + ". Make sure that folder can be written to, then activate again (it won't use up "
                                    "another computer).",
                                status, &parsed);
+
+        for (size_t i = 0; i < stores.size(); ++i)
+            if (i != savedIn)
+                stores[i].remove (activation.productId, activation.key, activation.machineId);
 
         auto result = makeResult (Outcome::activated,
                                   "Activated. This computer is now unlocked for "
@@ -341,15 +432,16 @@ Result interpretActivation (const RequestContext& context, const juce::String& k
         {
             // The server doesn't say which product the key is for; this computer may know.
             const auto knownProduct = context.plugin.knownWrongProductId.isNotEmpty()
-                                   && isActivatedHereFor (LicenseStore (context.sharedFolder), context.plugin.knownWrongProductId,
+                                   && isActivatedHereFor (context.stores, context.plugin.knownWrongProductId,
                                                           key, context.machineId);
 
             return makeResult (Outcome::refused,
-                               knownProduct ? context.plugin.knownWrongProductMessage : context.plugin.wrongProductMessage,
+                               withSupportAddress (knownProduct ? context.plugin.knownWrongProductMessage
+                                                                : context.plugin.wrongProductMessage),
                                status, &parsed);
         }
 
-        return makeResult (Outcome::refused, parsed.error, status, &parsed);
+        return makeResult (Outcome::refused, withSupportAddress (parsed.error), status, &parsed);
     }
 
     // 400, 404, 405, 429, 5xx, a 200 that isn't ok, an answer that isn't the server's JSON
@@ -392,15 +484,46 @@ Result runActivation (const RequestContext& context, const juce::String& key, st
 }
 
 Result runDeactivation (const RequestContext& context, const LicenseManager::Activation& activation, std::atomic<juce::int64>& attemptStartedMs,
-                        CancelToken& token)
+                        CancelToken& token, const std::atomic<bool>& abandoned)
 {
+    const auto& stores = context.stores;
+    const auto finishing = activation.deactivatingSince.isNotEmpty();   // one that was cut off before
+
+    // What the activation is like if this request changes nothing: still in use, or (finishing
+    // one that was cut off) still waiting to be finished.
+    const auto unchanged = finishing ? juce::String() : stillActivated();
+
+    // Marked before anything is sent. If this request is cut off before its answer is known (the
+    // project closes, the DAW quits), the mark stays: the server may have freed this computer,
+    // so the activation no longer counts once the request could have ended, here or in any
+    // other plug-in or account, and deactivating finishes the job. Written first also because a
+    // file that can't be written now couldn't lose the activation once the server has freed it.
+    if (! finishing && ! markDeactivating (stores, activation, context.machineId, juce::Time::getCurrentTime().toISO8601 (true)))
+        return makeResult (Outcome::notSaved,
+                           "The activation couldn't be changed in " + stores.front().getFile().getFullPathName()
+                             + ", so nothing was sent. Make sure it can be written to, and try again." + unchanged);
+
+    // The server did not free this computer (it said so, or never got the request): as it was.
+    const auto keepActivation = [&]
+    {
+        if (! finishing)
+            markDeactivating (stores, activation, context.machineId, {});
+    };
+
     const auto body = toJson ({ { "key", LicenseKey::format (activation.key) },
                                 { "machineId", context.machineId } });
 
     const auto reply = postTo (context, "/api/deactivate", body, attemptStartedMs, token);
 
     if (reply.outcome != HttpReply::Outcome::answered)
-        return makeResult (Outcome::noConnection, noConnectionMessage() + stillActivated());
+    {
+        // No answer in time, or none at all: offline, most likely, and trying again sorts it
+        // out. Cut off by the manager: nobody will try again from here, so the mark stays.
+        if (! abandoned.load())
+            keepActivation();
+
+        return makeResult (Outcome::noConnection, noConnectionMessage() + unchanged);
+    }
 
     const auto parsed = parseReply (reply.body);
     const auto status = reply.statusCode;
@@ -417,10 +540,12 @@ Result runDeactivation (const RequestContext& context, const LicenseManager::Act
         const auto age = juce::Time::currentTimeMillis() - timeOf (activation.activatedAt);
 
         if (age >= 0 && age < serverCatchUpMs)
+        {
+            keepActivation();
             return makeResult (Outcome::serverError,
-                               "The server hasn't caught up with this activation yet. Please try again in a minute."
-                                 + stillActivated(),
+                               "The server hasn't caught up with this activation yet. Please try again in a minute." + unchanged,
                                status, &parsed);
+        }
     }
 
     // The server no longer counts this computer for the key (already freed, by support for
@@ -430,29 +555,49 @@ Result runDeactivation (const RequestContext& context, const LicenseManager::Act
 
     if (freedOnServer || unknownToServer)
     {
-        const LicenseStore store (context.sharedFolder);
+        // From every folder that has it (the account's own too). If that fails, the mark stays,
+        // so the activation counts no more and deactivating again removes it.
+        for (const auto& store : stores)
+        {
+            if (! store.remove (activation.productId, activation.key, context.machineId))
+                return makeResult (Outcome::notSaved,
+                                   "The server has freed this computer, but the activation couldn't be removed from "
+                                     + store.getFile().getFullPathName() + ". Make sure it can be written to, and try again.",
+                                   status, &parsed);
+        }
 
-        if (! store.remove (activation.productId, activation.key, context.machineId))
-            return makeResult (Outcome::notSaved,
-                               "The server has freed this computer, but the activation couldn't be removed from "
-                                 + store.getFile().getFullPathName() + ". Make sure it can be written to, and try again.",
-                               status, &parsed);
+        const auto opening = freedOnServer ? juce::String ("Deactivated. Your key can now be activated on another computer. ")
+                                           : juce::String ("Deactivated here (the server no longer counted this computer for that key). ");
+        juce::String message;
 
-        const auto locked = pluginsUnlockedBy (activation.productId, context.plugin.pluginName);
+        if (activation.pluginsKeptByAnotherKey.isEmpty())
+        {
+            const auto locked = pluginsUnlockedBy (activation.productId, context.plugin.pluginName);
+            message = opening + locked + " " + (locked.contains (" and ") ? "are" : "is") + " now locked on this computer.";
+        }
+        else
+        {
+            // Another key keeps some of it unlocked (an ArtFreq key, after an ArtFreq Pro key
+            // went): say which key went, and what stays.
+            const auto locked = pluginsLockedWithout (activation, context.plugin.pluginName);
+            message = (freedOnServer ? "Deactivated. Your " + activation.productName + " key can now be activated on another computer. "
+                                     : opening)
+                    + (locked.isEmpty() ? juce::String()
+                                        : joinNames (locked) + (locked.size() > 1 ? " are" : " is") + " now locked on this computer; ")
+                    + keptSentence (activation);
+        }
 
-        auto result = makeResult (Outcome::deactivated,
-                                  (freedOnServer ? juce::String ("Deactivated. Your key can now be activated on another computer. ")
-                                                 : juce::String ("Deactivated here (the server no longer counted this computer for that key). "))
-                                    + locked + " " + (locked.contains (" and ") ? "are" : "is") + " now locked on this computer.",
-                                  status, &parsed);
+        auto result = makeResult (Outcome::deactivated, message, status, &parsed);
         result.productId = activation.productId;
         return result;
     }
 
-    if (status == 403 && parsed.isObject && parsed.error.isNotEmpty())
-        return makeResult (Outcome::refused, parsed.error + stillActivated(), status, &parsed);
+    keepActivation();
 
-    return makeResult (Outcome::serverError, serverErrorMessage (status) + stillActivated(), status, &parsed);
+    if (status == 403 && parsed.isObject && parsed.error.isNotEmpty())
+        return makeResult (Outcome::refused, withSupportAddress (parsed.error) + unchanged, status, &parsed);
+
+    return makeResult (Outcome::serverError, serverErrorMessage (status) + unchanged, status, &parsed);
 }
 
 } // namespace
@@ -463,12 +608,39 @@ LicenseManager::LicenseManager (PluginLicensing pluginToUse)
 {
 }
 
+namespace
+{
+    /** The stores a manager reads: the computer's, then the account's own (where activations were
+        kept before, and where they go if the computer's folder can't be written to). */
+    std::vector<LicenseStore> storesFor (const LicenseManager::Environment& environment)
+    {
+        std::vector<LicenseStore> stores;
+        auto userFolder = environment.userFolder;
+
+        if (environment.sharedFolder != juce::File())
+        {
+            stores.emplace_back (environment.sharedFolder, LicenseStore::Sharing::thisAccount);
+        }
+        else
+        {
+            stores.emplace_back (LicenseStore::defaultDirectory());
+
+            if (userFolder == juce::File())
+                userFolder = LicenseStore::userDirectory();
+        }
+
+        if (userFolder != juce::File() && userFolder != stores.front().getDirectory())
+            stores.emplace_back (userFolder, LicenseStore::Sharing::thisAccount);
+
+        return stores;
+    }
+} // namespace
+
 LicenseManager::LicenseManager (PluginLicensing pluginToUse, Environment environment)
     : plugin (std::move (pluginToUse)),
-      sharedFolder (environment.sharedFolder != juce::File() ? environment.sharedFolder : LicenseStore::defaultDirectory()),
-      store (sharedFolder),
+      stores (storesFor (environment)),
       transport (environment.transport != nullptr ? environment.transport : makeHttpsTransport (SERVER_BASE_URL)),
-      machineId (environment.machineId.isNotEmpty() ? environment.machineId : MachineId::get (sharedFolder)),
+      machineId (environment.machineId.isNotEmpty() ? environment.machineId : MachineId::get (stores.front().getDirectory())),
       publicKeyHex (environment.publicKeyHex.isNotEmpty() ? environment.publicKeyHex : juce::String (SIGNING_PUBLIC_KEY_HEX)),
       requestTimeoutMs (juce::jmax (1, environment.requestTimeoutMs))
 {
@@ -486,6 +658,7 @@ LicenseManager::~LicenseManager()
     if (pending != nullptr)
     {
         pending->owner = nullptr;
+        pending->abandoned = true;
         pending->token.cancel();
         pending.reset();
     }
@@ -502,81 +675,196 @@ void LicenseManager::setDefaultEnvironmentForTesting (std::optional<Environment>
 //==============================================================================
 void LicenseManager::reload()
 {
-    const auto stamp = store.getStamp();
-    const auto contents = store.read();
+    std::vector<LicenseStore::Stamp> stamps;
+    std::vector<StoredActivation> entries;
+    auto unreadable = false, corrupt = false;
 
-    // Locked for a moment by another program, or not readable: look again at the next check
-    // rather than lock the plug-in meanwhile.
-    if (contents.status == LicenseStore::Contents::Status::unreadable)
-        return;
-
-    lastStamp = stamp;
-
-    // Damaged while this plug-in runs (another program writing it in place, say): keep what
-    // was established, until the file changes again. At start-up there is nothing to keep.
-    if (contents.status == LicenseStore::Contents::Status::corrupt && current.has_value())
-        return;
-
-    std::optional<Activation> best;
-    juce::int64 bestTime = 0;
-    bool anotherComputer = false;
-
-    for (const auto& entry : contents.activations)
+    for (const auto& store : stores)
     {
-        if (! plugin.acceptedProductIds.contains (entry.productId))
+        const auto stamp = store.getStamp();
+        const auto contents = store.read();
+
+        // Locked for a moment by another program, or not readable: looked at again at the next
+        // check (its stamp is left unknown).
+        if (contents.status == LicenseStore::Contents::Status::unreadable)
+        {
+            unreadable = true;
+            stamps.push_back ({});
             continue;
+        }
+
+        corrupt = corrupt || contents.status == LicenseStore::Contents::Status::corrupt;
+        stamps.push_back (stamp);
+        entries.insert (entries.end(), contents.activations.begin(), contents.activations.end());
+    }
+
+    lastStamps = stamps;
+
+    // Not readable for a moment, or damaged while this plug-in runs (another program writing it
+    // in place, say): keep what was established, rather than lock the plug-in meanwhile, until
+    // the file changes again. At start-up there is nothing to keep.
+    if ((unreadable || corrupt) && current.has_value())
+        return;
+
+    const auto now = juce::Time::currentTimeMillis();
+
+    // How long a deactivation may still be on its way after it marked its activation (its
+    // request ends, by its deadline, within 1.25 timeouts): until then the activation counts.
+    const auto markGraceMs = 2 * static_cast<juce::int64> (requestTimeoutMs);
+
+    struct Found
+    {
+        const StoredActivation* entry;
+        juce::String key;
+        bool interrupted;
+    };
+
+    std::vector<Found> here;   // every activation for this computer that checks out, any product
+    bool anotherComputer = false;
+    juce::int64 nextReload = 0;
+
+    for (const auto& entry : entries)
+    {
+        const auto accepted = plugin.acceptedProductIds.contains (entry.productId);
 
         if (entry.machineId != machineId)
         {
-            anotherComputer = true;
+            anotherComputer = anotherComputer || accepted;
             continue;
         }
 
         const auto key = LicenseKey::normalise (entry.key);
 
-        if (SignedLicense::check (entry.license, entry.signature, publicKeyHex, plugin.acceptedProductIds, key, machineId)
+        if (SignedLicense::check (entry.license, entry.signature, publicKeyHex, juce::StringArray { entry.productId }, key, machineId)
                 != SignedLicense::Check::valid
             || SignedLicense::productIdOf (entry.license) != entry.productId)
             continue;
 
-        const auto time = timeOf (entry.activatedAt);
+        auto interruptedHere = false;
 
-        if (best.has_value() && time < bestTime)
-            continue;
+        if (entry.deactivatingSince.isNotEmpty())
+        {
+            const auto since = timeOf (entry.deactivatingSince);
+
+            if (since > 0 && now >= since && now - since < markGraceMs)
+                nextReload = nextReload == 0 ? since + markGraceMs : juce::jmin (nextReload, since + markGraceMs);
+            else
+                interruptedHere = true;
+        }
+
+        here.push_back ({ &entry, key, interruptedHere });
+    }
+
+    // The most recent activation of a product this plug-in takes, in use or interrupted.
+    const auto mostRecent = [&] (bool interruptedOnes) -> const Found*
+    {
+        const Found* best = nullptr;
+
+        for (const auto& found : here)
+            if (found.interrupted == interruptedOnes && plugin.acceptedProductIds.contains (found.entry->productId)
+                && (best == nullptr || timeOf (found.entry->activatedAt) >= timeOf (best->entry->activatedAt)))
+                best = &found;
+
+        return best;
+    };
+
+    const auto describe = [&] (const Found* found) -> std::optional<Activation>
+    {
+        if (found == nullptr)
+            return std::nullopt;
+
+        const auto& entry = *found->entry;
 
         Activation activation;
         activation.productId = entry.productId;
         activation.productName = productNameOf (entry.productId);
         activation.pluginsUnlocked = pluginsUnlockedBy (entry.productId, plugin.pluginName);
-        activation.key = key;
-        activation.maskedKey = LicenseKey::mask (key);
+        activation.key = found->key;
+        activation.maskedKey = LicenseKey::mask (found->key);
         activation.activatedAt = entry.activatedAt;
         activation.activatedIn = entry.activatedIn;
+        activation.deactivatingSince = found->interrupted ? entry.deactivatingSince : juce::String();
 
-        best = activation;
-        bestTime = time;
-    }
+        // What another key in use here keeps unlocked of it, without it.
+        const auto mine = pluginsOf (entry.productId, plugin.pluginName);
+
+        for (const auto& other : here)
+        {
+            if (other.interrupted || (other.entry->productId == entry.productId && other.key == found->key))
+                continue;
+
+            auto added = false;
+
+            for (const auto& name : pluginsOf (other.entry->productId, {}))
+            {
+                if (mine.contains (name) && ! activation.pluginsKeptByAnotherKey.contains (name))
+                {
+                    activation.pluginsKeptByAnotherKey.add (name);
+                    added = true;
+                }
+            }
+
+            if (added && activation.anotherKeyProduct.isEmpty())
+                activation.anotherKeyProduct = productNameOf (other.entry->productId);
+        }
+
+        // In the order the product lists them.
+        juce::StringArray ordered;
+
+        for (const auto& name : mine)
+            if (activation.pluginsKeptByAnotherKey.contains (name))
+                ordered.add (name);
+
+        activation.pluginsKeptByAnotherKey = ordered;
+        return activation;
+    };
+
+    const auto best = describe (mostRecent (false));
+    const auto cutOff = describe (mostRecent (true));
+
+    const auto same = [] (const std::optional<Activation>& a, const std::optional<Activation>& b)
+    {
+        if (a.has_value() != b.has_value())
+            return false;
+
+        return ! a.has_value()
+            || (a->productId == b->productId && a->key == b->key && a->activatedAt == b->activatedAt
+                && a->deactivatingSince == b->deactivatingSince && a->pluginsKeptByAnotherKey == b->pluginsKeptByAnotherKey
+                && a->anotherKeyProduct == b->anotherKeyProduct);
+    };
 
     const auto otherComputerOnly = anotherComputer && ! best.has_value();
-    const auto changed = best.has_value() != current.has_value()
-                      || (best.has_value() && (best->productId != current->productId || best->key != current->key
-                                               || best->activatedAt != current->activatedAt))
-                      || otherComputerOnly != activationForAnotherComputer;
+    const auto changed = ! same (best, current) || ! same (cutOff, interrupted) || otherComputerOnly != activationForAnotherComputer;
 
     activationForAnotherComputer = otherComputerOnly;
+    reloadAtMs = nextReload;
 
     if (! changed)
         return;
 
     current = best;
+    interrupted = cutOff;
     activated.store (current.has_value(), std::memory_order_release);
     notifyListeners();
 }
 
 void LicenseManager::checkForChanges()
 {
-    if (store.getStamp() != lastStamp)
+    // A deactivation mark that is now old enough to count.
+    if (reloadAtMs > 0 && juce::Time::currentTimeMillis() >= reloadAtMs)
+    {
         reload();
+        return;
+    }
+
+    for (size_t i = 0; i < stores.size(); ++i)
+    {
+        if (i >= lastStamps.size() || stores[i].getStamp() != lastStamps[i])
+        {
+            reload();
+            return;
+        }
+    }
 }
 
 void LicenseManager::timerCallback()
@@ -606,6 +894,11 @@ juce::String LicenseManager::getStatusText() const
     if (current.has_value())
         return "Activated with your " + current->productName + " key " + current->maskedKey + ".";
 
+    // (The server may have freed this computer already, so it is locked until one or the other.)
+    if (interrupted.has_value())
+        return "Deactivating your " + interrupted->productName + " key didn't finish, so this computer is locked. "
+               "Deactivate to finish it, or activate again.";
+
     if (activationForAnotherComputer)
         return "Not activated on this computer yet. Enter your license key to activate it.";
 
@@ -617,10 +910,23 @@ juce::String LicenseManager::getDeactivationWarning() const
     if (! current.has_value())
         return {};
 
-    const auto& locked = current->pluginsUnlocked;
+    if (current->pluginsKeptByAnotherKey.isEmpty())
+    {
+        const auto& locked = current->pluginsUnlocked;
 
-    return "Deactivating frees your key for another computer. " + locked + " "
-         + (locked.contains (" and ") ? "will both" : "will") + " be locked on this computer until you activate again.";
+        return "Deactivating frees your key for another computer. " + locked + " "
+             + (locked.contains (" and ") ? "will both" : "will") + " be locked on this computer until you activate again.";
+    }
+
+    // Two keys here (an ArtFreq key, then an ArtFreq Pro key): which one goes, what it locks,
+    // and what the other keeps.
+    const auto locked = pluginsLockedWithout (*current, plugin.pluginName);
+
+    return "Deactivating frees your " + current->productName + " key for another computer. "
+         + (locked.isEmpty() ? juce::String()
+                             : joinNames (locked) + (locked.size() > 1 ? " will both" : " will")
+                                 + " be locked on this computer until you activate again; ")
+         + keptSentence (*current);
 }
 
 //==============================================================================
@@ -654,7 +960,7 @@ bool LicenseManager::activate (const juce::String& typedKey, Callback onDone)
         return true;
     }
 
-    RequestContext context { plugin, sharedFolder, transport, machineId, publicKeyHex, requestTimeoutMs };
+    RequestContext context { plugin, stores, transport, machineId, publicKeyHex, requestTimeoutMs };
 
     return startRequest (Request::activating, std::move (onDone), [context, key] (PendingRequest& request)
     {
@@ -669,18 +975,21 @@ bool LicenseManager::deactivate (Callback onDone)
     if (isBusy())
         return false;
 
-    if (! current.has_value())
+    // The activation in use; else one whose deactivation was cut off, to finish.
+    const auto& target = current.has_value() ? current : interrupted;
+
+    if (! target.has_value())
     {
         postResultLater (std::move (onDone), makeResult (Outcome::notActivated, "This computer isn't activated."));
         return true;
     }
 
-    RequestContext context { plugin, sharedFolder, transport, machineId, publicKeyHex, requestTimeoutMs };
-    const auto activation = *current;
+    RequestContext context { plugin, stores, transport, machineId, publicKeyHex, requestTimeoutMs };
+    const auto activation = *target;
 
     return startRequest (Request::deactivating, std::move (onDone), [context, activation] (PendingRequest& request)
     {
-        return runDeactivation (context, activation, request.attemptStartedMs, request.token);
+        return runDeactivation (context, activation, request.attemptStartedMs, request.token, request.abandoned);
     });
 }
 
@@ -692,6 +1001,7 @@ void LicenseManager::cancelRequest()
         return;
 
     pending->owner = nullptr;
+    pending->abandoned = true;
     pending->token.cancel();
     pending.reset();
     pendingCallback = nullptr;

@@ -7,6 +7,7 @@
 #include "EffectShell.h"
 #include "Inspector.h"
 #include "KeyFocus.h"
+#include "Licensing.h"
 #include "LiveView.h"
 #include "LookAndFeel.h"
 #include "ShellFooter.h"
@@ -156,6 +157,7 @@ namespace
         the canvas, open while the layer list is asked for or an object is selected. */
     class Content final : public juce::Component,
                           public ui::KeyFocusHome,
+                          private anymeans::license::LicenseManager::Listener,
                           private juce::ChangeListener,
                           private juce::FocusChangeListener,
                           private juce::Timer
@@ -171,7 +173,8 @@ namespace
               inspector (p, state, compact),
               footer (compact ? nullptr : std::make_unique<ui::shell::Footer> (p, layout::inspectorLeft)),
               settings (p),
-              help (compact)
+              help (compact),
+              activation (p)
         {
             setOpaque (true);
             setWantsKeyboardFocus (true);
@@ -200,6 +203,10 @@ namespace
             }
 
             addChildComponent (notice);
+
+            // Over everything but the top bar while the plug-in is locked; the panels open over
+            // it (help, and the settings with the Licence card).
+            addChildComponent (activation);
             addChildComponent (scrim);
             addChildComponent (settings);
             addChildComponent (help);
@@ -253,10 +260,29 @@ namespace
             };
             settings.onResetDrawing = [this]
             {
+                // (The row is not offered while locked; this is the backstop.)
+                if (! processor.isLicensed())
+                    return;
+
                 state.setSelected (juce::Uuid::null());
                 processor.setDocument (ArtDocument::createDefault());
             };
             help.onClose = [this] { setHelpOpen (false); };
+
+            // Licensing (see ui/Licensing.h).
+            activation.onStateChanged = [this] { updateLicensing(); };
+            settings.onActivateWanted = [this]
+            {
+                setSettingsOpen (false);
+                activation.focusKeyField();
+            };
+            settings.onDeactivated = [this] (const anymeans::license::LicenseManager::Result& result)
+            {
+                closePanels();
+                updateLicensing();
+                activation.showResult (result);
+            };
+            settings.onIdealHeightChanged = [this] { layoutPanels(); };
 
             // Tooltips open inside the interface, so they scale with it. Created last: on top.
             tooltips = std::make_unique<juce::TooltipWindow> (this, 700);
@@ -268,12 +294,25 @@ namespace
 
             processor.addChangeListener (this);
             state.addChangeListener (this);
+            processor.getLicense().addListener (this);
             updateFromProcessor();
+            updateLicensing();
             startTimerHz (refreshHz);
         }
 
         ~Content() override
         {
+            // Closing the window stops an activation on its way (its result would go nowhere):
+            // what the server did before stands, and activating again later uses no other
+            // computer. A deactivation is left to finish in the processor's manager: stopped
+            // after the server had freed this computer's place, it would leave the computer
+            // activated with its place free on the server.
+            auto& license = processor.getLicense();
+            license.removeListener (this);
+
+            if (license.getRequestInProgress() == anymeans::license::LicenseManager::Request::activating)
+                license.cancelRequest();
+
             stopTimer();
             juce::Desktop::getInstance().removeFocusChangeListener (this);
             removeMouseListener (&clickWatcher);
@@ -327,6 +366,7 @@ namespace
                                   .removeFromBottom (noticeHeight)
                                   .reduced (16, 0));
 
+            activation.setBounds (getLocalBounds().withTrimmedTop (layout::headerHeight));
             scrim.setBounds (getLocalBounds());
             layoutPanels();
         }
@@ -349,6 +389,19 @@ namespace
 
             if (key.isKeyCode (juce::KeyPress::tabKey))
                 return handleTab();
+
+            // Locked: the activation screen's keys (Return), and Esc for a panel over it. The
+            // drawing is out of reach, so none of its keys are ours: they all go to the DAW.
+            if (activation.isVisible())
+            {
+                if (key.isKeyCode (juce::KeyPress::escapeKey) && isPanelOpen())
+                {
+                    closePanels();
+                    return true;
+                }
+
+                return ! isPanelOpen() && activation.handleKey (key);
+            }
 
             if (key.isKeyCode (juce::KeyPress::escapeKey))
             {
@@ -449,10 +502,11 @@ namespace
             if (! windowHasKeyboard())
                 return;
 
-            auto& home = settings.isVisible() ? static_cast<juce::Component&> (settings)
-                       : help.isVisible()     ? static_cast<juce::Component&> (help)
-                       : canvas.isVisible()   ? static_cast<juce::Component&> (canvas)
-                                              : static_cast<juce::Component&> (*this);
+            auto& home = settings.isVisible()   ? static_cast<juce::Component&> (settings)
+                       : help.isVisible()       ? static_cast<juce::Component&> (help)
+                       : activation.isVisible() ? static_cast<juce::Component&> (activation)
+                       : canvas.isVisible()     ? static_cast<juce::Component&> (canvas)
+                                                : static_cast<juce::Component&> (*this);
             home.grabKeyboardFocus();
         }
 
@@ -613,6 +667,39 @@ namespace
             updateDrawer();
         }
 
+        //==============================================================================
+        // Licensing: while this computer is not activated for the plug-in, the activation screen
+        // covers the window below its top bar, which shows only the name, help and settings.
+        // Activating (here, in another instance, in another AnyMeans plug-in) puts it away at
+        // once; deactivating (here or elsewhere) brings it back.
+
+        void updateLicensing()
+        {
+            const auto locked = ! processor.isLicensed();
+            const auto show = locked || activation.wantsToStay();
+
+            if (compact)
+                topBar->setLocked (locked);
+            else
+                header->setLocked (locked);
+
+            // The settings stay open over the activation screen (for the Licence card), but the
+            // drawing behind it is out of reach: no Reset drawing, which undo (hidden) couldn't
+            // take back.
+            settings.setDrawingResettable (! locked);
+
+            if (show == activation.isVisible())
+                return;
+
+            const auto hadFocus = hasKeyboardFocus (true);
+            activation.setVisible (show);
+
+            // The screen is the keys' home while it is there (a text box being typed in behind it
+            // has to let go); then the canvas again.
+            if (hadFocus && ! isPanelOpen())
+                takeKeyFocusBack();
+        }
+
         /** Called when the window's scale changes, so the settings show it. */
         void windowScaleChanged (float scale)
         {
@@ -729,6 +816,7 @@ namespace
                                   .removeFromBottom (noticeHeight)
                                   .reduced (12, 0));
 
+            activation.setBounds (getLocalBounds().withTrimmedTop (topBar->getBottom()));
             scrim.setBounds (getLocalBounds());
             layoutPanels();
         }
@@ -1161,6 +1249,11 @@ namespace
             updateFromProcessor();
         }
 
+        void licenseStateChanged (anymeans::license::LicenseManager&) override
+        {
+            updateLicensing();
+        }
+
         void timerCallback() override
         {
             if (! compact)
@@ -1192,6 +1285,7 @@ namespace
         ui::shell::Scrim scrim;
         ui::shell::SettingsPanel settings;
         ui::shell::HelpPanel help;
+        ui::ActivationScreen activation;
 
         // ArtFreq FX's shell.
         std::unique_ptr<ui::shell::EffectTopBar> topBar;

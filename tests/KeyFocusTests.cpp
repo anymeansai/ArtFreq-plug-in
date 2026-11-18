@@ -11,6 +11,7 @@
 // display on Linux does (xvfb-run -a); a build machine's macOS session does not reliably, so
 // these tests run on Linux only (the code they test is the same on both).
 
+#include "LicenseTestSupport.h"
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
 
@@ -1053,4 +1054,136 @@ ARTFREQ_TEST (uiKeysTabAndThePanels)
     rig.click ("repeat");
     CHECK (! rig.uses (space));
     rig.editor->showLiveView (false);
+}
+
+ARTFREQ_TEST (uiKeysTheActivationScreen)
+{
+    // A locked plug-in's window: the activation screen is the focus's home. The space bar, and
+    // the drawing's keys (which have nothing to act on), go on to the DAW; the key field takes
+    // typing only while it is clicked into, as key presses (no system text input), shows it in
+    // groups of five, and the space bar ends the typing and goes on too. Return in the field
+    // activates; Return on the screen continues after the success.
+    if (! canDriveAWindow())
+        return;
+
+    for (const auto variant : { ArtFreqProcessor::Variant::instrument, ArtFreqProcessor::Variant::effect })
+    {
+        const licensetest::ScopedLockedLicensing licensing;
+        Rig rig (variant);
+        CHECK (rig.valid());
+
+        if (! rig.valid())
+            continue;
+
+        auto& screen = rig.get ("activation");
+        auto& field = dynamic_cast<juce::TextEditor&> (rig.get ("licence-key"));
+        CHECK (screen.isShowing());
+
+        // A click on the dimmed window: the screen's, which has the focus.
+        rig.click (screen, { 12.0f, 12.0f });
+        CHECK (rig.hasFocus ("activation") && ! rig.editing());
+        CHECK (! rig.uses (space));
+        CHECK (! rig.uses (juce::KeyPress ('b', juce::ModifierKeys(), 'b')));
+        CHECK (! rig.uses (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 'z')));
+        CHECK (! rig.uses (returnKey));   // nothing typed
+        CHECK (rig.hasFocus ("activation"));
+
+        // A click on Activate with nothing typed: says what to do; the focus stays home.
+        rig.click ("activate");
+        pump (50);
+        CHECK (! rig.editing() && ! rig.uses (space));
+
+        // Into the field: typing, as key presses, formatted.
+        rig.click ("licence-key");
+        CHECK (rig.editing() && ! rig.typing());
+        rig.type ("y1f2fjvxbx");
+        CHECK (field.getText() == "Y1F2F-JVXBX");
+
+        // The space bar: the typing ends, the DAW plays, what was typed stays.
+        CHECK (! rig.uses (space));
+        CHECK (! rig.editing() && rig.hasFocus ("activation"));
+        CHECK (field.getText() == "Y1F2F-JVXBX");
+
+        // Back in, the rest, and Return: sent; the focus back home.
+        rig.click ("licence-key");
+        field.moveCaretToEnd();
+        rig.type ("wcnvbvczkj");
+        CHECK (field.getText() == "Y1F2F-JVXBX-WCNVB-VCZKJ");
+
+        if (variant == ArtFreqProcessor::Variant::instrument)
+            licensing.server->reply (licensetest::activateProAsArtFreq);
+
+        licensing.server->reply (licensetest::activateProFresh);
+        CHECK (rig.uses (returnKey));
+        CHECK (! rig.editing());
+        CHECK (licensetest::pumpUntil ([&] { return rig.processor->isLicensed(); }));
+        pump (50);
+
+        // Return on the success: continue, and the canvas has the focus again.
+        CHECK (screen.isShowing());
+        CHECK (rig.uses (returnKey));
+        pump (30);
+        CHECK (! screen.isVisible() && rig.hasFocus ("canvas"));
+        CHECK (! rig.uses (space));
+    }
+}
+
+ARTFREQ_TEST (uiKeysPastingAKeyReplacesWhatTheFieldHolds)
+{
+    // After a failed attempt the field still holds the key that failed. The right key, copied
+    // from the email and pasted (Cmd+V, wherever the caret is), must replace it, not go in
+    // beside it: otherwise Activate sends the old key, or a mix of the two. A piece of a key that
+    // completes what was typed goes in at the caret.
+    if (! canDriveAWindow())
+        return;
+
+    const licensetest::ScopedLockedLicensing licensing;
+    Rig rig (ArtFreqProcessor::Variant::effect);
+    CHECK (rig.valid());
+
+    if (! rig.valid())
+        return;
+
+    auto& field = dynamic_cast<juce::TextEditor&> (rig.get ("licence-key"));
+    const juce::KeyPress paste ('v', juce::ModifierKeys::commandModifier, 0);
+    const juce::String typo ("Y1F2F-JVXBX-WCNVB-VCZKK"), right ("Y1F2F-JVXBX-WCNVB-VCZKJ");
+
+    const auto pasteInto = [&] (const juce::String& held, int caret, const juce::String& clipboard)
+    {
+        rig.click ("licence-key");
+        field.setText (held, false);
+        field.setCaretPosition (caret < 0 ? held.length() : caret);
+        juce::SystemClipboard::copyTextToClipboard (clipboard);
+        CHECK (rig.uses (paste));
+        return field.getText();
+    };
+
+    // The typo was refused ("check for typos"); the right key pasted after it, the caret at the end.
+    rig.click ("licence-key");
+    rig.type (typo.removeCharacters ("-"));
+    CHECK (rig.uses (returnKey));
+    CHECK (licensetest::pumpUntil ([&] { return field.getText() == typo && ! rig.processor->getLicense().isBusy(); }));
+    CHECK (pasteInto (typo, -1, right) == right);
+
+    // The caret where the click left it, in the middle; the key with the email's words.
+    CHECK (pasteInto (typo, 11, "Your license key: " + right) == right);
+
+    // Part of the key typed, then the whole key pasted.
+    CHECK (pasteInto ("Y1F2F-JV", -1, right) == right);
+
+    // Into an empty field, a mistyped key with the email's words: the mistyped key, as it is.
+    CHECK (pasteInto ({}, -1, "Your license key: y1f2f-jvxbx-wcnvb-vczkk") == typo);
+
+    // The last group, pasted after the first three: it completes the key.
+    CHECK (pasteInto ("Y1F2F-JVXBX-WCNVB-", -1, "VCZKJ") == right);
+
+    // And what is pasted is what is sent (the typo was caught here, without the server).
+    CHECK (licensing.server->numSent() == 0);
+
+    licensing.server->reply (licensetest::activateProFresh);
+    pasteInto (typo, 3, right);
+    CHECK (rig.uses (returnKey));
+    CHECK (licensetest::pumpUntil ([&] { return rig.processor->isLicensed(); }));
+    CHECK (licensing.server->numSent() == 1
+           && licensing.server->sent().front().json.getProperty ("key", {}).toString() == right);
 }

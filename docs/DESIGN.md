@@ -655,15 +655,19 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     Manual, and the BPM field while Manual is chosen; with Host the row reads "DAW: 120 BPM").
     Start is there for the one way of playing that has a single pass to place (Transport
     without Repeat); otherwise the row says where passes start ("When a note is played", "On
-    the DAW's bars (Repeat is on)"). Then Reset drawing.
+    the DAW's bars (Repeat is on)"). Then Reset drawing. Across the foot, under a hairline, the
+    Licence card as one row (see [Licensing](#licensing)); to make room for it in the small
+    window the rows are 8 px apart (were 10). The panel stays under 372 px tall as it was, and
+    in every state of the card (a three-line question, a failure's message) it ends at least
+    6 px above the window's edge.
   - **Left out**: Preview and Export. Carving needs the song, which only the DAW has; the help
     says so once ("To keep it, bounce the track in your DAW, after choosing At bar in
     Settings"). Also the instrument's Clear (the paint row's Clear and Reset drawing remain) and
     the byline.
   - **Help** (688 px): short and its own. Six steps (where it goes, the analyser, drawing, Mode
     and Depth, play and where Carve and Stencil begin, bouncing in the DAW with At bar), the
-    four modes and Sound in a line each, and three notes: what Settings holds, the latency, the
-    keys.
+    four modes and Sound in a line each, three notes: what Settings holds, the latency, the
+    keys; and across the foot the activation note (see the instrument's help).
   - **The saved size.** The state holds the window's size in pixels, not a scale, and an
     ArtFreq FX saved by 0.4 or earlier has the large window's. The two windows have different
     shapes (1120 : 720 and 720 : 440), so the shape tells which one a size was saved with
@@ -970,7 +974,8 @@ settings. Icons are drawn with juce::Path (no image assets).
 
 "Match your analyser": Scale (Log | Linear | Mel), Low Hz, High Hz (editable numbers), Slope
 (0 | 3 | 4.5 | 6 dB/oct) with a note "MiniMeters: Log, 20 Hz - 20 kHz; set Slope to match its
-Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawing (asks inline).
+Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawing (asks inline; not
+there while the plug-in is locked). Licence: the Licence card (see [Licensing](#licensing)).
 
 ### Help panel (overlay)
 
@@ -982,8 +987,169 @@ and it stops); bounce to WAV. Layers: the list (select, settings, reorder, hide)
 overlapping objects (Alt-click or click again, the right-click menu). Plus tips: highs show the
 sharpest detail; the lowest octaves are coarse in every analyser; Lows (Smooth fills shapes
 below about 2 kHz, Stripes plays separate lines there); raise Density for solid shapes, lower for
-a scan-line look. Shortcuts, with "Space: plays your DAW (a space while you type)". Both panels
-must fit the window with room around them (a test).
+a scan-line look. Shortcuts, with "Space: plays your DAW (a space while you type)". Across the
+foot, under a hairline, **Activate**: where the key is, that an ArtFreq Pro key activates ArtFreq
+FX too, two computers per key and deactivating in Settings before moving, offline once activated,
+the support address. Both panels must fit the window with room around them (a test): for the
+note, the instrument's panel is 1040 px wide (was 920) and both are set a little tighter (2 px
+between lines, was 3; smaller gaps between steps and points).
+
+## Licensing
+
+The customer: "when they purchase they can use an activation code and put it into the plug-in to
+activate it. Otherwise the plug-in will be locked." The licence code (`src/license/`, with its own
+README; shared with Crème and Vocalyst, finished and reviewed before it was wired in) does the
+work: the key's checksum, the request on a thread of its own, the Ed25519-signed licence, the
+shared `Licenses.json` and its watch, and every message. The plug-ins only wire it in.
+
+- **Wiring.** Each processor makes one `LicenseManager` before anything else (the instrument with
+  `artFreqInstrumentLicensing`: ArtFreq or ArtFreq Pro keys; the effect with
+  `artFreqEffectLicensing`: ArtFreq Pro only) and keeps it to the end; the editor reaches it
+  through `getLicense()`. Making one reads the shared file and the machine ID, nothing more: host
+  scans and pluginval never touch the network. Only Activate and Deactivate do.
+- **One file for the computer.** The server counts computers, so the activation is kept where
+  every user account of the computer finds it: `/Users/Shared/AnyMeans` on macOS,
+  `%ProgramData%\AnyMeans` on Windows, a folder the first writer opens to every account
+  (`FolderAccess`: mode 0777, or Users: Modify). A second account is never asked for the key, and
+  deactivating in any account locks all of them (with a file per account, as before, a second
+  account was asked again, and its deactivation freed the computer's place while the first stayed
+  unlocked). The account's own folder, where the file used to be, is still read and cleaned, and
+  written if the computer's folder can't be.
+- **The flag.** The audio thread reads the core's lock-free atomic (`isLicensed()`, which is
+  `LicenseManager::isActivated`) at the top of every block. Activating anywhere (this window,
+  another instance, the other plug-in, another AnyMeans plug-in) changes the shared file; every
+  manager sees it within a second (its file watch), or at once (the one that activated), and sets
+  its flag on the message thread. The next block follows.
+- **Locked, the instrument** fades its output out over 10 ms (`licenseFadeSeconds`: a gain after
+  the safety clipper, so it is a plain fade of whatever played; with nothing sounding there is
+  nothing to fade, and it is locked at once, so a note during the fade plays nothing either),
+  then `processLocked`: silence,
+  MIDI ignored, the engine and tracker reset once (new plans are still taken up, so the exchange
+  can free the old ones). Preview is refused (`setPreview`), and one that was on stops.
+  **Activated**, it starts afresh: the gain fades in over 10 ms and the tracker begins as when the
+  plug-in is first put on a playing track (On play: a pass at once, with its gate's fade-in; At
+  bar and Repeat: wherever the song is). No click either way (tested).
+- **Locked, ArtFreq FX** lets the song through **unchanged**: it must never mute a master. It runs
+  the bypass path (`processEffect` with `bypassed`): Depth 0 and the gate closed, so the output is
+  the input one latency late, bit for bit, the sines faded out and then not rendered, a carve in
+  progress faded out over a frame. The latency is the same as ever, so nothing moves when it is
+  activated; activated, it comes back as from a bypass (the carve fades in with the gate, the
+  sines over 20 ms). Preview needs an activated plug-in here too.
+- **Locked, everything else works**: state saves and loads, parameters and automation move,
+  offline renders run (silent, or the song untouched), the editor opens. Bounce WAV is not
+  available (`ExportPanel`: no render starts, none is handed out, a running one stops).
+- **The activation screen** (`ui::ActivationScreen`, `ui/Licensing.h`) lies over the window below
+  its top bar, which then shows only the name, help and settings (the instrument's Canvas | Live
+  and undo / redo, ArtFreq FX's Mode, Depth, Live and undo / redo are hidden: nothing is greyed).
+  Behind it the window is dimmed and out of reach: the screen takes every click, and the drawing's
+  keys are not the editor's while it is shown. Nothing modal, no window of its own; help and
+  settings open over it. A card of 400 px, which fits ArtFreq FX's 720 x 396 under the top bar at
+  every size with a message of up to six lines: the emblem, "Activate ArtFreq" / "Activate ArtFreq
+  FX", where the key is ("Enter the ArtFreq Pro key from your purchase email." in ArtFreq FX), the
+  key field, Activate, the message, and "Where's my key? · Buy ArtFreq (Pro)", links to the store
+  (`STORE_URL`, in `LicenseConfig.h` beside the support address). Before anything is tried, the
+  message's place says "Once activated, ArtFreq works offline. A key activates two computers."
+  - **The key field** (`KeyTextBox`) shows the key in groups of five as it is typed, whatever is
+    typed or pasted (any case, dashes, spaces, a mail program's typographic dashes, the key among
+    other words of the email: `formatTypedKey`; a mistyped key among them is kept as typed, so the
+    typo shows), at most 20 characters, the caret after the same character of the key. A paste is
+    taken as a whole key: pasted over a key that was refused (whatever the caret or selection),
+    it replaces it, rather than the old key staying or the two mixing; only a piece that completes
+    the key typed so far, or one too short to be a key, goes in at the caret.
+  - **Busy**: Activate shows a spinner and the core's "Checking your key..."; the field is
+    read-only and a second press sends nothing. Closing the window stops the request
+    (`cancelRequest`, from the editor's destructor): its answer would go nowhere, and what the
+    server did meanwhile stands (activating again later uses no other computer).
+  - **The result** is the core's ready-made text: a typo, caught before anything is sent; the
+    server's own words for 403 and 409 (ArtFreq FX's own for a key of ArtFreq alone), each with the
+    support address (a genuine key can be refused too, and "check for typos" is then no help); "Couldn't
+    reach the server — check your connection and try again."; an answer without a signed licence
+    ("couldn't be confirmed"); a server error with its code. Trying again is always possible. It
+    is selectable text (`SelectableText`, read-only): drag to select, Cmd+C to copy, and a
+    double-click on the support address selects all of it (the text box alone stops at '@' and
+    '.').
+  - **Success**, in the window that activated: "ArtFreq is activated", the core's "Activated.
+    This computer is now unlocked for ArtFreq and ArtFreq FX.", and Continue (or Return, or Esc)
+    puts it away. Every other open instance simply unlocks: its screen goes.
+  - **Keys** (as in "Keys and the keyboard focus"): the screen is the focus's home while it is
+    shown; the key field takes typing only after a click into it, as key presses (no system text
+    input: a key needs no input method). Return in it activates and hands the focus back, Esc and
+    Tab hand it back, and the space bar, which no key holds, ends the typing and goes on to the
+    DAW. On the screen, Return activates what is typed (or continues); everything else, Space,
+    V / B / E, Cmd+Z and Delete included, comes back unused: the DAW gets it.
+- **The Licence card** (`ui::LicenceCard`), in the settings of both plug-ins (the instrument's
+  under a "Licence" caption; ArtFreq FX's as a row across the foot of its two columns): the
+  activation ("ArtFreq Pro: ArtFreq and ArtFreq FX"), the masked key (`8K3QX-•••••-•••••-NV6ZH`),
+  "Activated on this computer", and Deactivate..., which first asks in the core's words
+  (`getDeactivationWarning`: what will be locked here, and that the key can then be used on
+  another computer), with Cancel and Deactivate. While it runs: a spinner and "Deactivating...".
+  If it fails nothing changes, and the card says why in place of the key (the core keeps the
+  activation unless the server confirms). If it goes through, the plug-in is locked: the panel
+  closes and the activation screen shows the result. With two keys on the computer (an ArtFreq
+  key, then an ArtFreq Pro key for ArtFreq FX) the newer is the one in use: the question says what
+  it locks and what the other key keeps ("ArtFreq FX will be locked ...; ArtFreq stays activated
+  with your ArtFreq key"), and if this plug-in stays activated the panel stays open and the card
+  says what went and what stays; the other key is deactivated in turn. Closing the window does not
+  stop a deactivation, unlike an activation: the processor's manager finishes it (stopped after
+  the server had freed this computer's place, it would leave the computer activated with its
+  place free on the server, so the key could go to a third). Closing the project or quitting the
+  DAW does stop it, so the core marks the activation in the file before sending: a request cut off
+  leaves the mark, and once the request could have ended (two timeouts) the activation no longer
+  counts in any instance. The activation screen then says deactivating didn't finish, and the card
+  offers Deactivate (to finish it) beside Activate... (activating again replaces it). Not
+  activated, the card says so and offers Activate..., which puts the panel away and the typing in
+  the key field. The card asks the panel to lay itself out again when its height changes; a
+  message longer than its room (a long folder path) scrolls in place.
+- **The settings while locked** keep everything that is not the drawing (the analyser, the window
+  size, the Licence card), but not Drawing / Reset drawing: the drawing is out of reach and undo
+  is hidden, so a reset could not be taken back. The row is not there at all (nothing is greyed),
+  and comes back once activated (`SettingsPanel::setDrawingResettable`, from the editor's
+  `updateLicensing`).
+- **Help, README, installers**: an Activate note across the foot of both help panels (see "Help
+  panel"), an Activate section in the README, and the step on the macOS installer's last page and
+  in the Windows zip's `How to install.txt`.
+
+**Tests.** Every test and snapshot runs against the fake server of `tests/LicenseTestSupport.h`,
+never the real one. The test runner (`tests/Main.cpp`) and the snapshot tool make the default
+environment an activated one (an ArtFreq Pro activation in a folder of their own:
+`installRunnerLicensing`), so everything else sees the plug-ins as a buyer does once activated;
+`ScopedLockedLicensing` gives a test (or the snapshot tool's licensing part) instances that are
+not, and writes and removes activations as another instance would. Covered: a real licence from
+the live server, checked with the built-in public key, and through a whole activation; the
+instrument silent and deaf to MIDI and Preview while locked, then fading in when activated, and
+no click when it is locked and activated while playing; ArtFreq FX passing the audio through bit
+for bit (every mode, mono, stereo, odd blocks) with its latency, carving once activated and
+passing through again once locked, without clicks; an ArtFreq key unlocking the instrument and
+not the effect; instances following each other (a Pro key entered in the instrument unlocks an
+open ArtFreq FX through the shared file; a deactivation in ArtFreq FX locks both); the key
+field's formatting; the screen covering a locked window (clicks, keys, the top bar); activating
+through it (the requests sent, the success, Continue, a new instance activated without the
+network); every failure (a typo, an unknown key, ArtFreq FX's wrong product, 409 with the support
+address selected by a double-click, no connection, an unsigned answer, a 502) leaving it locked,
+with retry possible, and every refusal naming the support address; busy, and closing the window
+during an activation (stopped) and during a deactivation (finished); the Licence card (the
+question, Cancel, failures keeping the activation, a deactivation locking it, Activate...), with
+the settings fitting the window in every state; two keys (deactivating the newer keeps the
+instrument activated, the panel open, and says so; ArtFreq FX locks); a project closed during a
+deactivation (locked once the request could have ended, finished from the card); no Reset drawing
+while locked; one file for every account of a computer (an activation in one counts in another,
+deactivating in either locks both; the account's own folder read, cleaned, and written when the
+computer's can't be; the folder opened to every account whatever the umask); state, parameters and
+latency while locked; and the keys through a real window (`uiKeysTheActivationScreen`, and
+`uiKeysPastingAKeyReplacesWhatTheFieldHolds`: Cmd+V over a refused key, into a partial one, with
+the email's words). The snapshot tool renders the screen (empty, typing, busy, an error, the
+success, after a deactivation, 75 to 200 %, after a deactivation that didn't finish) and the card
+(activated, asking, a failure, not activated, 75 and 200 %, two keys asking and done, a
+deactivation that didn't finish) for both plug-ins, checking their layout in each. CI and
+pluginval run with no network and no activation: they see the locked plug-ins, which pass
+pluginval at strictness 10.
+
+**What the computer can't enforce.** Licences never expire and are checked offline, so a place
+freed on the server locks a computer only if its file says so. A backup of the file put back after
+a deactivation, or `/api/deactivate` called by hand with the key and machine ID from the file,
+frees the place and leaves the computer activated; no record kept on the computer can stop that
+(it can be put back too, and the source is public). The limit has to be the server's: a few
+deactivations per key in a period (say three in 30 days), then support.
 
 ## Tests
 

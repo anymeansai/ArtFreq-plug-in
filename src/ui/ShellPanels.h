@@ -14,6 +14,11 @@
 #include <memory>
 #include <vector>
 
+namespace artfreq::ui
+{
+class LicenceCard;
+}
+
 namespace artfreq::ui::shell
 {
 
@@ -59,12 +64,29 @@ public:
     /** Shows which window size is in use (none if it is not one of the offered ones). */
     void setCurrentWindowScale (float scale);
 
-    /** Back to the "Reset drawing" button (when the panel is opened again). */
+    /** Back to the "Reset drawing" button and the plain Licence card (when the panel is opened
+        again). */
     void cancelReset();
+
+    /** Whether the drawing can be reset from here: not while the plug-in is locked, when the
+        drawing is out of reach (and undo with it). The row is then not there at all (nothing is
+        greyed). The editor calls this whenever the licence changes. */
+    void setDrawingResettable (bool canReset);
+    bool isDrawingResettable() const noexcept   { return drawingResettable; }
 
     std::function<void()> onClose;
     std::function<void (float)> onWindowScaleChosen;
     std::function<void()> onResetDrawing;
+
+    /** The Licence card (see ui/Licensing.h): Activate... while not activated, and a
+        deactivation that went through (the plug-in is locked now). */
+    std::function<void()> onActivateWanted;
+    std::function<void (const anymeans::license::LicenseManager::Result&)> onDeactivated;
+
+    /** The height the content needs changed (the Licence card asks or says something). */
+    std::function<void()> onIdealHeightChanged;
+
+    LicenceCard& getLicenceCard() noexcept   { return *licence; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -86,7 +108,9 @@ private:
     ShellButton cancelButton { "Cancel" };
     ShellButton confirmButton { "Reset", ShellButton::Kind::danger };
     std::unique_ptr<ChoiceSegments> scaleAttachment, slopeAttachment;
+    std::unique_ptr<LicenceCard> licence;
     bool confirmingReset = false;
+    bool drawingResettable = true;
     int idealHeight = 456;
 
     // ArtFreq FX only: the timing its window has no bar for.
@@ -96,6 +120,7 @@ private:
     juce::Rectangle<int> midiNoteArea, startTextArea, tempoTextArea;
     juce::String startText, tempoText;
     int columnDividerX = 0;
+    int columnsBottom = 0;
 
     // Layout, filled by resized() and used by paint().
     struct Row
@@ -116,7 +141,7 @@ private:
 class HelpPanel final : public juce::Component
 {
 public:
-    static constexpr int width = 920;
+    static constexpr int width = 1040;
     static constexpr int effectWidth = 688;   // ArtFreq FX's window is smaller
 
     /** forEffect: ArtFreq FX's help, short and its own (where it goes, drawing, the modes,
@@ -136,11 +161,13 @@ public:
 private:
     struct Block;
     std::vector<Block> layoutColumn (int column, int width) const;
+    std::vector<Block> layoutAll (float& dividerY) const;   // both columns and the note at the foot
     int getColumnWidth() const;
 
     const bool effect;
     IconButton closeButton;
-    std::vector<Block> blocks;   // both columns, laid out by resized()
+    std::vector<Block> blocks;   // both columns and the foot, laid out by resized()
+    float footerDividerY = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HelpPanel)
 };

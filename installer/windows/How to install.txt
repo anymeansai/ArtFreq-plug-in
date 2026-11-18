@@ -19,4 +19,8 @@ you copy two folders by hand.
    ArtFreq FX is listed under audio effects: put it on an audio track, a bus
    or the master.
 
+4. Open the plug-in's window and activate it with the key from your purchase
+   email: paste it and click Activate. This is needed once per computer (a
+   key works on two); an ArtFreq Pro key activates both plug-ins.
+
 Support: support@anymeansaudio.com

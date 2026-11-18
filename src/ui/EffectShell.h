@@ -68,6 +68,10 @@ public:
     void refresh();
     void setUndoState (bool canUndo, bool canRedo);
 
+    /** Locked (not activated on this computer): only the name, help and settings are shown; the
+        activation screen covers the rest of the window. */
+    void setLocked (bool shouldBeLocked);
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -81,6 +85,8 @@ public:
 private:
     juce::Rectangle<int> logoArea;
     int dividerX = 0;
+    bool locked = false;
+    bool undoWanted = false, redoWanted = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EffectTopBar)
 };

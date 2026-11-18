@@ -21,6 +21,7 @@
 #include "dsp/PlanExchange.h"
 #include "dsp/PlayheadTracker.h"
 #include "dsp/TunedCarver.h"
+#include "license/LicenseManager.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -162,6 +163,22 @@ public:
 
     LiveAnalyzer& getAnalyzer() noexcept { return analyzer; }
 
+    // ---- licensing (see docs/DESIGN.md, "Licensing") --------------------------------------
+    // Until this computer is activated for the plug-in (src/license/), the instrument is silent
+    // and ignores MIDI and Preview, and ArtFreq FX lets the audio through untouched, one latency
+    // late as always. Everything else works: the host's scans, state, automation, renders.
+
+    /** This instance's licensing: activating with a key, deactivating, what is activated.
+        Message thread, except isLicensed(). */
+    anymeans::license::LicenseManager& getLicense() noexcept { return *license; }
+
+    /** Whether this computer is activated for this plug-in. Any thread, the audio thread
+        included: it reads the licence core's lock-free flag. */
+    bool isLicensed() const noexcept { return license->isActivated(); }
+
+    /** The instrument's fade when it is locked or activated while it plays. */
+    static constexpr double licenseFadeSeconds = 0.010;
+
     // ---- ArtFreq FX ------------------------------------------------------------------------
 
     /** The effect's Mode (Carve for the instrument, which has none). */
@@ -210,12 +227,17 @@ private:
                       const TrackerSettings& settings) noexcept;
     void writeOutput (juce::AudioBuffer<float>& buffer, int start, int numSamples) noexcept;
     HostTiming readHostTiming() noexcept;
+    void processLocked (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) noexcept;
     void processEffect (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi, bool bypassed) noexcept;
     void addDelayedSines (juce::AudioBuffer<float>& buffer, int start, int numSamples, int numChannels, bool rendered) noexcept;
     void buildMasks (const FrequencyScale& scale);
     int wantedHaloColumns() const noexcept;
 
     const Variant variant;
+
+    // Made first and gone last: the audio thread reads its flag in every block.
+    const std::unique_ptr<anymeans::license::LicenseManager> license;
+
     juce::AudioProcessorValueTreeState parameters;
 
     // message thread
@@ -264,6 +286,8 @@ private:
     PlaySegment segments[PlayheadTracker::maxSegments];
     juce::uint32 previewTokenInUse = 0;
     juce::LinearSmoothedValue<float> outputGain;
+    juce::LinearSmoothedValue<float> licenseGain;  // the instrument: 1 while activated, 0 while locked
+    bool lockedSilent = false;                     // locked and faded out: the engine and tracker were reset
     juce::HeapBlock<float> mono;
     int monoCapacity = 0;
     juce::MidiBuffer chunkMidi;  // for hosts that send blocks larger than announced
