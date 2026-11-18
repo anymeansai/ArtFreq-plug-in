@@ -446,8 +446,7 @@ void LinkButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
 
 //==============================================================================
 ActivationScreen::ActivationScreen (ArtFreqProcessor& p)
-    : processor (p),
-      license (p.getLicense()),
+    : license (p.getLicense()),
       effect (p.isEffect()),
       keyLink ("Where's my key?", anymeans::license::STORE_URL),
       buyLink (p.isEffect() ? "Buy ArtFreq Pro" : "Buy ArtFreq", anymeans::license::STORE_URL)
@@ -819,8 +818,7 @@ float LicenceCard::sentenceSpacing() const
 }
 
 LicenceCard::LicenceCard (ArtFreqProcessor& p, bool isWide)
-    : processor (p),
-      license (p.getLicense()),
+    : license (p.getLicense()),
       wide (isWide)
 {
     setComponentID ("licence-card");

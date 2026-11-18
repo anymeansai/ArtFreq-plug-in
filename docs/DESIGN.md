@@ -974,8 +974,8 @@ settings. Icons are drawn with juce::Path (no image assets).
 
 "Match your analyser": Scale (Log | Linear | Mel), Low Hz, High Hz (editable numbers), Slope
 (0 | 3 | 4.5 | 6 dB/oct) with a note "MiniMeters: Log, 20 Hz - 20 kHz; set Slope to match its
-Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawing (asks inline).
-Licence: the Licence card (see [Licensing](#licensing)).
+Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawing (asks inline; not
+there while the plug-in is locked). Licence: the Licence card (see [Licensing](#licensing)).
 
 ### Help panel (overlay)
 
@@ -1007,6 +1007,14 @@ shared `Licenses.json` and its watch, and every message. The plug-ins only wire 
   `artFreqEffectLicensing`: ArtFreq Pro only) and keeps it to the end; the editor reaches it
   through `getLicense()`. Making one reads the shared file and the machine ID, nothing more: host
   scans and pluginval never touch the network. Only Activate and Deactivate do.
+- **One file for the computer.** The server counts computers, so the activation is kept where
+  every user account of the computer finds it: `/Users/Shared/AnyMeans` on macOS,
+  `%ProgramData%\AnyMeans` on Windows, a folder the first writer opens to every account
+  (`FolderAccess`: mode 0777, or Users: Modify). A second account is never asked for the key, and
+  deactivating in any account locks all of them (with a file per account, as before, a second
+  account was asked again, and its deactivation freed the computer's place while the first stayed
+  unlocked). The account's own folder, where the file used to be, is still read and cleaned, and
+  written if the computer's folder can't be.
 - **The flag.** The audio thread reads the core's lock-free atomic (`isLicensed()`, which is
   `LicenseManager::isActivated`) at the top of every block. Activating anywhere (this window,
   another instance, the other plug-in, another AnyMeans plug-in) changes the shared file; every
@@ -1043,14 +1051,18 @@ shared `Licenses.json` and its watch, and every message. The plug-ins only wire 
   message's place says "Once activated, ArtFreq works offline. A key activates two computers."
   - **The key field** (`KeyTextBox`) shows the key in groups of five as it is typed, whatever is
     typed or pasted (any case, dashes, spaces, a mail program's typographic dashes, the key among
-    other words of the email: `formatTypedKey`), at most 20 characters, the caret after the same
-    character of the key.
+    other words of the email: `formatTypedKey`; a mistyped key among them is kept as typed, so the
+    typo shows), at most 20 characters, the caret after the same character of the key. A paste is
+    taken as a whole key: pasted over a key that was refused (whatever the caret or selection),
+    it replaces it, rather than the old key staying or the two mixing; only a piece that completes
+    the key typed so far, or one too short to be a key, goes in at the caret.
   - **Busy**: Activate shows a spinner and the core's "Checking your key..."; the field is
     read-only and a second press sends nothing. Closing the window stops the request
     (`cancelRequest`, from the editor's destructor): its answer would go nowhere, and what the
     server did meanwhile stands (activating again later uses no other computer).
   - **The result** is the core's ready-made text: a typo, caught before anything is sent; the
-    server's own words for 403 and 409 (ArtFreq FX's own for a key of ArtFreq alone); "Couldn't
+    server's own words for 403 and 409 (ArtFreq FX's own for a key of ArtFreq alone), each with the
+    support address (a genuine key can be refused too, and "check for typos" is then no help); "Couldn't
     reach the server — check your connection and try again."; an answer without a signed licence
     ("couldn't be confirmed"); a server error with its code. Trying again is always possible. It
     is selectable text (`SelectableText`, read-only): drag to select, Cmd+C to copy, and a
@@ -1073,13 +1085,26 @@ shared `Licenses.json` and its watch, and every message. The plug-ins only wire 
   another computer), with Cancel and Deactivate. While it runs: a spinner and "Deactivating...".
   If it fails nothing changes, and the card says why in place of the key (the core keeps the
   activation unless the server confirms). If it goes through, the plug-in is locked: the panel
-  closes and the activation screen shows the result. Closing the window does not stop a
-  deactivation, unlike an activation: the processor's manager finishes it (stopped after the
-  server had freed this computer's place, it would leave the computer activated with its place
-  free on the server, so the key could go to a third). Not activated, the card says so and offers
-  Activate..., which puts the panel away and the typing in the key field. The card asks the panel
-  to lay itself out again when its height changes; a message longer than its room (a long folder
-  path) scrolls in place.
+  closes and the activation screen shows the result. With two keys on the computer (an ArtFreq
+  key, then an ArtFreq Pro key for ArtFreq FX) the newer is the one in use: the question says what
+  it locks and what the other key keeps ("ArtFreq FX will be locked ...; ArtFreq stays activated
+  with your ArtFreq key"), and if this plug-in stays activated the panel stays open and the card
+  says what went and what stays; the other key is deactivated in turn. Closing the window does not
+  stop a deactivation, unlike an activation: the processor's manager finishes it (stopped after
+  the server had freed this computer's place, it would leave the computer activated with its
+  place free on the server, so the key could go to a third). Closing the project or quitting the
+  DAW does stop it, so the core marks the activation in the file before sending: a request cut off
+  leaves the mark, and once the request could have ended (two timeouts) the activation no longer
+  counts in any instance. The activation screen then says deactivating didn't finish, and the card
+  offers Deactivate (to finish it) beside Activate... (activating again replaces it). Not
+  activated, the card says so and offers Activate..., which puts the panel away and the typing in
+  the key field. The card asks the panel to lay itself out again when its height changes; a
+  message longer than its room (a long folder path) scrolls in place.
+- **The settings while locked** keep everything that is not the drawing (the analyser, the window
+  size, the Licence card), but not Drawing / Reset drawing: the drawing is out of reach and undo
+  is hidden, so a reset could not be taken back. The row is not there at all (nothing is greyed),
+  and comes back once activated (`SettingsPanel::setDrawingResettable`, from the editor's
+  `updateLicensing`).
 - **Help, README, installers**: an Activate note across the foot of both help panels (see "Help
   panel"), an Activate section in the README, and the step on the macOS installer's last page and
   in the Windows zip's `How to install.txt`.
@@ -1101,15 +1126,30 @@ field's formatting; the screen covering a locked window (clicks, keys, the top b
 through it (the requests sent, the success, Continue, a new instance activated without the
 network); every failure (a typo, an unknown key, ArtFreq FX's wrong product, 409 with the support
 address selected by a double-click, no connection, an unsigned answer, a 502) leaving it locked,
-with retry possible; busy, and closing the window during an activation (stopped) and during a
-deactivation (finished); the Licence card (the
+with retry possible, and every refusal naming the support address; busy, and closing the window
+during an activation (stopped) and during a deactivation (finished); the Licence card (the
 question, Cancel, failures keeping the activation, a deactivation locking it, Activate...), with
-the settings fitting the window in every state; state, parameters and latency while locked; and
-the keys through a real window (`uiKeysTheActivationScreen`). The snapshot tool renders the
-screen (empty, typing, busy, an error, the success, after a deactivation, 75 to 200 %) and the
-card (activated, asking, a failure, not activated, 75 and 200 %) for both plug-ins, checking
-their layout in each. CI and pluginval run with no network and no activation: they see the locked
-plug-ins, which pass pluginval at strictness 10.
+the settings fitting the window in every state; two keys (deactivating the newer keeps the
+instrument activated, the panel open, and says so; ArtFreq FX locks); a project closed during a
+deactivation (locked once the request could have ended, finished from the card); no Reset drawing
+while locked; one file for every account of a computer (an activation in one counts in another,
+deactivating in either locks both; the account's own folder read, cleaned, and written when the
+computer's can't be; the folder opened to every account whatever the umask); state, parameters and
+latency while locked; and the keys through a real window (`uiKeysTheActivationScreen`, and
+`uiKeysPastingAKeyReplacesWhatTheFieldHolds`: Cmd+V over a refused key, into a partial one, with
+the email's words). The snapshot tool renders the screen (empty, typing, busy, an error, the
+success, after a deactivation, 75 to 200 %, after a deactivation that didn't finish) and the card
+(activated, asking, a failure, not activated, 75 and 200 %, two keys asking and done, a
+deactivation that didn't finish) for both plug-ins, checking their layout in each. CI and
+pluginval run with no network and no activation: they see the locked plug-ins, which pass
+pluginval at strictness 10.
+
+**What the computer can't enforce.** Licences never expire and are checked offline, so a place
+freed on the server locks a computer only if its file says so. A backup of the file put back after
+a deactivation, or `/api/deactivate` called by hand with the key and machine ID from the file,
+frees the place and leaves the computer activated; no record kept on the computer can stop that
+(it can be put back too, and the source is public). The limit has to be the server's: a few
+deactivations per key in a period (say three in 30 days), then support.
 
 ## Tests
 

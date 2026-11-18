@@ -172,7 +172,6 @@ private:
     void continuePressed();
     void update();
 
-    ArtFreqProcessor& processor;
     anymeans::license::LicenseManager& license;
     const bool effect;
 
@@ -248,7 +247,6 @@ private:
     juce::Font sentenceFont() const;
     float sentenceSpacing() const;
 
-    ArtFreqProcessor& processor;
     anymeans::license::LicenseManager& license;
     const bool wide;
 

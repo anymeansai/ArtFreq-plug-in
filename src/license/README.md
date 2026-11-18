@@ -15,15 +15,26 @@ Monocypher in `third_party/`. The same folder goes into ArtFreq, Crème and Voca
    its Ed25519 signature. The plug-in checks the signature with the public key built into it, and that
    the licence is for a product it accepts, for that key and for this computer, before it stores
    anything.
-4. The activation goes into one file shared by every AnyMeans plug-in of the user. From then on the
-   plug-in checks the stored licence at every start (and whenever the file changes) and never needs
-   the network again.
-5. Deactivating POSTs `{"key", "machineId"}` to `/api/deactivate` and removes the activation here
-   once the server confirms. Until it does, the activation stays: otherwise the key would stay taken
-   on the server with nothing left to free it.
+4. The activation goes into one file shared by every AnyMeans plug-in and every user account of the
+   computer (the server counts computers). From then on the plug-in checks the stored licence at
+   every start (and whenever the file changes) and never needs the network again.
+5. Deactivating marks the activation in the file (`"deactivating"`), POSTs `{"key", "machineId"}` to
+   `/api/deactivate` and removes the activation here once the server confirms. If the server says
+   no, or can't be reached, the mark comes off and nothing changes: otherwise the key would stay
+   taken on the server with nothing left to free it. If the request is cut off before its answer is
+   known (the project closed, the DAW quit), the mark stays: the server may have freed the computer,
+   so once the request could have ended (two request timeouts after the mark) the activation no
+   longer counts anywhere, and deactivating again finishes the job (activating again replaces it).
 
 A file written by hand, or copied from another computer, unlocks nothing: an activation counts only
 with a licence signed by the server's private key, for this computer.
+
+What this can't stop on its own: licences never expire and are checked offline, so a computer
+whose place was freed on the server is locked only if its file says so. A backup of the file put
+back after a deactivation, or `/api/deactivate` called by hand with the key and machine ID from the
+file, frees the place while the computer stays activated. Nothing kept on the computer can prevent
+that (any such record can be put back along with the file), so the limit belongs on the server:
+allow a few deactivations per key in a period (say three in 30 days) and send the rest to support.
 
 ## Files
 
@@ -36,14 +47,20 @@ with a licence signed by the server's private key, for this computer.
 | `Crypto.*`, `Monocypher.*` | SHA-512, strict base64 and hex, Ed25519 verification (Monocypher's own pieces, as its optional `monocypher-ed25519.c` does). |
 | `MachineId.*` | The hashed machine ID. |
 | `LicenseStore.*` | The shared file, and the lock its writers take. |
+| `FolderAccess.*` | Opens the computer's folder to every account (`chmod 0777`; on Windows an access-list entry giving Users Modify). Apart, so `<windows.h>` stays in one file. |
 | `SafeJson.h` | `juce::JSON::parse` for text from outside, refused when nested deep enough to overflow the parser's stack. |
 | `LicenseTransport.*` | HTTPS through `juce::WebInputStream`, behind an interface tests replace with a fake server. |
 | `third_party/monocypher/` | Monocypher 4.0.3, unmodified (BSD-2-Clause or CC0, see `LICENCE.md`). |
 
 ## The shared file
 
-macOS `~/Library/Application Support/AnyMeans/Licenses.json`, Windows `%APPDATA%\AnyMeans\Licenses.json`,
-Linux `~/.config/AnyMeans/Licenses.json`:
+The computer's: macOS `/Users/Shared/AnyMeans/Licenses.json`, Windows `%ProgramData%\AnyMeans\Licenses.json`
+(Linux, not shipped: `~/.config/AnyMeans/Licenses.json`). The plug-in that first writes there makes
+the folder and opens it to every account (`LicenseStore::Sharing::everyAccount`, `FolderAccess`), so
+each account can replace the file another wrote, and each file is written readable by all. The
+user's own folder (`~/Library/Application Support/AnyMeans`, `%APPDATA%\AnyMeans`), where the file
+was kept before, is still read, activations are removed from it too, and an activation goes there
+if the computer's folder can't be written to (`LicenseManager::Environment::userFolder`).
 
 ```json
 {
@@ -63,6 +80,9 @@ Linux `~/.config/AnyMeans/Licenses.json`:
   ]
 }
 ```
+
+While a deactivation is on its way (or after one was cut off) its activation also has
+`"deactivating": "<ISO 8601>"`, the time it was sent.
 
 At most one activation per product, key and computer (a second key for the same product gets its
 own entry, so its place on the server can still be freed). Activations for other computers (a
@@ -87,7 +107,7 @@ as `Licenses.unreadable.json`).
 3. Make one `LicenseManager` per plug-in instance (in the processor), read `isActivated()` on the
    audio thread, and show `getStatusText()`, `activate()` and `deactivate()` in the editor. Never call
    the server while a host scans or renders; call `cancelRequest()` when the editor closes, if it
-   should stop a request.
+   should stop an activation (a deactivation stopped that way counts as cut off: let it finish).
 
 ## Tests
 
@@ -99,4 +119,4 @@ alterations, Node's SHA-512 and the server's checksum verdicts on typed keys. Th
 `tests/data/make-license-vectors.mjs` (Node 22, with a copy of the Worker's sources next to it). Tests and tools never reach the server: a `LicenseManager` takes
 an `Environment` (folder, transport, machine ID, public key), and
 `LicenseManager::setDefaultEnvironmentForTesting()` sets one for code that makes plug-in instances the
-ordinary way. Only code can do either; no file, setting or switch changes a shipping plug-in.
+ordinary way (with `userFolder`, two accounts of one computer can be tried). Only code can do either; no file, setting or switch changes a shipping plug-in.
