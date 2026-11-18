@@ -304,6 +304,18 @@ juce::Font SelectableText::messageFont()
     return fonts::ui (12.5f);
 }
 
+void SelectableText::setMessageFont (const juce::Font& newFont)
+{
+    font = newFont;
+    setFont (font);
+    applyFontToAllText (font, true);
+}
+
+int SelectableText::getLineHeight() const
+{
+    return static_cast<int> (std::ceil (font.getHeight()));
+}
+
 void SelectableText::setMessage (const juce::String& text, juce::Colour colour)
 {
     message = text;
@@ -319,8 +331,8 @@ int SelectableText::getHeightFor (int width) const
         return 0;
 
     // As the text box wraps it: whole lines of the font.
-    const auto layout = layoutText (message, messageFont(), theme::text, static_cast<float> (width));
-    return layout.getNumLines() * messageLineHeight();
+    const auto layout = layoutText (message, font, theme::text, static_cast<float> (width));
+    return layout.getNumLines() * getLineHeight();
 }
 
 void SelectableText::mouseDoubleClick (const juce::MouseEvent& e)
@@ -536,6 +548,14 @@ void ActivationScreen::setMessage (const juce::String& text, MessageKind kind)
 
 void ActivationScreen::licenseStateChanged (LicenseManager&)
 {
+    // Locked again (deactivated here or elsewhere) while the success was still shown: that is
+    // over.
+    if (showingSuccess && ! license.isActivated())
+    {
+        showingSuccess = false;
+        setMessage ({}, MessageKind::none);
+    }
+
     update();
 }
 
@@ -705,6 +725,11 @@ namespace
         constexpr int buttonHeight = 28;
         constexpr int lineHeight = 16;
         constexpr int gap = 8;
+
+        // A message longer than this (a long folder path) scrolls in its place: the panel has to
+        // fit the window. Three lines in ArtFreq FX's row, four in the instrument's column.
+        constexpr int wideMessageLines = 3;
+        constexpr int narrowMessageLines = 4;
     } // namespace licence
 } // namespace
 
@@ -747,6 +772,10 @@ LicenceCard::LicenceCard (ArtFreqProcessor& p, bool isWide)
 
     messageText.setComponentID ("licence-message");
     messageText.setJustification (juce::Justification::topLeft);
+
+    // (ArtFreq FX's row: the smaller text of its question, so most messages take two lines.)
+    if (wide)
+        messageText.setMessageFont (sentenceFont());
 
     for (auto* child : std::initializer_list<juce::Component*> { &deactivateButton, &cancelButton, &confirmButton, &activateButton, &messageText })
         addChildComponent (child);
@@ -853,8 +882,13 @@ LicenceCard::Layout LicenceCard::layoutFor (int width) const
         if (wide)
         {
             const auto textWidth = room - buttonsWidth - 16;
-            const auto h = juce::jmax (licence::buttonHeight, textHeight (sentence, sentenceFont(), textWidth, sentenceSpacing()));
+            const auto sentenceHeight = textHeight (sentence, sentenceFont(), textWidth, sentenceSpacing());
+            const auto h = juce::jmax (licence::buttonHeight, sentenceHeight);
             l.text = { x, 0, textWidth, h };
+
+            // The caption on the sentence's first line (it is centred in the row).
+            l.caption.setY ((h - sentenceHeight) / 2);
+            l.caption.setHeight (static_cast<int> (std::ceil (sentenceFont().getHeight())) + 1);
             l.buttons = { width - buttonsWidth, (h - licence::buttonHeight) / 2, buttonsWidth, licence::buttonHeight };
             l.height = h;
         }
@@ -874,11 +908,18 @@ LicenceCard::Layout LicenceCard::layoutFor (int width) const
     {
         const auto textWidth = room - buttonsWidth - 16;
         l.text = { x, 0, textWidth, licence::lineHeight };
-        const auto detailHeight = hasMessage ? juce::jmax (licence::lineHeight, messageText.getHeightFor (textWidth)) : licence::lineHeight;
+        const auto messageHeight = hasMessage ? juce::jmin (messageText.getHeightFor (textWidth), licence::wideMessageLines * messageText.getLineHeight()) : 0;
+        const auto detailHeight = juce::jmax (licence::lineHeight, messageHeight);
         l.detail = { x, licence::lineHeight, textWidth, detailHeight };
 
         if (hasMessage)
-            l.message = l.detail;
+        {
+            // A long one takes the product's line too, so the row stays as low as the window
+            // needs (it says the computer stays activated).
+            l.message = messageHeight > 2 * messageText.getLineHeight() ? juce::Rectangle<int> (x, 0, textWidth, messageHeight)
+                                                                         : l.detail;
+            l.detail = l.message;
+        }
 
         l.height = juce::jmax (licence::buttonHeight + 4, l.detail.getBottom());
         l.buttons = busy ? juce::Rectangle<int>() : juce::Rectangle<int> (width - buttonsWidth, (l.height - licence::buttonHeight) / 2,
@@ -889,14 +930,19 @@ LicenceCard::Layout LicenceCard::layoutFor (int width) const
     auto y = 0;
     l.text = { x, y, room, licence::lineHeight };
     y += licence::lineHeight;
-    l.detail = { x, y, room, licence::lineHeight };
-    y += licence::lineHeight + 4;
 
     if (hasMessage)
     {
-        const auto h = messageText.getHeightFor (room);
+        // Why it failed, in the key's place (the panel has to fit the window).
+        y += 4;
+        const auto h = juce::jmin (messageText.getHeightFor (room), licence::narrowMessageLines * messageText.getLineHeight());
         l.message = { x, y, room, h };
         y += h + licence::gap;
+    }
+    else
+    {
+        l.detail = { x, y, room, licence::lineHeight };
+        y += licence::lineHeight + 4;
     }
 
     // The state on the left, Deactivate on the right, in one row.
@@ -988,9 +1034,12 @@ void LicenceCard::paint (juce::Graphics& g)
     const auto product = activation->productName == activation->pluginsUnlocked
                            ? activation->productName
                            : activation->productName + ": " + activation->pluginsUnlocked;
-    g.setColour (theme::text);
-    g.setFont (productFont());
-    g.drawText (product, l.text, juce::Justification::centredLeft, true);
+    if (! (messageText.isVisible() && messageText.getY() == l.text.getY()))
+    {
+        g.setColour (theme::text);
+        g.setFont (productFont());
+        g.drawText (product, l.text, juce::Justification::centredLeft, true);
+    }
 
     // The key, masked, and where it is activated.
     const auto keyFont = fonts::mono (12.0f);
@@ -998,8 +1047,8 @@ void LicenceCard::paint (juce::Graphics& g)
     const juce::String here ("Activated on this computer");
     const auto busyText = license.getStatusText();
 
-    // (In the row, a failure's message takes the key's line: it is the text box there.)
-    if (! (wide && messageText.isVisible()))
+    // (A failure's message takes the key's place.)
+    if (! messageText.isVisible())
     {
         g.setColour (theme::textDim);
         g.setFont (keyFont);

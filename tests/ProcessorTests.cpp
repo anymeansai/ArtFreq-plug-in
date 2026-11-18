@@ -1,6 +1,7 @@
 // The host-facing processor: parameters, state, playback in each trigger mode, level safety
 // and editing.
 
+#include "LicenseTestSupport.h"
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
 
@@ -1477,4 +1478,150 @@ ARTFREQ_TEST (processorLargerBlocksThanAnnounced)
     const auto out = render (*processor, 48000, 12000);
     CHECK_GREATER (rms (out, 4800), 0.005);
     CHECK (peak (out) <= 1.0f);
+}
+
+//==============================================================================
+// Licensing: until this computer is activated the instrument is silent and ignores MIDI and
+// Preview; activated (here or in another instance) it fades in, deactivated it fades out.
+
+namespace
+{
+
+/** Plays the processor with the DAW's transport running from the song's start, `blockSize` at a
+    time, calling `beforeBlock` with each block's first sample (where a test locks or activates). */
+std::vector<float> playTransport (ArtFreqProcessor& processor, FakePlayHead& playHead, int64_t& played, int numSamples,
+                                  const std::function<void (int64_t)>& beforeBlock = {},
+                                  const std::function<void (int64_t, juce::MidiBuffer&)>& midiFor = {})
+{
+    processor.setPlayHead (&playHead);
+
+    const auto out = render (processor, numSamples, 256, [&] (int start, int, juce::MidiBuffer& midi)
+    {
+        const auto at = played + start;
+
+        if (beforeBlock != nullptr)
+            beforeBlock (at);
+
+        if (midiFor != nullptr)
+            midiFor (at, midi);
+
+        const auto seconds = static_cast<double> (at) / sampleRate;
+        playHead.set (true, 120.0, seconds * 2.0, seconds);
+    });
+
+    played += numSamples;
+    processor.setPlayHead (nullptr);
+    return out;
+}
+
+} // namespace
+
+ARTFREQ_TEST (processorLockedInstrumentIsSilentUntilActivated)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const licensetest::ScopedLockedLicensing licensing;
+
+    auto processor = makeProcessor();
+    CHECK (! processor->isLicensed());
+
+    processor->setDocument (textDocument ("LOCKED"));
+    setParameter (*processor, params::id::repeat, 1.0f);   // loops while the DAW plays
+    processor->rebuildPlanIfNeeded();
+
+    // Preview is refused, MIDI notes and the transport play nothing: every sample is zero.
+    processor->setPreview (true);
+    CHECK (! processor->isPreviewing());
+
+    FakePlayHead playHead;
+    int64_t played = 0;
+    const auto locked = playTransport (*processor, playHead, played, 48000, {}, [] (int64_t at, juce::MidiBuffer& midi)
+    {
+        if (at % 4800 == 0)
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    });
+    CHECK (juce::exactlyEqual (peak (locked), 0.0f));
+    CHECK (! processor->isSounding());
+
+    // MIDI as the trigger, notes held: still nothing.
+    setParameter (*processor, params::id::trigger, 1.0f);
+    juce::MidiBuffer note;
+    note.addEvent (juce::MidiMessage::noteOn (1, 60, 1.0f), 0);
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    processor->processBlock (buffer, note);
+    CHECK (juce::exactlyEqual (buffer.getMagnitude (0, blockSize), 0.0f) && note.isEmpty());
+    setParameter (*processor, params::id::trigger, 0.0f);
+
+    // Activated (as by another instance): it plays, fading in from silence.
+    CHECK (licensing.activatePro());
+    processor->getLicense().reload();
+    CHECK (processor->isLicensed());
+
+    const auto unlocked = playTransport (*processor, playHead, played, 48000);
+    CHECK_LESS (std::abs (unlocked[0]), 1.0e-6f);
+    CHECK_LESS (peak (unlocked, 0, 48), 0.25f * peak (unlocked, 9600));
+    CHECK_GREATER (rms (unlocked, 9600), 0.005);
+    CHECK (processor->isSounding());
+
+    // And Preview works now.
+    processor->setPreview (true);
+    CHECK (processor->isPreviewing());
+}
+
+ARTFREQ_TEST (processorLockingAndActivatingDoNotClick)
+{
+    // Playing with the DAW (Repeat on), deactivated in the middle of a block stream and activated
+    // again: the sound fades out over 10 ms and is then exactly silent; activated, it fades in. At
+    // no point does the output step more than the drawing itself does.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const licensetest::ScopedLockedLicensing licensing;
+    CHECK (licensing.activatePro());
+
+    auto processor = makeProcessor();
+    CHECK (processor->isLicensed());
+
+    processor->setDocument (textDocument ("FADE", Band::low));
+    setParameter (*processor, params::id::repeat, 1.0f);
+    processor->rebuildPlanIfNeeded();
+
+    FakePlayHead playHead;
+    int64_t played = 0;
+    const auto steady = playTransport (*processor, playHead, played, 48000);
+    const auto steadyStep = largestStep (steady, 4800, steady.size());
+    CHECK_GREATER (rms (steady, 4800), 0.005);
+
+    // Locked at 1 s + 2560 samples (a block's start).
+    constexpr int64_t lockAt = 48000 + 2560;
+    const auto fade = static_cast<size_t> (std::ceil (ArtFreqProcessor::licenseFadeSeconds * sampleRate));
+    const auto lockedPart = playTransport (*processor, playHead, played, 48000, [&] (int64_t at)
+    {
+        if (at == lockAt)
+        {
+            CHECK (licensing.deactivate());
+            processor->getLicense().reload();
+        }
+    });
+
+    const auto lockIndex = static_cast<size_t> (lockAt - 48000);
+    CHECK (! processor->isLicensed());
+    CHECK_GREATER (peak (lockedPart, lockIndex, lockIndex + 48), 0.1f * peak (lockedPart, 0, lockIndex));   // a fade, not a cut
+    CHECK_LESS (largestStep (lockedPart, 1, lockedPart.size()), 1.5f * steadyStep + 1.0e-6f);
+    CHECK (juce::exactlyEqual (peak (lockedPart, lockIndex + fade + 1), 0.0f));
+    CHECK (! processor->isSounding());
+
+    // Activated again at 2 s + 5120: back in with a fade.
+    constexpr int64_t unlockAt = 2 * 48000 + 5120;
+    const auto back = playTransport (*processor, playHead, played, 48000, [&] (int64_t at)
+    {
+        if (at == unlockAt)
+        {
+            CHECK (licensing.activatePro());
+            processor->getLicense().reload();
+        }
+    });
+
+    const auto unlockIndex = static_cast<size_t> (unlockAt - 2 * 48000);
+    CHECK (juce::exactlyEqual (peak (back, 0, unlockIndex), 0.0f));
+    CHECK_LESS (std::abs (back[unlockIndex]), 1.0e-4f);
+    CHECK_LESS (largestStep (back, unlockIndex, back.size()), 1.5f * steadyStep + 1.0e-6f);
+    CHECK_GREATER (rms (back, unlockIndex + 4800), 0.005);
 }

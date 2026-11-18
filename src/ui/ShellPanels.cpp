@@ -569,18 +569,19 @@ void SettingsPanel::resized()
     confirmButton.setBounds (right - confirmButton.getIdealWidth(), y, confirmButton.getIdealWidth(), h);
     cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
     confirmTextArea = { cardPad, y, cancelButton.getX() - 12 - cardPad, h };
-    y += h + sectionGap;
+    y += h + sectionGap - 4;
 
     dividers.push_back (y);
-    y += sectionGap;
+    y += sectionGap - 4;
 
-    // Licence
+    // Licence (a little tighter: with a message of why a deactivation failed, the panel still
+    // has to fit the window)
     sectionCaptions.push_back ({ "Licence", y, cardPad });
     y += 12 + rowGap + 4;
 
     const auto cardWidth = getWidth() - 2 * cardPad;
     licence->setBounds (cardPad, y, cardWidth, licence->getIdealHeight (cardWidth));
-    y = licence->getBottom() + sectionGap;
+    y = licence->getBottom() + sectionGap - 4;
 
     idealHeight = y;
 }
@@ -593,7 +594,8 @@ struct HelpPanel::Block
         heading,
         step,
         bullet,
-        shortcut
+        shortcut,
+        note        // text alone (the activation note at the foot)
     };
 
     Kind kind = Kind::step;
@@ -608,7 +610,7 @@ namespace
     constexpr int helpColumnGap = 48;
     constexpr int helpTop = titleRowHeight + 24;
     constexpr float textIndent = 32.0f;
-    constexpr float helpLineSpacing = 3.0f;
+    constexpr float helpLineSpacing = 2.0f;
     constexpr float shortcutIndent = 136.0f;
 
     struct Paragraph
@@ -665,6 +667,23 @@ namespace
         return modes;
     }
 
+    // Activating (see ui/Licensing.h), across the foot of both panels: where the key is, what it
+    // activates, how many computers and moving to a new one, offline, whom to write to.
+    Paragraph activateNote (bool effect)
+    {
+        const juce::String support (anymeans::license::SUPPORT_EMAIL);
+
+        if (effect)
+            return { "Your ArtFreq Pro key",
+                     "(purchase email) activates ArtFreq FX and ArtFreq on two computers; deactivate in Settings to "
+                     "move. Offline once activated. Help: " + support };
+
+        return { "Your key is in your purchase email.",
+                 "Enter it once per computer; an ArtFreq Pro key activates ArtFreq FX too. Two computers per key: to "
+                 "move to a new one, deactivate in Settings (Licence) on the old one first. Once activated, ArtFreq "
+                 "works offline. Help: " + support };
+    }
+
     const std::vector<Paragraph>& effectNotes()
     {
         static const std::vector<Paragraph> list {
@@ -678,8 +697,8 @@ namespace
     // ArtFreq FX's panel, in its smaller window.
     constexpr int effectHelpPad = 24;
     constexpr int effectHelpColumnGap = 32;
-    constexpr int effectHelpTop = effectTitleRowHeight + 16;
-    constexpr int effectHelpBottom = 18;
+    constexpr int effectHelpTop = effectTitleRowHeight + 12;
+    constexpr int effectHelpBottom = 14;
     constexpr float effectTextIndent = 28.0f;
 
     const std::vector<Paragraph>& layerTips()
@@ -737,15 +756,22 @@ namespace
         return list;
     }
 
-    juce::AttributedString leadText (const Paragraph& p)
+    juce::AttributedString leadText (const Paragraph& p, float size = theme::controlSize)
     {
         juce::AttributedString s;
         s.setLineSpacing (helpLineSpacing);
         s.setWordWrap (juce::AttributedString::byWord);
-        s.append (p.lead, fonts::ui (theme::controlSize, fonts::UiWeight::semiBold), theme::text);
-        s.append (" " + p.rest, fonts::ui (theme::controlSize), theme::textDim);
+        s.append (p.lead, fonts::ui (size, fonts::UiWeight::semiBold), theme::text);
+        s.append (" " + p.rest, fonts::ui (size), theme::textDim);
         return s;
     }
+
+    // The activation note across the foot: under a hairline, its caption on the left.
+    constexpr float footerGap = 12.0f;
+    constexpr float effectFooterGap = 8.0f;
+    constexpr float footerCaptionWidth = 96.0f;
+    constexpr float effectFooterCaptionWidth = 72.0f;
+    constexpr int helpBottom = 24;
 } // namespace
 
 HelpPanel::HelpPanel (bool forEffect)
@@ -810,20 +836,21 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
             heading ("Getting started");
 
             for (const auto& [number, p] : effectSteps())
-                paragraph (Block::Kind::step, number, leadText (p), effectTextIndent, 9.0f);
+                paragraph (Block::Kind::step, number, leadText (p), effectTextIndent, 6.0f);
         }
         else
         {
             heading ("Modes");
 
             for (const auto& p : effectModes())
-                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 7.0f);
+                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 5.0f);
 
-            y += 9.0f;
+            y += 7.0f;
             heading ("Good to know");
 
             for (const auto& p : effectNotes())
-                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 7.0f);
+                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 5.0f);
+
         }
 
         return result;
@@ -834,28 +861,29 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
         heading ("Getting started");
 
         for (const auto& [number, p] : helpSteps())
-            paragraph (Block::Kind::step, number, leadText (p), textIndent, 14.0f);
+            paragraph (Block::Kind::step, number, leadText (p), textIndent, 10.0f);
 
         y += 4.0f;
         heading ("Layers");
 
         for (const auto& p : layerTips())
-            paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
+            paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 6.0f);
+
     }
     else
     {
         heading ("Trigger modes");
 
         for (const auto& p : triggerModes())
-            paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
+            paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 6.0f);
 
-        y += 14.0f;
+        y += 10.0f;
         heading ("Tips");
 
         for (const auto& p : tips())
-            paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 8.0f);
+            paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 6.0f);
 
-        y += 14.0f;
+        y += 10.0f;
         heading ("Shortcuts");
 
         for (const auto& [keys, what] : shortcuts())
@@ -869,15 +897,51 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
     return result;
 }
 
+std::vector<HelpPanel::Block> HelpPanel::layoutAll (float& dividerY) const
+{
+    auto all = layoutColumn (0, getColumnWidth());
+
+    for (auto& b : layoutColumn (1, getColumnWidth()))
+        all.push_back (std::move (b));
+
+    auto columnsBottom = 0.0f;
+
+    for (const auto& b : all)
+        columnsBottom = juce::jmax (columnsBottom, b.area.getBottom());
+
+    // Activating, across the foot of the panel: the caption on the left, the note beside it.
+    const auto pad = static_cast<float> (effect ? effectHelpPad : helpPad);
+    const auto gap = effect ? effectFooterGap : footerGap;
+    const auto captionWidth = effect ? effectFooterCaptionWidth : footerCaptionWidth;
+    const auto noteWidth = static_cast<float> (getPanelWidth()) - 2.0f * pad - captionWidth;
+
+    dividerY = std::round (columnsBottom + gap);
+    const auto y = dividerY + gap + 1.0f;
+
+    Block caption;
+    caption.kind = Block::Kind::heading;
+    caption.marker = "Activate";
+    caption.area = { pad, y + 2.0f, captionWidth, 12.0f };
+    all.push_back (std::move (caption));
+
+    Block note;
+    note.kind = Block::Kind::note;
+    note.layout.createLayout (leadText (activateNote (effect), effect ? 12.0f : theme::controlSize), noteWidth);
+    note.area = { pad + captionWidth, y, noteWidth, note.layout.getHeight() };
+    all.push_back (std::move (note));
+
+    return all;
+}
+
 int HelpPanel::getIdealHeight() const
 {
+    auto dividerY = 0.0f;
     auto bottom = 0.0f;
 
-    for (int column = 0; column < 2; ++column)
-        for (const auto& b : layoutColumn (column, getColumnWidth()))
-            bottom = juce::jmax (bottom, b.area.getBottom());
+    for (const auto& b : layoutAll (dividerY))
+        bottom = juce::jmax (bottom, b.area.getBottom());
 
-    return static_cast<int> (std::ceil (bottom)) + (effect ? effectHelpBottom : 28);
+    return static_cast<int> (std::ceil (bottom)) + (effect ? effectHelpBottom : helpBottom);
 }
 
 void HelpPanel::paint (juce::Graphics& g)
@@ -886,12 +950,17 @@ void HelpPanel::paint (juce::Graphics& g)
     paintTitle (g, effect ? "How to use ArtFreq FX" : "How to use ArtFreq", getWidth(),
                 effect ? effectTitleRowHeight : titleRowHeight);
 
-    // A hairline between the two columns.
+    // A hairline between the two columns, and one over the activation note across the foot.
+    const auto footer = juce::roundToInt (footerDividerY);
+    const auto pad = effect ? effectHelpPad : helpPad;
+
     if (effect)
         drawVerticalDivider (g, effectHelpPad + getColumnWidth() + effectHelpColumnGap / 2, effectHelpTop,
-                             getHeight() - effectHelpBottom);
+                             footer - juce::roundToInt (effectFooterGap));
     else
-        drawVerticalDivider (g, helpPad + getColumnWidth() + helpColumnGap / 2, helpTop, getHeight() - 28);
+        drawVerticalDivider (g, helpPad + getColumnWidth() + helpColumnGap / 2, helpTop, footer - juce::roundToInt (footerGap));
+
+    drawHorizontalDivider (g, footer, pad, getWidth() - pad);
 
     {
         for (const auto& b : blocks)
@@ -923,6 +992,10 @@ void HelpPanel::paint (juce::Graphics& g)
                     b.layout.draw (g, b.area);
                     break;
                 }
+
+                case Block::Kind::note:
+                    b.layout.draw (g, b.area);
+                    break;
 
                 case Block::Kind::shortcut:
                 {
@@ -956,10 +1029,7 @@ void HelpPanel::resized()
 {
     placeCloseButton (closeButton, getWidth(), effect ? effectTitleRowHeight : titleRowHeight);
 
-    blocks = layoutColumn (0, getColumnWidth());
-
-    for (auto& b : layoutColumn (1, getColumnWidth()))
-        blocks.push_back (std::move (b));
+    blocks = layoutAll (footerDividerY);
 }
 
 } // namespace artfreq::ui::shell

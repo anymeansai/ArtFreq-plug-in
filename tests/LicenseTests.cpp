@@ -428,6 +428,68 @@ ARTFREQ_TEST (licenseSignedLicenceFieldsAreChecked)
     CHECK (SignedLicense::describe (Check::wrongMachine).isNotEmpty());
 }
 
+ARTFREQ_TEST (licenseARealLicenceFromTheLiveServerVerifies)
+{
+    // An activation answered by the live server (Nov 18 2026: a test key of the store, a made-up
+    // machine ID, activated and then deactivated again), checked with the public key built into
+    // the plug-ins. The vectors above are signed by a throwaway key; this one proves that the
+    // deployed server's signing key is the one the plug-ins trust, and that the plug-in reads its
+    // licences as it writes them.
+    const juce::String license ("AMLIC1|prod_Ve87k69rq5fkZN|AF8JBEA2A0X5ZPJN6W6C|"
+                                "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0|2026-11-18T05:33:13.583Z");
+    const juce::String signature ("+5G/UdjkegcaAJHZEvY9GphwkQHAF9qYtLyvlbGhTngwPrjfL6MYnSrTBrJv18eP+uItP19YJhXao2M3QxcrAA==");
+    const juce::String key ("AF8JBEA2A0X5ZPJN6W6C");
+    const juce::String machine ("0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0");   // field 4
+
+    using Check = SignedLicense::Check;
+    const juce::StringArray instrument { PRODUCT_ID_ARTFREQ, PRODUCT_ID_ARTFREQ_PRO };
+    const juce::StringArray effect { PRODUCT_ID_ARTFREQ_PRO };
+
+    CHECK (juce::String (SIGNING_PUBLIC_KEY_HEX) == "7acdbd078095b8d36a9c91dfaa2166c820fbb382bc71d8659bfd1153231e2307");
+    CHECK (LicenseKey::isWellFormed (key));
+    CHECK (SignedLicense::isSignedBy (license, signature, SIGNING_PUBLIC_KEY_HEX));
+    CHECK (SignedLicense::check (license, signature, SIGNING_PUBLIC_KEY_HEX, instrument, key, machine) == Check::valid);
+    CHECK (SignedLicense::check (license, signature, SIGNING_PUBLIC_KEY_HEX, effect, key, machine) == Check::valid);
+    CHECK (SignedLicense::productIdOf (license) == PRODUCT_ID_ARTFREQ_PRO);
+
+    // For this licence only: another computer, another key, a product the plug-in doesn't take.
+    CHECK (SignedLicense::check (license, signature, SIGNING_PUBLIC_KEY_HEX, effect, key, machineHere) == Check::wrongMachine);
+    CHECK (SignedLicense::check (license, signature, SIGNING_PUBLIC_KEY_HEX, effect, keyPro, machine) == Check::wrongKey);
+    CHECK (SignedLicense::check (license, signature, SIGNING_PUBLIC_KEY_HEX, { PRODUCT_ID_CREME }, key, machine) == Check::wrongProduct);
+
+    // Not with the tests' key, and not changed by one character (the time, or the signature).
+    CHECK (SignedLicense::check (license, signature, throwawayPublicKeyHex, effect, key, machine) == Check::badSignature);
+    CHECK (SignedLicense::check (license.replace ("05:33:13.583Z", "05:33:13.584Z"), signature, SIGNING_PUBLIC_KEY_HEX, effect, key, machine)
+           == Check::badSignature);
+    CHECK (SignedLicense::check (license, signature.replace ("+5G/", "+5H/"), SIGNING_PUBLIC_KEY_HEX, effect, key, machine)
+           == Check::badSignature);
+
+    // As the server's whole answer, through the activation itself: a manager on that computer,
+    // with the built-in key, activates with it and keeps it.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const TemporaryFolder temporary;
+    const auto server = std::make_shared<FakeServer>();
+    server->replyWithBody (200, "{\"ok\":true,\"activationToken\":\"60b0e1b87e670ec8632de2e24f3699012bffdf6c700e2a6dcf917a5e6ed229d3\","
+                                "\"license\":\"" + license + "\",\"signature\":\"" + signature + "\","
+                                "\"activationsUsed\":1,\"maxActivations\":2,\"alreadyActive\":false}");
+
+    auto environment = makeEnvironment (temporary.folder, server, machine);
+    environment.publicKeyHex = {};   // the built-in key
+    LicenseManager manager (artFreqEffectLicensing(), environment);
+
+    std::optional<LicenseManager::Result> result;
+    CHECK (manager.activate ("af8jb-ea2a0-x5zpj-n6w6c", [&] (const LicenseManager::Result& r) { result = r; }));
+    CHECK (pumpUntil ([&] { return result.has_value(); }));
+    CHECK (result.has_value() && result->outcome == LicenseManager::Result::Outcome::activated);
+    CHECK (manager.isActivated());
+    CHECK (manager.getActivation().has_value() && manager.getActivation()->productName == "ArtFreq Pro");
+
+    // Read back from the file by a new manager, as at the next start: still activated, offline.
+    const LicenseManager later (artFreqInstrumentLicensing(), environment);
+    CHECK (later.isActivated());
+    CHECK (server->numSent() == 1);
+}
+
 //==============================================================================
 // Machine ID
 //==============================================================================

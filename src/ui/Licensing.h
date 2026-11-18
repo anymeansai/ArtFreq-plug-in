@@ -71,8 +71,12 @@ public:
     void setMessage (const juce::String& text, juce::Colour colour);
     const juce::String& getMessage() const noexcept   { return message; }
 
-    /** The height the message takes at a width. */
+    /** The font (messageFont() unless set). */
+    void setMessageFont (const juce::Font& font);
+
+    /** The height the message takes at a width, and the height of one of its lines. */
     int getHeightFor (int width) const;
+    int getLineHeight() const;
 
     bool isTextInputActive() const override   { return false; }
     bool keyStateChanged (bool) override      { return false; }
@@ -82,6 +86,7 @@ public:
 
 private:
     juce::String message;
+    juce::Font font { messageFont() };
 };
 
 //==============================================================================

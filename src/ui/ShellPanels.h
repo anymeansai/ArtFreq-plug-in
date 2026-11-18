@@ -134,7 +134,7 @@ private:
 class HelpPanel final : public juce::Component
 {
 public:
-    static constexpr int width = 920;
+    static constexpr int width = 1040;
     static constexpr int effectWidth = 688;   // ArtFreq FX's window is smaller
 
     /** forEffect: ArtFreq FX's help, short and its own (where it goes, drawing, the modes,
@@ -154,11 +154,13 @@ public:
 private:
     struct Block;
     std::vector<Block> layoutColumn (int column, int width) const;
+    std::vector<Block> layoutAll (float& dividerY) const;   // both columns and the note at the foot
     int getColumnWidth() const;
 
     const bool effect;
     IconButton closeButton;
-    std::vector<Block> blocks;   // both columns, laid out by resized()
+    std::vector<Block> blocks;   // both columns and the foot, laid out by resized()
+    float footerDividerY = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (HelpPanel)
 };

@@ -6,6 +6,7 @@
 // round trips (also to and from the instrument), mono and stereo, sample rates, block sizes, MIDI
 // and Preview.
 
+#include "LicenseTestSupport.h"
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
 
@@ -1146,4 +1147,106 @@ ARTFREQ_TEST (effectFollowsMidiAndPreview)
 
     // The single pass of one bar ends after 2 s, and Preview turns itself off.
     CHECK (! preview->isPreviewing());
+}
+
+//==============================================================================
+// Licensing: until this computer is activated ArtFreq FX lets the audio through untouched (it
+// must never mute a master), one latency late as always, so nothing moves when it is activated.
+
+ARTFREQ_TEST (effectLockedPassesTheAudioThroughUntilActivated)
+{
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const licensetest::ScopedLockedLicensing licensing;
+
+    // A band drawn over a sine, the DAW playing, every mode: locked, the output is the input one
+    // latency late, bit for bit (no carving, no sines), and the latency is the activated one.
+    const auto document = bandDocument ({ { 200.0, 400.0 } });
+    const auto input = sines (2 * 48000, { { 300.0, 0.4f }, { 3000.0, 0.05f } });
+
+    for (const auto mode : allModes)
+    {
+        auto effect = makeProcessor (Variant::effect, document, settingsOf (mode, true));
+        CHECK (! effect->isLicensed());
+        CHECK (effect->getLatencySamples() == 4096);
+
+        effect->setPreview (true);
+        CHECK (! effect->isPreviewing());
+
+        const auto out = process (*effect, input);
+        CHECK_NEAR (differenceFromDelayed (input, out, effect->getLatencySamples(), 0), 0.0, 0.0);
+        CHECK (std::all_of (out[0].begin(), out[0].begin() + effect->getLatencySamples(), [] (float x) { return juce::exactlyEqual (x, 0.0f); }));
+        CHECK (! effect->isSounding());
+    }
+
+    // Noise, mono and stereo, odd blocks: still the input, bit for bit.
+    for (const auto channels : { 1, 2 })
+    {
+        auto effect = makeProcessor (Variant::effect, document, settingsOf (EffectMode::carve, true), defaultRate, 512, channels);
+        const auto noisy = noise (48000, 11, channels);
+        Run run;
+        run.blocks = { 1, 77, 512, 1024, 13 };
+        const auto out = process (*effect, noisy, run);
+        CHECK_NEAR (differenceFromDelayed (noisy, out, effect->getLatencySamples(), 0), 0.0, 0.0);
+    }
+}
+
+ARTFREQ_TEST (effectActivatingAndLockingWhilePlaying)
+{
+    // Carving a sine in a drawn band, locked at first: untouched. Activated after 1 s (as by
+    // another instance): from a frame later it carves, without a click. Locked again after 3 s:
+    // the carve fades out over a frame and the audio is the input again, bit for bit, no click.
+    // The latency never changes, so nothing moves.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const licensetest::ScopedLockedLicensing licensing;
+
+    const auto document = bandDocument ({ { 200.0, 400.0 } });
+    const auto input = sines (5 * 48000, { { 300.0, 0.4f } });
+    auto effect = makeProcessor (Variant::effect, document, settingsOf (EffectMode::carve, true));
+    const auto latency = effect->getLatencySamples();
+
+    Run run;
+    auto stage = 0;
+    run.beforeBlock = [&] (ArtFreqProcessor& p, int start)
+    {
+        if (stage == 0 && start >= 48000)
+            CHECK (licensing.activatePro());
+        else if (stage == 1 && start >= 3 * 48000)
+            CHECK (licensing.deactivate());
+        else
+            return;
+
+        ++stage;
+        p.getLicense().reload();
+    };
+
+    const auto out = process (*effect, input, run);
+    CHECK (effect->getLatencySamples() == latency);
+
+    // Locked: untouched. Activated: carved by most of Depth. Locked again: untouched once the
+    // frames carved before have played out.
+    CHECK_NEAR (differenceFromDelayed (input, out, latency, 0, 48000 + latency), 0.0, 0.0);
+    CHECK_LESS (levelDb (out, 300.0, 2 * 48000 + latency, 3 * 48000) - levelDb (input, 300.0, 2 * 48000, 3 * 48000 - latency), -60.0);
+    CHECK_NEAR (differenceFromDelayed (input, out, latency, 3 * 48000 + 2 * latency + 1024), 0.0, 0.0);
+
+    const auto steady = largestBend (input, 0, 5 * 48000);
+    CHECK_LESS (largestBend (out, 48000 + latency - 4096, 48000 + 2 * latency + 4096), 20.0f * steady);
+    CHECK_LESS (largestBend (out, 3 * 48000 + latency - 4096, 3 * 48000 + 2 * latency + 4096), 20.0f * steady);
+}
+
+ARTFREQ_TEST (effectTakesOnlyAnArtFreqProActivation)
+{
+    // An ArtFreq key (the instrument alone) on this computer: the instrument plays, ArtFreq FX
+    // stays locked and lets the audio through.
+    const juce::ScopedJuceInitialiser_GUI gui;
+    const licensetest::ScopedLockedLicensing licensing;
+    CHECK (licensing.activateArtFreq());
+
+    auto instrument = makeProcessor (Variant::instrument, bandDocument ({ { 200.0, 400.0 } }), settingsOf (EffectMode::carve, true));
+    auto effect = makeProcessor (Variant::effect, bandDocument ({ { 200.0, 400.0 } }), settingsOf (EffectMode::carve, true));
+    CHECK (instrument->isLicensed());
+    CHECK (! effect->isLicensed());
+
+    const auto input = sines (48000, { { 300.0, 0.4f } });
+    const auto out = process (*effect, input);
+    CHECK_NEAR (differenceFromDelayed (input, out, effect->getLatencySamples(), 0), 0.0, 0.0);
 }
