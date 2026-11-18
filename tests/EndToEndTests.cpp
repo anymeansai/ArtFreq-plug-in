@@ -276,8 +276,9 @@ LowsLook lowsLook (const ArtDocument& document, int lowEndIndex, int order, cons
     for (int i = 0; i < size; ++i)
         window[static_cast<size_t> (i)] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * static_cast<float> (i) / static_cast<float> (size));
 
-    constexpr int rows = 48;
-    constexpr double lowestHz = 30.0, highestHz = 400.0;
+    // Static: Visual Studio's C++17 lambdas want local constexpr doubles captured.
+    static constexpr int rows = 48;
+    static constexpr double lowestHz = 30.0, highestHz = 400.0;
     const auto rowHz = [] (int row) { return lowestHz * std::pow (highestHz / lowestHz, (row + 0.5) / rows); };
     const auto binHz = sampleRate / size;
 

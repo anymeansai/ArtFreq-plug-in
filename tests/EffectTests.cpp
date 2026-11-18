@@ -446,7 +446,8 @@ ARTFREQ_TEST (effectCarveAndDrawPlaysTheDrawingInAWiderHole)
     const auto [quieter, quieterLatency] = run (EffectMode::carveDraw, -18.0f);
     CHECK (latency == carveLatency && latency == quieterLatency);
 
-    const auto dropIn = [&] (const Stereo& out, double hz) { return levelDb (out, hz, from, to) - levelDb (input, hz, from - latency, to - latency); };
+    // A structured binding is copied into the lambda, not captured: capturing one is C++20.
+    const auto dropIn = [&, latency = latency] (const Stereo& out, double hz) { return levelDb (out, hz, from, to) - levelDb (input, hz, from - latency, to - latency); };
 
     CHECK_LESS (dropIn (drawn, 1020.0), -30.0);
     CHECK_GREATER (dropIn (carved, 1020.0), -12.0);

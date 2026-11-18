@@ -1,0 +1,22 @@
+ArtFreq and ArtFreq FX for Windows
+by AnyMeans
+
+Two VST3 plug-ins for 64-bit DAWs on Windows 10 and 11. There is no installer:
+you copy two folders by hand.
+
+1. Close your DAW.
+
+2. Unzip this zip (right-click it, Extract All...), then copy the two folders
+   ArtFreq.vst3 and ArtFreq FX.vst3 into
+
+       C:\Program Files\Common Files\VST3
+
+   Windows asks for permission to copy there: click Continue.
+   Copy each .vst3 folder whole; do not open it or move what is inside.
+
+3. Open your DAW and rescan plug-ins (in its plug-in settings).
+   ArtFreq is listed under instruments: put it on an instrument (MIDI) track.
+   ArtFreq FX is listed under audio effects: put it on an audio track, a bus
+   or the master.
+
+Support: support@anymeansaudio.com

@@ -3,46 +3,106 @@ name: Build
 on:
   push:
   pull_request:
+  # A manual run (Actions > Build > Run workflow) can build one platform only, to save minutes:
+  # the repository is private and macOS minutes are billed at ten times the Linux rate (Windows
+  # at twice). A run of one platform does not publish a release; its downloads stay on the run's
+  # page. "all" builds both and publishes, as a push does.
   workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to build (one platform alone does not publish a release)'
+        type: choice
+        options:
+          - all
+          - macOS
+          - Windows
+        default: all
 
 permissions:
   contents: read
 
 jobs:
+  # Decides what to build and whether to publish, before any costly runner starts. A job-level
+  # "if" cannot read the matrix context, so a platform cannot be skipped by testing matrix.name
+  # in the build job; instead this job writes the matrix out, keeping only the entries the run
+  # asked for, and the build job reads it with fromJSON. Pushes, pull requests and manual runs
+  # of "all" get every entry.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      publish: ${{ steps.plan.outputs.publish }}
+    steps:
+      - name: Choose the platforms
+        id: plan
+        shell: bash
+        env:
+          PLATFORM: ${{ inputs.platform || 'all' }}
+          EVENT: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          # Every platform. To build Linux again, add an entry (os ubuntu-22.04, cmake_args '',
+          # pluginval_zip pluginval_Linux.zip, pluginval_bin pluginval): the steps below still
+          # handle it, except the release job, which does not expect its zip.
+          PLATFORMS: >-
+            [
+              {
+                "name": "macOS",
+                "os": "macos-15",
+                "cmake_args": "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64",
+                "pluginval_zip": "pluginval_macOS.zip",
+                "pluginval_bin": "pluginval.app/Contents/MacOS/pluginval"
+              },
+              {
+                "name": "Windows",
+                "os": "windows-2022",
+                "cmake_args": "-DCMAKE_GENERATOR_PLATFORM=x64 -DARTFREQ_BUILD_TOOLS=OFF",
+                "pluginval_zip": "pluginval_Windows.zip",
+                "pluginval_bin": "pluginval.exe"
+              }
+            ]
+        run: |
+          case "$PLATFORM" in
+            all|macOS|Windows) ;;
+            *) echo "::error::Unknown platform '$PLATFORM' (all, macOS or Windows)."; exit 1 ;;
+          esac
+          matrix=$(jq -c --arg platform "$PLATFORM" \
+            '{ include: [ .[] | select($platform == "all" or .name == $platform) ] }' <<< "$PLATFORMS")
+          test "$(jq '.include | length' <<< "$matrix")" -gt 0
+
+          # The release holds every platform's downloads, so only a build of all of them may
+          # publish: a push to a branch, or a manual run of "all" on a branch.
+          publish=false
+          if [ "$REF_TYPE" = "branch" ] && [ "$PLATFORM" = "all" ] \
+             && { [ "$EVENT" = "push" ] || [ "$EVENT" = "workflow_dispatch" ]; }; then
+            publish=true
+          fi
+
+          echo "Platforms: $PLATFORM; publish a release: $publish"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
   build:
     name: ${{ matrix.name }}
+    needs: plan
     runs-on: ${{ matrix.os }}
     # A newer push to the same branch makes an older build pointless, so it is cancelled. This
     # is set on the build job only, not on the whole workflow: cancelling the release job
-    # part-way through publishing could leave the release without its downloads.
+    # part-way through publishing could leave the release without its downloads. The event is
+    # part of the group, so a manual run never cancels the build a push is about to publish.
     concurrency:
-      group: build-${{ github.ref }}-${{ matrix.name }}
+      group: build-${{ github.ref }}-${{ github.event_name }}-${{ matrix.name }}
       cancel-in-progress: true
     # Every target compiles all of ArtFreq's sources (both plug-ins, and the tests and the
-    # snapshot tool, link the processor and the editor too), twice over for the universal build.
-    timeout-minutes: 75
+    # tools, link the processor and the editor too): twice over for the universal macOS build,
+    # with link-time code generation for each target, one at a time, on a 2-core runner on Windows.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: macOS
-            os: macos-15
-            cmake_args: '-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64'
-            pluginval_zip: pluginval_macOS.zip
-            pluginval_bin: pluginval.app/Contents/MacOS/pluginval
-          # Windows and Linux are switched off until the macOS version is right.
-          # Uncomment these two entries to build them again; everything else is ready.
-          # - name: Windows
-          #   os: windows-2022
-          #   cmake_args: ''
-          #   pluginval_zip: pluginval_Windows.zip
-          #   pluginval_bin: pluginval.exe
-          # - name: Linux
-          #   os: ubuntu-22.04
-          #   cmake_args: ''
-          #   pluginval_zip: pluginval_Linux.zip
-          #   pluginval_bin: pluginval
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
+    # Every "shell: bash" step runs in Git Bash on Windows: POSIX paths, 7z for zips, no sudo.
     steps:
       - uses: actions/checkout@v4
 
@@ -54,12 +114,17 @@ jobs:
             libasound2-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
             libxcursor-dev libfreetype6-dev libfontconfig1-dev xvfb
 
-      # Configuring downloads JUCE from GitHub, which occasionally fails: try three times.
+      # Configuring downloads JUCE from GitHub, which occasionally fails: try three times. On
+      # Windows CMake picks the Visual Studio generator (multi-config: the configuration is
+      # chosen when building, and CMAKE_BUILD_TYPE is ignored). cmake_args holds one or more
+      # arguments, separated by spaces (none has a space in it).
       - name: Configure
         shell: bash
         run: |
           args=(-S . -B build -DCMAKE_BUILD_TYPE=Release)
-          if [ -n "${{ matrix.cmake_args }}" ]; then args+=("${{ matrix.cmake_args }}"); fi
+          read -r -a extra <<< "${{ matrix.cmake_args }}"
+          if [ "${#extra[@]}" -gt 0 ]; then args+=("${extra[@]}"); fi
+          echo "cmake ${args[*]}"
           for attempt in 1 2 3; do
             if cmake "${args[@]}"; then
               exit 0
@@ -72,20 +137,30 @@ jobs:
 
       # All targets: the two plug-ins (ArtFreq, the instrument, and ArtFreqFX, the effect "ArtFreq
       # FX": one code base, registered once as each), the tests (ArtFreqTests), the interface
-      # snapshot tool (ArtFreqSnapshot) and the two labs.
+      # snapshot tool (ArtFreqSnapshot) and the labs. On Windows the plug-ins and the tests only
+      # (ARTFREQ_BUILD_TOOLS=OFF), one project at a time: a private repository's Windows runner
+      # has 2 cores and 7 GB, every target compiles all of JUCE and ArtFreq with link-time code
+      # generation (two such links at once could run out of memory), and each project already
+      # compiles on every core (/MP).
       - name: Build
         shell: bash
-        run: cmake --build build --config Release --parallel 4
+        run: |
+          parallel=4
+          if [ "$RUNNER_OS" = "Windows" ]; then parallel=1; fi
+          cmake --build build --config Release --parallel "$parallel"
 
       # ArtFreqTests links the processor and the editor as well as core and dsp, so a failure
       # here can come from any part of the plug-in, not only the engine. It opens no window,
       # but on Linux it runs under a virtual display all the same, as JUCE's GUI classes are
-      # linked in.
+      # linked in. On Windows a hung run (a crash dialog, say) is stopped after 15 minutes
+      # rather than the job's 90 (the whole suite takes about 30 seconds on the Linux box).
       - name: Tests
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            ctest --test-dir build -C Release --output-on-failure --timeout 900
           else
             ctest --test-dir build -C Release --output-on-failure
           fi
@@ -102,6 +177,50 @@ jobs:
             lipo -info "$binary"
             lipo "$binary" -verify_arch arm64 x86_64
           done
+
+      # A Windows VST3 is a folder: <name>.vst3/Contents/x86_64-win/<name>.vst3 is the plug-in
+      # itself (a 64-bit DLL), next to Contents/Resources/moduleinfo.json. The C runtime is
+      # linked in (CMakeLists.txt), so the DLLs must not import the Visual C++ redistributable's
+      # DLLs (VCRUNTIME140, MSVCP140) or the C runtime's (api-ms-win-crt-*): this runner has them
+      # installed, a buyer's PC may not. dumpbin comes with Visual Studio; its options are given
+      # with "-", as Git Bash would turn "/headers" into a path.
+      - name: Check the Windows bundles
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
+          dumpbin=$("$vswhere" -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | tr -d '\r' | sed -n '1p')
+          if [ -z "$dumpbin" ]; then
+            echo "::error::dumpbin.exe not found with vswhere."
+            exit 1
+          fi
+          dumpbin=$(cygpath -u "$dumpbin")
+          check_bundle()
+          {
+            local target="$1" name="$2"
+            local bundle="build/${target}_artefacts/Release/VST3/$name.vst3"
+            local dll="$bundle/Contents/x86_64-win/$name.vst3"
+            echo "== $bundle"
+            find "$bundle" | sort
+            test -f "$dll"
+            test -s "$bundle/Contents/Resources/moduleinfo.json"
+            # Captured whole before grep reads it (grep -q in a pipe can fail the step).
+            local headers imports
+            headers=$("$dumpbin" -nologo -headers "$(cygpath -w "$dll")" | tr -d '\r')
+            grep -E "machine \(|DLL$" <<< "$headers" || true
+            if ! grep -q "8664 machine (x64)" <<< "$headers"; then
+              echo "::error::$dll is not a 64-bit (x64) binary."
+              exit 1
+            fi
+            imports=$("$dumpbin" -nologo -dependents "$(cygpath -w "$dll")" | tr -d '\r')
+            echo "$imports"
+            if grep -qiE 'vcruntime|msvcp|api-ms-win-crt|ucrtbase' <<< "$imports"; then
+              echo "::error::$name.vst3 needs the Visual C++ runtime DLLs: the C runtime must be linked in."
+              exit 1
+            fi
+          }
+          check_bundle ArtFreq "ArtFreq"
+          check_bundle ArtFreqFX "ArtFreq FX"
 
       # The macOS build is universal but the runner is Apple Silicon, so the tests above ran
       # the arm64 half only. Run them again on the Intel half under Rosetta.
@@ -137,7 +256,7 @@ jobs:
       # Renders the editor in its main states to PNG files, to check the interface on a real
       # Mac (fonts, HiDPI): the instrument's (artfreq-*.png) and ArtFreq FX's in each of its
       # modes (artfreq-fx-*.png). It runs headless on the macOS runner; on Linux it needs a
-      # display (xvfb-run -a).
+      # display (xvfb-run -a). Not built on Windows (see Build).
       - name: Interface snapshots
         id: snapshots
         if: runner.os == 'macOS'
@@ -157,17 +276,21 @@ jobs:
           path: snapshots/*.png
           if-no-files-found: warn
 
-      # Both plug-ins, one after the other (the effect's bundle name has a space: quoted).
+      # Both plug-ins, one after the other (the effect's bundle name has a space: quoted). On
+      # Windows pluginval is given the bundle folder, as a DAW finds it, by its Windows path.
       - name: Validate with pluginval
         shell: bash
         run: |
           curl -sSL --retry 3 -o pluginval.zip \
             "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/${{ matrix.pluginval_zip }}"
           if [ "$RUNNER_OS" = "Windows" ]; then 7z x -y pluginval.zip > /dev/null; else unzip -oq pluginval.zip; fi
+          test -f "./${{ matrix.pluginval_bin }}"
           for plugin in \
             "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" \
             "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3"; do
             echo "Validating $plugin"
+            test -d "$plugin"
+            if [ "$RUNNER_OS" = "Windows" ]; then plugin=$(cygpath -wa "$plugin"); fi
             args=(--strictness-level 10 --validate-in-process --output-dir pluginval-logs --validate "$plugin")
             if [ "$RUNNER_OS" = "Linux" ]; then
               xvfb-run -a "./${{ matrix.pluginval_bin }}" "${args[@]}"
@@ -185,28 +308,86 @@ jobs:
           if-no-files-found: ignore
 
       # One zip with both bundles side by side at its top: ArtFreq.vst3 and "ArtFreq FX.vst3".
+      # The Windows zip also holds "How to install.txt" (installer/windows), with Windows line
+      # endings whatever the checkout did to them: there is no Windows installer yet.
       - name: Package
         shell: bash
         run: |
+          rm -rf dist stage
           mkdir -p dist stage
-          rm -rf stage/*
           if [ "$RUNNER_OS" = "macOS" ]; then
             ditto "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" "stage/ArtFreq.vst3"
             ditto "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3" "stage/ArtFreq FX.vst3"
             codesign --verify --strict "stage/ArtFreq.vst3"
             codesign --verify --strict "stage/ArtFreq FX.vst3"
             # Without --keepParent ditto archives the folder's contents, not the folder.
-            ditto -c -k stage "$GITHUB_WORKSPACE/dist/ArtFreq-VST3-macOS.zip"
+            ditto -c -k stage "dist/ArtFreq-VST3-macOS.zip"
+            unzip -l dist/ArtFreq-VST3-macOS.zip | grep -q "ArtFreq FX.vst3/"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            cp -R "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" "stage/ArtFreq.vst3"
+            cp -R "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3" "stage/ArtFreq FX.vst3"
+            awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }' "installer/windows/How to install.txt" > "stage/How to install.txt"
+            (cd stage && 7z a -tzip -bd ../dist/ArtFreq-VST3-Windows.zip "ArtFreq.vst3" "ArtFreq FX.vst3" "How to install.txt")
+            7z l dist/ArtFreq-VST3-Windows.zip
           else
             cp -R "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3" "stage/ArtFreq.vst3"
             cp -R "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3" "stage/ArtFreq FX.vst3"
-            if [ "$RUNNER_OS" = "Windows" ]; then
-              (cd stage && 7z a -tzip "$GITHUB_WORKSPACE/dist/ArtFreq-VST3-Windows.zip" ArtFreq.vst3 "ArtFreq FX.vst3" > /dev/null)
-            else
-              (cd stage && zip -qry "$GITHUB_WORKSPACE/dist/ArtFreq-VST3-Linux.zip" ArtFreq.vst3 "ArtFreq FX.vst3")
-            fi
+            (cd stage && zip -qry ../dist/ArtFreq-VST3-Linux.zip ArtFreq.vst3 "ArtFreq FX.vst3")
+            unzip -l dist/ArtFreq-VST3-Linux.zip | grep -q "ArtFreq FX.vst3/"
           fi
-          unzip -l dist/*.zip | grep -q "ArtFreq FX.vst3/"
+
+      # Prove the Windows zip as a buyer uses it: unzipped into an empty folder standing in for
+      # C:\Program Files\Common Files\VST3, it holds the two bundles and the text at its top and
+      # nothing else, the very DLLs that were built and validated, and they pass pluginval
+      # there. Then the same in the real VST3 folder, if this runner may write to it.
+      - name: Test the Windows zip
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          zip="dist/ArtFreq-VST3-Windows.zip"
+          scratch="zip-test/VST3"
+          rm -rf zip-test
+          mkdir -p "$scratch"
+          7z x -y -bd "-o$scratch" "$zip" > /dev/null
+
+          expected=$(printf '%s\n' "ArtFreq FX.vst3" "ArtFreq.vst3" "How to install.txt" | sort)
+          found=$(find "$scratch" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+          if [ "$found" != "$expected" ]; then
+            echo "::error::The zip's top level is not the two bundles and How to install.txt:"
+            echo "$found"
+            exit 1
+          fi
+
+          text="$scratch/How to install.txt"
+          lines=$(wc -l < "$text")
+          test "$lines" -gt 0
+          test "$(grep -c $'\r$' "$text")" -eq "$lines"
+          grep -qF 'C:\Program Files\Common Files\VST3' "$text"
+          grep -qF 'support@anymeansaudio.com' "$text"
+
+          check_installed()
+          {
+            local folder="$1" target="$2" name="$3"
+            local installed="$folder/$name.vst3"
+            test -f "$installed/Contents/x86_64-win/$name.vst3"
+            test -s "$installed/Contents/Resources/moduleinfo.json"
+            # The very DLL that was built and validated above.
+            cmp "$installed/Contents/x86_64-win/$name.vst3" \
+                "build/${target}_artefacts/Release/VST3/$name.vst3/Contents/x86_64-win/$name.vst3"
+            "./${{ matrix.pluginval_bin }}" --strictness-level 5 --validate-in-process --validate "$(cygpath -wa "$installed")"
+          }
+          check_installed "$scratch" ArtFreq "ArtFreq"
+          check_installed "$scratch" ArtFreqFX "ArtFreq FX"
+
+          vst3="/c/Program Files/Common Files/VST3"
+          if mkdir -p "$vst3" && touch "$vst3/artfreq-write-test" && rm -f "$vst3/artfreq-write-test"; then
+            7z x -y -bd "-o$(cygpath -w "$vst3")" "$zip" "-x!How to install.txt" > /dev/null
+            ls -la "$vst3"
+            check_installed "$vst3" ArtFreq "ArtFreq"
+            check_installed "$vst3" ArtFreqFX "ArtFreq FX"
+          else
+            echo "::warning::Cannot write to C:\\Program Files\\Common Files\\VST3 on this runner; tested the zip in $scratch only."
+          fi
 
       - name: Upload plug-in
         uses: actions/upload-artifact@v4
@@ -262,12 +443,13 @@ jobs:
           if-no-files-found: error
 
   # Publishes the builds on the repository's Releases page, so they can be downloaded
-  # from a browser. Each successful build of a branch updates the release for the
-  # current version (the version number in CMakeLists.txt).
+  # from a browser. Each successful build of every platform on a branch updates the release
+  # for the current version (the version number in CMakeLists.txt). It runs only when the plan
+  # says so (all platforms built, a push or a manual run of "all") and every build succeeded.
   release:
     name: Publish release
-    needs: build
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_type == 'branch'
+    needs: [plan, build]
+    if: needs.plan.outputs.publish == 'true'
     timeout-minutes: 10
     runs-on: ubuntu-latest
     # One publish at a time (every branch publishes to the same Releases page), and a running
@@ -303,20 +485,27 @@ jobs:
           test -n "$version"
           tag="v$version"
           ls -l dist
-          test -f "dist/ArtFreq-$version-macOS.pkg"
-          test -f "dist/ArtFreq-VST3-macOS.zip"
+          # Every platform's downloads must be here: the clean-up below takes off the release
+          # whatever this build did not make.
+          for expected in "ArtFreq-$version-macOS.pkg" "ArtFreq-VST3-macOS.zip" "ArtFreq-VST3-Windows.zip"; do
+            if [ ! -f "dist/$expected" ]; then
+              echo "::error::dist/$expected is missing: nothing is published."
+              exit 1
+            fi
+          done
 
           cat > notes.md <<EOF
-          ArtFreq $version by AnyMeans, built from commit ${GITHUB_SHA::7}. Turns text, pictures and brush strokes into sound whose spectrogram shows them, as two VST3 plug-ins from the same code: **ArtFreq**, an instrument for MIDI / instrument tracks that plays the drawing, and **ArtFreq FX**, an audio effect for audio tracks, buses and the master that carves the drawing into the song (Carve), keeps only it (Stencil), plays it in a hole carved for it (Carve + Draw) or plays it on top (Draw). Universal (Apple Silicon and Intel), macOS 10.15 or later.
+          ArtFreq $version by AnyMeans, built from commit ${GITHUB_SHA::7}. Turns text, pictures and brush strokes into sound whose spectrogram shows them, as two VST3 plug-ins from the same code: **ArtFreq**, an instrument for MIDI / instrument tracks that plays the drawing, and **ArtFreq FX**, an audio effect for audio tracks, buses and the master that carves the drawing into the song (Carve), keeps only it (Stencil), plays it in a hole carved for it (Carve + Draw) or plays it on top (Draw).
 
-          **macOS:** download \`ArtFreq-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`.
+          **macOS** (10.15 or later, Apple Silicon and Intel): download \`ArtFreq-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`. Or by hand: unzip \`ArtFreq-VST3-macOS.zip\` and copy both into \`~/Library/Audio/Plug-Ins/VST3\`; if your DAW will not load them, run \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 ~/Library/Audio/Plug-Ins/VST3/ArtFreq\\ FX.vst3\` once.
 
-          **Manual install:** download \`ArtFreq-VST3-macOS.zip\`, unzip it and copy \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`~/Library/Audio/Plug-Ins/VST3\`. If your DAW will not load them, clear the download quarantine once: \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 ~/Library/Audio/Plug-Ins/VST3/ArtFreq\\ FX.vst3\`. Windows and Linux builds are paused until the macOS version is finished.
+          **Windows** (10 or 11, 64-bit; no installer yet): download \`ArtFreq-VST3-Windows.zip\`, unzip it, close your DAW and copy \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`C:\Program Files\Common Files\VST3\` (Windows asks for permission). \`How to install.txt\` in the zip says the same.
 
-          Then rescan plug-ins in your DAW. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
+          Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play.
 
           **New in 0.4**
           - FreqArt is now called **ArtFreq** (and FreqArt FX **ArtFreq FX**). Old projects keep working: they open with the renamed plug-ins, and the installer removes the old FreqArt bundles from \`/Library/Audio/Plug-Ins/VST3\`. Rescan plug-ins in your DAW after installing (after a manual install, delete \`FreqArt.vst3\` and \`FreqArt FX.vst3\` yourself).
+          - **Windows**: both plug-ins for 64-bit Windows 10 and 11 (a zip; no installer yet).
 
           **New in 0.3**
           - **ArtFreq FX**, a second plug-in installed alongside ArtFreq (listed under audio effects, category Fx / Filter): put it on an audio track, a bus or the master. **Mode**: Carve (the default) mutes the drawing's frequencies in the song so it shows as dark shapes, Carve + Draw plays the drawing in a hole carved a little wider, Stencil keeps only the drawing, Draw plays it on top; **Depth** (default -80 dB) is how far carved frequencies drop. It uses the same window, drawing tools, Length, Trigger, Repeat and start bar.
@@ -362,9 +551,9 @@ jobs:
             done
 
             # Files left over from a build that made more than this one does are out of
-            # date: take them off.
-            for asset in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
-              if [ ! -e "dist/$asset" ]; then
+            # date: take them off. (Every platform's files are in dist/, checked above.)
+            gh release view "$tag" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+              if [ -n "$asset" ] && [ ! -e "dist/$asset" ]; then
                 gh release delete-asset "$tag" "$asset" --yes
               fi
             done
