@@ -176,7 +176,7 @@ jobs:
         shell: bash
         run: |
           vswhere="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
-          dumpbin=$("$vswhere" -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | tr -d '\r' | head -n 1)
+          dumpbin=$("$vswhere" -latest -products '*' -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | tr -d '\r' | sed -n '1p')
           if [ -z "$dumpbin" ]; then
             echo "::error::dumpbin.exe not found with vswhere."
             exit 1
@@ -193,13 +193,13 @@ jobs:
             test -s "$bundle/Contents/Resources/moduleinfo.json"
             # Captured whole before grep reads it (grep -q in a pipe can fail the step).
             local headers imports
-            headers=$("$dumpbin" -nologo -headers "$dll" | tr -d '\r')
+            headers=$("$dumpbin" -nologo -headers "$(cygpath -w "$dll")" | tr -d '\r')
             grep -E "machine \(|DLL$" <<< "$headers" || true
             if ! grep -q "8664 machine (x64)" <<< "$headers"; then
               echo "::error::$dll is not a 64-bit (x64) binary."
               exit 1
             fi
-            imports=$("$dumpbin" -nologo -dependents "$dll" | tr -d '\r')
+            imports=$("$dumpbin" -nologo -dependents "$(cygpath -w "$dll")" | tr -d '\r')
             echo "$imports"
             if grep -qiE 'vcruntime|msvcp|api-ms-win-crt|ucrtbase' <<< "$imports"; then
               echo "::error::$name.vst3 needs the Visual C++ runtime DLLs: the C runtime must be linked in."
