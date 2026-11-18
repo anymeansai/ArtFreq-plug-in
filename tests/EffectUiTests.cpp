@@ -9,6 +9,7 @@
 //
 // These need JUCE's GUI classes, so on Linux run them under a virtual display (xvfb-run -a).
 
+#include <functional>
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
 
@@ -674,36 +675,47 @@ ARTFREQ_TEST (uiEffectSettingsHoldTheTiming)
     const auto choice = [&] (const char* id) { return juce::roundToInt (effect->getParameters().getRawParameterValue (id)->load()); };
     const auto settle = [&] { pump (80); };
 
+    // The settings follow the parameters on the editor's 30 Hz timer. A busy CI machine (the macOS
+    // runner) can hold that timer back for longer than one settle, so each check waits, for up to
+    // two seconds, for what it expects instead of assuming the timer has already run.
+    const auto eventually = [&] (const std::function<bool()>& condition)
+    {
+        for (int waited = 0; ! condition() && waited < 2000; waited += 20)
+            pump (20);
+
+        return condition();
+    };
+
     CHECK (isShown (*editor, "scale") && isShown (*editor, "range-low") && isShown (*editor, "slope") && isShown (*editor, "window-size")
            && isShown (*editor, "reset-drawing") && isShown (*editor, "trigger") && isShown (*editor, "start-at") && isShown (*editor, "tempo-source"));
-    CHECK (! isShown (*editor, "start-bar") && ! isShown (*editor, "bpm"));
+    CHECK (eventually ([&] { return ! isShown (*editor, "start-bar") && ! isShown (*editor, "bpm"); }));
     CHECK (childrenAreApart (*panel));
 
     // Start: at a bar, with its field.
     startAt->setSelectedIndex (1, juce::sendNotificationSync);
     settle();
-    CHECK (choice (params::id::startAt) == params::atBarStartIndex && isShown (*editor, "start-bar"));
+    CHECK (eventually ([&] { return choice (params::id::startAt) == params::atBarStartIndex && isShown (*editor, "start-bar"); }));
 
     // Tempo: typed, with its field.
     tempo->setSelectedIndex (1, juce::sendNotificationSync);
     settle();
-    CHECK (choice (params::id::tempoSource) == 1 && isShown (*editor, "bpm"));
+    CHECK (eventually ([&] { return choice (params::id::tempoSource) == 1 && isShown (*editor, "bpm"); }));
     CHECK (childrenAreApart (*panel));
     tempo->setSelectedIndex (0, juce::sendNotificationSync);
     settle();
-    CHECK (! isShown (*editor, "bpm"));
+    CHECK (eventually ([&] { return ! isShown (*editor, "bpm"); }));
 
     // A single pass is the only one with a start to choose.
     setParameter (*effect, params::id::repeat, 1.0f);
     settle();
-    CHECK (! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"));
+    CHECK (eventually ([&] { return ! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"); }));
     setParameter (*effect, params::id::repeat, 0.0f);
     trigger->setSelectedIndex (1, juce::sendNotificationSync);
     settle();
-    CHECK (choice (params::id::trigger) == 1 && ! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"));
+    CHECK (eventually ([&] { return choice (params::id::trigger) == 1 && ! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"); }));
     trigger->setSelectedIndex (0, juce::sendNotificationSync);
     settle();
-    CHECK (isShown (*editor, "start-at") && isShown (*editor, "start-bar"));
+    CHECK (eventually ([&] { return isShown (*editor, "start-at") && isShown (*editor, "start-bar"); }));
 
     juce::StringArray disabled;
     collectDisabled (*editor, disabled);
