@@ -271,7 +271,11 @@ juce::Label* ArtFreqLookAndFeel::createSliderTextBox (juce::Slider& slider)
     if (dynamic_cast<shell::Knob*> (&slider) != nullptr)
         return new shell::ValueLabel();
 
-    auto* label = juce::LookAndFeel_V4::createSliderTextBox (slider);
+    // Any other slider's value (a bar's): coloured as JUCE colours its own, typed into a
+    // shell::NumberTextBox, which hands the space bar on to the DAW.
+    const std::unique_ptr<juce::Label> model (juce::LookAndFeel_V4::createSliderTextBox (slider));
+    auto* label = new shell::ValueLabel (true);
+    model->copyAllExplicitColoursTo (*label);
     label->setFont (fonts::mono (12.0f));
     label->setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
     label->setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);

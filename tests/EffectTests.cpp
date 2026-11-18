@@ -372,6 +372,138 @@ ARTFREQ_TEST (effectCarvesFromWherePlayStarts)
     CHECK_NEAR (differenceFromDelayed (input, idle, latency, 2 * latency), 0.0, 0.0);
 }
 
+ARTFREQ_TEST (effectOnPlayWaitsForTheTracksAudio)
+{
+    // As it comes, on a track that is silent where the DAW starts (bar 1) and whose audio comes in
+    // a little after bar 3: Carve and Stencil begin their pass where the audio does, and carve it
+    // for the whole Length; before that, isWaitingForSound() says so. (Begun at bar 1, the pass ran
+    // out over the silence and the audio was never carved.) The Draw modes play their sines from
+    // the moment the DAW starts.
+    const auto document = bandDocument ({ { 800.0, 1250.0 } });
+    const auto audioFrom = 4 * 48000 + 1777;
+    auto input = noise (audioFrom + 3 * 48000, 11);
+
+    for (auto& channel : input)
+        std::fill (channel.begin(), channel.begin() + audioFrom, 0.0f);
+
+    for (const auto mode : allModes)
+    {
+        auto effect = makeProcessor (Variant::effect, document, [mode] (ArtFreqProcessor& p)
+        {
+            setParameter (p, params::id::mode, static_cast<float> (static_cast<int> (mode)));
+            setParameter (p, params::id::length, 2.0f);   // one bar: 2 s
+        });
+
+        const auto latency = effect->getLatencySamples();
+        auto waitedWhileSilent = true, waitedAfter = false;
+        Run run;
+        run.blocks = { 480, 512, 64 };
+        run.beforeBlock = [&] (ArtFreqProcessor& p, int start)
+        {
+            // (What the block before this one left.)
+            if (start > 0 && start <= audioFrom - 512)
+                waitedWhileSilent = waitedWhileSilent && p.isWaitingForSound();
+
+            if (start > audioFrom + 512)
+                waitedAfter = waitedAfter || p.isWaitingForSound();
+        };
+
+        const auto out = process (*effect, input, run);
+
+        if (playsSines (mode))
+        {
+            // The sines over the silence, from the start.
+            CHECK (! waitedAfter);
+            CHECK_GREATER (bandDb (out, 900.0, 1100.0, latency + 4800, latency + 48000), bandDb (input, 900.0, 1100.0, 4800, 48000) + 60.0);
+            continue;
+        }
+
+        CHECK (waitedWhileSilent && ! waitedAfter);
+
+        // Carved (Carve) or kept (Stencil) from where the audio comes in, for the whole bar; then
+        // the input one latency late, bit for bit.
+        const auto from = audioFrom + 4800, to = audioFrom + 2 * 48000 - 4800;
+        const auto inBand = bandDb (out, 900.0, 1100.0, latency + from, latency + to) - bandDb (input, 900.0, 1100.0, from, to);
+        const auto outOfBand = bandDb (out, 3000.0, 6000.0, latency + from, latency + to) - bandDb (input, 3000.0, 6000.0, from, to);
+
+        if (mode == EffectMode::carve)
+            CHECK (inBand < -40.0 && std::abs (outOfBand) < 1.0);
+        else
+            CHECK (outOfBand < -40.0 && std::abs (inBand) < 1.0);
+
+        CHECK_NEAR (differenceFromDelayed (input, out, latency, audioFrom + 2 * 48000 + latency + 480), 0.0, 0.0);
+        CHECK_NEAR (differenceFromDelayed (input, out, latency, 0, audioFrom + latency - 480), 0.0, 0.0);
+    }
+}
+
+ARTFREQ_TEST (effectKeepsRunningOverSilence)
+{
+    // The effect reports an infinite tail (VST3: kInfiniteTail), so a host never stops calling it
+    // over silent input (Cubase's "suspend VST3 plug-in processing when no audio signals are
+    // received", Reaper's auto-bypass on silence). With a finite one such a host skipped the
+    // silence and resumed at the next audio region, which looked like a relocation past the pass:
+    // a second pass on play carved the drawing again there. The instrument has no tail.
+    CHECK (std::isinf (makeProcessor (Variant::effect, ArtDocument())->getTailLengthSeconds()));
+    CHECK_NEAR (makeProcessor (Variant::instrument, ArtDocument())->getTailLengthSeconds(), 0.0, 0.0);
+
+    // A host that suspends the effect once the input has been silent for longer than its tail,
+    // and resumes it when audio comes back: audio at bars 1 - 2 and 11 - 12, silence between, a
+    // one-bar pass on play from bar 1. The pass carves bar 1, once.
+    const auto document = bandDocument ({ { 800.0, 1250.0 } });
+    auto effect = makeProcessor (Variant::effect, document, [] (ArtFreqProcessor& p) { setParameter (p, params::id::length, 2.0f); });
+    const auto bar = 2 * 48000;
+    auto input = noise (12 * bar, 3);
+
+    for (auto& channel : input)
+        std::fill (channel.begin() + 2 * bar, channel.begin() + 10 * bar, 0.0f);
+
+    const auto tail = effect->getTailLengthSeconds() * 48000.0;
+    const auto latency = effect->getLatencySamples();
+    auto out = input;
+    FakePlayHead head;
+    effect->setPlayHead (&head);
+    juce::AudioBuffer<float> buffer (2, 512);
+    double silentFor = 0.0;
+    int skipped = 0;
+
+    for (int start = 0; start < 12 * bar; start += 512)
+    {
+        auto silent = true;
+
+        for (int channel = 0; channel < 2; ++channel)
+        {
+            buffer.copyFrom (channel, 0, input[static_cast<size_t> (channel)].data() + start, 512);
+            silent = silent && buffer.getMagnitude (channel, 0, 512) <= 0.0f;
+        }
+
+        silentFor = silent ? silentFor + 512.0 : 0.0;
+
+        if (silentFor > tail)
+        {
+            ++skipped;
+            continue;
+        }
+
+        const auto seconds = start / 48000.0;
+        head.set (true, 120.0, seconds * 2.0, seconds);
+        juce::MidiBuffer midi;
+        effect->processBlock (buffer, midi);
+
+        for (int channel = 0; channel < 2; ++channel)
+            std::copy (buffer.getReadPointer (channel), buffer.getReadPointer (channel) + 512,
+                       out[static_cast<size_t> (channel)].begin() + start);
+    }
+
+    effect->setPlayHead (nullptr);
+    CHECK (skipped == 0);
+
+    const auto barOne = bandDb (out, 900.0, 1100.0, latency + 4800, latency + bar - 4800) - bandDb (input, 900.0, 1100.0, 4800, bar - 4800);
+    const auto barEleven = bandDb (out, 900.0, 1100.0, latency + 10 * bar + 4800, latency + 11 * bar - 4800)
+                         - bandDb (input, 900.0, 1100.0, 10 * bar + 4800, 11 * bar - 4800);
+    CHECK_LESS (barOne, -40.0);
+    CHECK_NEAR (barEleven, 0.0, 0.01);
+}
+
 ARTFREQ_TEST (effectLeavesTheAudioAloneOutsideThePass)
 {
     // A pass of one bar from bar 2 (2 s to 4 s at 120 BPM) over 800 - 1250 Hz. Before it, after

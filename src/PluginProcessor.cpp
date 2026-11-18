@@ -55,6 +55,34 @@ std::pair<double, bool> positionAfter (const PlaySegment* segments, int numSegme
     return { std::isfinite (position) ? position : 0.0, last.playing };
 }
 
+/** The input counts as sounding from this level on (-60 dBFS): quieter, nothing of it shows on
+    an analyser's spectrogram (white noise at -60 dBFS lies near -93 dB in each bin of 4096
+    points), so carving it would show nothing either. Digital silence, dither and a quiet noise
+    floor all lie below it. */
+constexpr float soundThreshold = 0.001f;
+
+/** The first sample of a stretch of the input that sounds (`numSamples`: none does). */
+int firstSoundingSample (const juce::AudioBuffer<float>& buffer, int numChannels, int start, int numSamples) noexcept
+{
+    auto first = numSamples;
+
+    for (int channel = 0; channel < numChannels; ++channel)
+    {
+        const auto* samples = buffer.getReadPointer (channel, start);
+
+        for (int i = 0; i < first; ++i)
+        {
+            if (std::abs (samples[i]) >= soundThreshold)
+            {
+                first = i;
+                break;
+            }
+        }
+    }
+
+    return first;
+}
+
 double quarterNotesPerBar (juce::AudioPlayHead::TimeSignature signature) noexcept
 {
     return static_cast<double> (signature.numerator) * 4.0 / static_cast<double> (signature.denominator);
@@ -257,6 +285,7 @@ void ArtFreqProcessor::reset()
 
     playPosition.store (0.0);
     sounding.store (false);
+    waitingForSound.store (false);
 }
 
 bool ArtFreqProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -287,6 +316,10 @@ TrackerSettings ArtFreqProcessor::currentTrackerSettings() const noexcept
     settings.quarterNotesPerBar = quarterNotesPerBar (timeSignature.load());
     settings.lengthQuarterNotes = params::lengthInQuarterNotes (juce::roundToInt (lengthParam->load()),
                                                                 settings.quarterNotesPerBar);
+
+    // Carving a song (Carve, Stencil) shows nothing over silence: a pass on play begins where
+    // the track's audio does. The Draw modes play their sines from the moment the DAW starts.
+    settings.waitForSound = isEffect() && ! playsSines (getEffectMode());
     return settings;
 }
 
@@ -329,6 +362,15 @@ HostTiming ArtFreqProcessor::readHostTiming() noexcept
             {
                 timeSignature.store (*signature);
             }
+
+            // The DAW's loop, for the editor: how long it is (0: no loop, or none reported).
+            auto loop = 0.0;
+
+            if (const auto points = position->getLoopPoints(); position->getIsLooping() && points.hasValue())
+                if (const auto span = points->ppqEnd - points->ppqStart; std::isfinite (span) && span > 0.0)
+                    loop = span;
+
+            hostLoopQuarterNotes.store (loop);
         }
     }
 
@@ -561,25 +603,31 @@ void ArtFreqProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
             segments[0].length = length;
             segments[0].fraction = engine.getFraction();
         }
-        else if (start == 0 && length == numSamples)
-        {
-            numSegments = tracker.process (timing, midi, length, settings, segments);
-        }
         else
         {
-            chunkMidi.clear();
-            chunkMidi.addEvents (midi, start, length, -start);
+            // (Where the input sounds matters only while a pass on play waits for it.)
+            const auto soundFrom = settings.waitForSound ? firstSoundingSample (buffer, numChannels, start, length) : 0;
 
-            auto chunkTiming = timing;
-            const auto elapsed = static_cast<double> (start) / sampleRate;
+            if (start == 0 && length == numSamples)
+            {
+                numSegments = tracker.process (timing, midi, length, settings, segments, soundFrom);
+            }
+            else
+            {
+                chunkMidi.clear();
+                chunkMidi.addEvents (midi, start, length, -start);
 
-            if (chunkTiming.timeInSeconds.has_value())
-                *chunkTiming.timeInSeconds += elapsed;
+                auto chunkTiming = timing;
+                const auto elapsed = static_cast<double> (start) / sampleRate;
 
-            if (chunkTiming.ppqPosition.has_value() && chunkTiming.bpm.has_value())
-                *chunkTiming.ppqPosition += elapsed * *chunkTiming.bpm / 60.0;
+                if (chunkTiming.timeInSeconds.has_value())
+                    *chunkTiming.timeInSeconds += elapsed;
 
-            numSegments = tracker.process (chunkTiming, chunkMidi, length, settings, segments);
+                if (chunkTiming.ppqPosition.has_value() && chunkTiming.bpm.has_value())
+                    *chunkTiming.ppqPosition += elapsed * *chunkTiming.bpm / 60.0;
+
+                numSegments = tracker.process (chunkTiming, chunkMidi, length, settings, segments, soundFrom);
+            }
         }
 
         for (int channel = 0; channel < numChannels; ++channel)
@@ -662,6 +710,7 @@ void ArtFreqProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
     maskExchange.reportInUse (versionOf (currentMasks), versionOf (olderMasks));
 
     sounding.store (playing && ! bypassed);
+    waitingForSound.store (! bypassed && tracker.isWaitingForSound());
     effectiveTempo.store (tracker.getTempo());
 
     // An effect that makes no MIDI: nothing goes out.

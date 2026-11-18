@@ -71,6 +71,33 @@ namespace
         return word.substring (0, 1).toUpperCase() + word.substring (1);
     }
 
+    /** A DAW loop shorter than the drawing (each round shows only part of it): "Your loop shows
+        2 of 4 bars". Empty when the DAW does not loop, or loops at least one pass. */
+    juce::String loopNote (ArtFreqProcessor& processor, bool shorter)
+    {
+        const auto loop = processor.getHostLoopQuarterNotes();
+
+        if (loop <= 0.0)
+            return {};
+
+        const auto signature = processor.getTimeSignature();
+        const auto barLength = static_cast<double> (signature.numerator) * 4.0 / static_cast<double> (signature.denominator);
+        const auto lengthIndex = choiceIndex (processor, params::id::length);
+        const auto pass = params::lengthInQuarterNotes (lengthIndex, barLength);
+
+        if (loop >= pass - 1.0e-3)
+            return {};
+
+        // Counted as Length counts: in bars, or (1 or 2 beats) in quarter notes. The loop's count
+        // is cut to a tenth, never rounded up to the drawing's.
+        const auto unit = lengthIndex >= 2 ? juce::jlimit (0.5, 32.0, barLength) : 1.0;
+        const auto whole = juce::roundToInt (pass / unit);
+        const auto noun = juce::String (lengthIndex >= 2 ? "bar" : "beat") + (whole == 1 ? "" : "s");
+        const auto shown = formatNumber (std::floor (loop / unit * 10.0 + 1.0e-6) / 10.0, 1);
+
+        return (shorter ? "Loop shows " : "Your loop shows ") + shown + " of " + juce::String (whole) + " " + noun;
+    }
+
     void paintStripBackground (juce::Graphics& g, juce::Component& strip, bool lineAtBottom)
     {
         g.fillAll (theme::panel);
@@ -92,13 +119,25 @@ juce::String effectHint (ArtFreqProcessor& processor, bool shorter)
         return shorter ? "Once per note" : "Each note " + verb + " it once";
     }
 
+    // The DAW plays and the pass waits for the track's audio (Carve and Stencil, On play).
+    if (processor.isWaitingForSound())
+        return shorter ? "Waiting for audio" : "Waiting for audio to " + verb.dropLastCharacters (1);
+
+    const auto onPlay = params::startAtForIndex (choiceIndex (processor, params::id::startAt)) == StartAt::play;
+
+    // Under a DAW loop shorter than the drawing every round shows the same part of it (a pass on
+    // play begins again where the loop starts; Repeat's bars are the song's).
+    if (repeats || onPlay)
+        if (const auto note = loopNote (processor, shorter); note.isNotEmpty())
+            return note;
+
     if (repeats)
     {
         const auto lengths = params::lengthNames();
         return "Repeats every " + lengths[juce::jlimit (0, lengths.size() - 1, choiceIndex (processor, params::id::length))];
     }
 
-    if (params::startAtForIndex (choiceIndex (processor, params::id::startAt)) == StartAt::bar)
+    if (! onPlay)
         return capitalised (verb) + " once from bar " + juce::String (processor.getSinglePassStartBar());
 
     return capitalised (verb) + (shorter ? " once on play" : " once when you press play");

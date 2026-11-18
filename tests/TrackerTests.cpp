@@ -1690,15 +1690,42 @@ ARTFREQ_TEST (trackerOnPlayUnderAHostLoop)
         CHECK_NEAR (round.startsAt, 0.0, 1.0e-9);
     }
 
-    // The loop starts inside the pass (play from bar 9, loop bars 10 to 12): every wrap carries on
-    // in the same pass, at the place the loop's start has in it. The same picture every round.
+    // The loop starts inside the pass (play from bar 9, loop bars 10 to 12): the first wrap goes
+    // back to inside it and begins a new pass at the loop's start, and every later wrap lands on
+    // that pass's start. From the second round on, the drawing from its start, every round (not
+    // only its second part, as when every wrap carried on in the first pass).
     auto rounds = loopRounds (32.0, 36.0, 44.0, 4, 16.0);
     CHECK (rounds[0].samples == 12 * 24000);
 
     for (size_t r = 1; r < rounds.size(); ++r)
     {
         CHECK (rounds[r].samples == 8 * 24000);
-        CHECK_NEAR (rounds[r].startsAt, 4.0 / 16.0, 1.0e-9);
+        CHECK_NEAR (rounds[r].startsAt, 0.0, 1.0e-9);
+    }
+
+    // Play pressed at bar 1 under a loop over bars 3 and 4 (as in Cubase, Reaper, Studio One and
+    // Bitwig, which start at the cursor before the loop): the whole pass, then every round the
+    // drawing's first half; the same as with play pressed at bar 3.
+    rounds = loopRounds (0.0, 8.0, 16.0, 4, 16.0);
+    CHECK_NEAR (static_cast<double> (rounds[0].samples), soundingSamples (16.0), 1.0);
+
+    for (size_t r = 1; r < rounds.size(); ++r)
+    {
+        CHECK (rounds[r].samples == 8 * 24000);
+        CHECK_NEAR (rounds[r].startsAt, 0.0, 1.0e-9);
+    }
+
+    for (const auto& round : loopRounds (8.0, 8.0, 16.0, 3, 16.0))
+    {
+        CHECK (round.samples == 8 * 24000);
+        CHECK_NEAR (round.startsAt, 0.0, 1.0e-9);
+    }
+
+    // ... and under a loop over bars 3 to 10, longer than the drawing: the whole drawing every round.
+    for (const auto& round : loopRounds (0.0, 8.0, 40.0, 3, 16.0))
+    {
+        CHECK_NEAR (static_cast<double> (round.samples), soundingSamples (16.0), 1.0);
+        CHECK_NEAR (round.startsAt, 0.0, 1.0e-9);
     }
 
     // A loop shorter than the pass, play started inside it: the first wrap lands before the pass
@@ -1739,7 +1766,8 @@ ARTFREQ_TEST (trackerOnPlayRelocations)
         run (tracker, playingAt (40.0 + qnPerBlock), settings);
     };
 
-    // Moved to a place inside it: it carries on there, in the same pass (a jump for the sound).
+    // Moved forwards to a place inside it: it carries on there, in the same pass (a jump for the
+    // sound).
     {
         PlayheadTracker tracker;
         started (tracker);
@@ -1747,11 +1775,13 @@ ARTFREQ_TEST (trackerOnPlayRelocations)
         CHECK (segments.size() == 1 && segments[0].playing && segments[0].jump);
         CHECK_NEAR (segments[0].fraction, 10.0 / 16.0, 1.0e-12);
 
-        // ... and back, also to its very start, and a hair before it (hosts round).
+        // Moved back to inside it: a new pass begins there, as one does where a DAW loop wraps to.
         segments = run (tracker, playingAt (41.0), settings);
         CHECK (segments.size() == 1 && segments[0].playing && segments[0].jump);
-        CHECK_NEAR (segments[0].fraction, 1.0 / 16.0, 1.0e-12);
+        CHECK_NEAR (segments[0].fraction, 0.0, 1.0e-12);
 
+        // Back to before that one (to 40), forwards in the new pass, then back to its very start
+        // and a hair before it (hosts round): that pass, carrying on.
         segments = run (tracker, playingAt (40.0), settings);
         CHECK (segments.size() == 1 && segments[0].playing);
         CHECK_NEAR (segments[0].fraction, 0.0, 1.0e-12);
@@ -1808,8 +1838,8 @@ ARTFREQ_TEST (trackerOnPlayRelocations)
         CHECK_NEAR (segments[0].fraction, 1.0 - 300.0 * qnPerSample / 16.0, 1.0e-9);
     }
 
-    // After the pass has ended and the DAW has played on: moving back inside it plays the rest of
-    // it again; moving anywhere else begins a new one.
+    // After the pass has ended and the DAW has played on: moving back to inside it, or anywhere
+    // else, begins a new pass right there.
     {
         PlayheadTracker tracker;
         started (tracker);
@@ -1818,7 +1848,7 @@ ARTFREQ_TEST (trackerOnPlayRelocations)
 
         auto segments = run (tracker, playingAt (48.0), settings);
         CHECK (segments.size() == 1 && segments[0].playing);
-        CHECK_NEAR (segments[0].fraction, 0.5, 1.0e-12);
+        CHECK_NEAR (segments[0].fraction, 0.0, 1.0e-12);
 
         segments = run (tracker, playingAt (200.0), settings);
         CHECK (segments.size() == 1 && segments[0].playing);
@@ -1941,11 +1971,11 @@ ARTFREQ_TEST (trackerOnPlayWithoutPpq)
         CHECK_NEAR (static_cast<double> (played.last), soundingSamples (4.0), 1.0);
         CHECK_NEAR (played.starts.front().second, 0.0, 1.0e-12);
 
-        // The time jumping is a relocation: back inside (0.5 s after its start), on from there;
-        // anywhere else, a new pass.
+        // The time jumping is a relocation: back (to 0.5 s after its start, or anywhere else), a
+        // new pass.
         auto segments = run (tracker, timeOnly (62.2), settings);
         CHECK (segments.size() == 1 && segments[0].playing);
-        CHECK_NEAR (segments[0].fraction, 0.25, 1.0e-9);
+        CHECK_NEAR (segments[0].fraction, 0.0, 1.0e-9);
 
         segments = run (tracker, timeOnly (10.0), settings);
         CHECK (segments.size() == 1 && segments[0].playing);
@@ -1972,6 +2002,125 @@ ARTFREQ_TEST (trackerOnPlayWithoutPpq)
         CHECK (played.first == 0);
         CHECK_NEAR (static_cast<double> (played.samples), soundingSamples (4.0, 60.0), 1.0);
         CHECK_NEAR (played.starts.front().second, 0.0, 1.0e-15);
+    }
+}
+
+ARTFREQ_TEST (trackerOnPlayWaitsForSound)
+{
+    // ArtFreq FX carving a song (waitForSound): the DAW plays from bar 1 of a track that is silent
+    // until a little after bar 5. The pass begins at the first sample that sounds, not at bar 1
+    // (where it would have run out over the silence), and lasts its Length from there.
+    auto settings = onPlay (16.0);
+    settings.waitForSound = true;
+    const auto soundStarts = static_cast<int64_t> (16.0 * 0.5 * sampleRate) + 123;   // bar 5, and 123 samples
+    const auto rate = rateFor (120.0, 16.0);
+
+    for (const auto& blocks : { std::vector<int> { 500 }, std::vector<int> { 64, 7, 480, 1024 }, std::vector<int> { 4096 } })
+    {
+        PlayheadTracker tracker;
+        tracker.prepare (sampleRate);
+        Played played;
+        auto waited = true, inPlace = true;
+        size_t next = 0;
+
+        for (int64_t at = 0; at < 3 * 384000;)
+        {
+            const auto length = blocks[next++ % blocks.size()];
+            const auto soundFrom = static_cast<int> (juce::jlimit<int64_t> (0, length, soundStarts - at));
+            PlaySegment segments[PlayheadTracker::maxSegments];
+            const auto count = tracker.process (songFrom (0.0) (at), {}, length, settings, segments, soundFrom);
+
+            // Waiting while nothing has sounded yet, and only then.
+            waited = waited && tracker.isWaitingForSound() == (at + length <= soundStarts);
+
+            for (int i = 0; i < count; ++i)
+            {
+                if (! segments[i].playing)
+                    continue;
+
+                const auto sample = at + segments[i].start;
+                played.first = played.first < 0 ? sample : played.first;
+                played.last = sample + segments[i].length;
+                played.samples += segments[i].length;
+                inPlace = inPlace && std::abs (segments[i].fraction - static_cast<double> (sample - soundStarts) * rate) < 1.0e-9;
+            }
+
+            at += length;
+        }
+
+        CHECK (waited && inPlace);
+        CHECK (played.first == soundStarts);
+        CHECK_NEAR (static_cast<double> (played.samples), soundingSamples (16.0), 1.0);
+        CHECK (played.samples == played.last - played.first);
+    }
+
+    // Sound from the first block: as without waiting. Stopping forgets it; started again over
+    // silence, it waits again, and a relocation meanwhile changes nothing.
+    {
+        PlayheadTracker tracker;
+        tracker.prepare (sampleRate);
+        PlaySegment segments[PlayheadTracker::maxSegments];
+
+        auto count = tracker.process (playingAt (40.0), {}, block, settings, segments, 0);
+        CHECK (count == 1 && segments[0].playing && ! tracker.isWaitingForSound());
+        CHECK_NEAR (segments[0].fraction, 0.0, 1.0e-15);
+
+        tracker.process (stoppedAt (41.0), {}, block, settings, segments, 0);
+        count = tracker.process (playingAt (41.0), {}, block, settings, segments, block);
+        CHECK (count == 1 && ! segments[0].playing && tracker.isWaitingForSound());
+        count = tracker.process (playingAt (60.0), {}, block, settings, segments, block);
+        CHECK (count == 1 && ! segments[0].playing && tracker.isWaitingForSound());
+
+        // Sound half way through a block: the pass opens there, from its start (a jump: there was
+        // nothing to follow on from).
+        count = tracker.process (playingAt (60.0 + blockQuarterNotes (120.0)), {}, block, settings, segments, 200);
+        CHECK (count >= 2 && ! segments[0].playing && segments[0].length == 200 && segments[1].playing && segments[1].jump);
+        CHECK_NEAR (segments[1].fraction, 0.0, 1.0e-9);
+        CHECK (! tracker.isWaitingForSound());
+
+        // From then on the input's silences change nothing: the pass plays on.
+        count = tracker.process (playingAt (60.0 + 2.0 * blockQuarterNotes (120.0)), {}, block, settings, segments, block);
+        CHECK (count == 1 && segments[0].playing && ! segments[0].jump);
+        CHECK_NEAR (segments[0].fraction, (block - 200) * rate, 1.0e-9);
+    }
+
+    // At a typed tempo, and with a host that gives no position at all: the same.
+    {
+        auto typed = settings;
+        typed.useHostTempo = false;
+        typed.manualBpm = 60.0;
+
+        HostTiming bare;
+        bare.isPlaying = true;
+
+        for (const auto& timing : { playingAt (12.0), bare })
+        {
+            PlayheadTracker tracker;
+            tracker.prepare (sampleRate);
+            PlaySegment segments[PlayheadTracker::maxSegments];
+
+            auto count = tracker.process (timing, {}, block, typed, segments, block);
+            CHECK (count == 1 && ! segments[0].playing && tracker.isWaitingForSound());
+
+            auto next = timing;
+
+            if (next.ppqPosition.has_value())
+                *next.ppqPosition += blockQuarterNotes (120.0);
+
+            count = tracker.process (next, {}, block, typed, segments, 100);
+            CHECK (count >= 2 && segments[1].start == 100 && segments[1].playing);
+            CHECK_NEAR (segments[1].fraction, 0.0, 1.0e-9);
+            CHECK_NEAR (segments[1].fractionPerSample, rateFor (60.0, 16.0), 1.0e-15);
+        }
+    }
+
+    // Not waiting (the Draw modes, the instrument): silence does not hold it back.
+    {
+        PlayheadTracker tracker;
+        tracker.prepare (sampleRate);
+        PlaySegment segments[PlayheadTracker::maxSegments];
+        const auto count = tracker.process (playingAt (40.0), {}, block, onPlay (16.0), segments, block);
+        CHECK (count == 1 && segments[0].playing && ! tracker.isWaitingForSound());
     }
 }
 

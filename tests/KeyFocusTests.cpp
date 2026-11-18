@@ -18,6 +18,7 @@
 #include "PluginProcessor.h"
 #include "ui/CanvasView.h"
 #include "ui/Editor.h"
+#include "ui/KeyFocus.h"
 #include "ui/LayerList.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -197,8 +198,12 @@ struct Rig
 
     // ---- the keyboard, through the window ------------------------------------------------------
     /** Whether a text box is being typed in: macOS then sends the keys there, as text, before
-        anything else gets to see them. */
+        anything else gets to see them. (A number typed into a field, a knob or a bar is not: its
+        keys come as key presses, so the space bar can still go on; see editing().) */
     bool typing() const   { return peer()->findCurrentTextInputTarget() != nullptr; }
+
+    /** Whether a text box has the focus: the object's text, or a number being typed. */
+    bool editing() const   { return ui::isTextBox (focused()); }
 
     /** Presses a key. Returns whether it was used, so that the DAW would not get it: by a text
         box that is being typed in, by any component on the way from the focus up, or by a modal
@@ -448,23 +453,46 @@ ARTFREQ_TEST (uiKeysEffectTheSpaceBarIsTheDawsAfterAnyClick)
     pump (40);
     spaceIsFree ("dragging Level");
 
+    // A single click on a field starts typing in it, and the space bar, which has no place in a
+    // number, ends the typing (what was typed is set) and goes on to the DAW: a click on a value
+    // and then the space bar plays the DAW, as everywhere else. Return sets a value and is kept.
+    for (const auto* id : { "level", "density", "contrast" })
+    {
+        rig.click (id);
+        pump (40);
+        CHECK (rig.editing() && ! rig.typing());
+        CHECK (! rig.uses (space));
+        CHECK (! rig.editing() && rig.hasFocus ("canvas") && ! rig.uses (space));
+    }
+
     rig.click ("level");
     pump (40);
-    CHECK (rig.typing() && rig.uses (space));   // typing a value: the space bar is the field's
     rig.type ("-12");
+    CHECK (! rig.uses (space));
+    CHECK_NEAR (getParameter (*rig.processor, params::id::level), -12.0f, 1.0e-3);
+    CHECK (! rig.editing() && rig.hasFocus ("canvas"));
+
+    rig.click ("level");
+    pump (40);
+    rig.type ("-9");
     pump (40);
     CHECK (rig.uses (returnKey));
-    CHECK_NEAR (getParameter (*rig.processor, params::id::level), -12.0f, 1.0e-3);
-    CHECK (! rig.typing() && rig.hasFocus ("canvas") && ! rig.uses (space));
+    CHECK_NEAR (getParameter (*rig.processor, params::id::level), -9.0f, 1.0e-3);
+    CHECK (! rig.editing() && rig.hasFocus ("canvas") && ! rig.uses (space));
 
     // The strip going while one of its values is typed (automation changes the mode) leaves no
     // text box behind.
     rig.click ("density");
     pump (40);
-    CHECK (rig.typing());
+    CHECK (rig.editing());
     setParameter (*rig.processor, params::id::mode, 0.0f);
     pump (120);
-    CHECK (! rig.get ("sound-strip").isVisible() && ! rig.typing());
+    CHECK (! rig.get ("sound-strip").isVisible() && ! rig.editing());
+
+    rig.click ("depth");
+    pump (40);
+    CHECK (rig.editing() && ! rig.uses (space));
+    CHECK (! rig.editing() && rig.hasFocus ("canvas"));
     spaceIsFree ("the Sound strip went while a value was typed");
 
     // The settings: the timing's controls clicked, the start bar typed; the focus stays with the
@@ -484,12 +512,17 @@ ARTFREQ_TEST (uiKeysEffectTheSpaceBarIsTheDawsAfterAnyClick)
     CHECK (rig.get ("start-bar").isShowing() && rig.get ("bpm").isShowing());
     rig.click ("start-bar");
     pump (40);
-    CHECK (rig.typing());
+    CHECK (rig.editing());
     rig.type ("12");
     pump (40);
     CHECK (rig.uses (returnKey));
     CHECK_NEAR (getParameter (*rig.processor, params::id::startBar), 12.0f, 1.0e-4);
-    CHECK (! rig.typing() && rig.hasFocus ("settings-panel") && ! rig.uses (space));
+    CHECK (! rig.editing() && rig.hasFocus ("settings-panel") && ! rig.uses (space));
+
+    rig.click ("bpm");
+    pump (40);
+    CHECK (rig.editing() && ! rig.uses (space));
+    CHECK (! rig.editing() && rig.hasFocus ("settings-panel"));
     CHECK (rig.uses (escapeKey) && ! rig.get ("settings-panel").isVisible() && rig.hasFocus ("canvas") && ! rig.uses (space));
 
     // The live view (no canvas to hold the focus).
@@ -813,17 +846,25 @@ ARTFREQ_TEST (uiKeysNumberFieldsGiveTheFocusBack)
 
     rig.click ("start-bar");
     pump (20);
-    CHECK (rig.typing());
+    CHECK (rig.editing());
     rig.type ("12");
     CHECK (rig.uses (returnKey));
     CHECK_NEAR (getParameter (*rig.processor, params::id::startBar), 12.0f, 1.0e-4);
     CHECK (rig.hasFocus ("canvas") && ! rig.uses (space) && ! rig.uses (returnKey));
 
+    // The space bar sets what was typed, as Return does, and goes on to the DAW.
+    rig.click ("start-bar");
+    pump (20);
+    rig.type ("9");
+    CHECK (! rig.uses (space));
+    CHECK_NEAR (getParameter (*rig.processor, params::id::startBar), 9.0f, 1.0e-4);
+    CHECK (! rig.editing() && rig.hasFocus ("canvas"));
+
     rig.click ("start-bar");
     pump (20);
     rig.type ("40");
     CHECK (rig.uses (escapeKey));
-    CHECK_NEAR (getParameter (*rig.processor, params::id::startBar), 12.0f, 1.0e-4);
+    CHECK_NEAR (getParameter (*rig.processor, params::id::startBar), 9.0f, 1.0e-4);
     CHECK (rig.hasFocus ("canvas") && ! rig.uses (space));
 
     rig.click ("start-bar");
@@ -832,7 +873,7 @@ ARTFREQ_TEST (uiKeysNumberFieldsGiveTheFocusBack)
     rig.click ("repeat");
     pump (20);
     CHECK_NEAR (getParameter (*rig.processor, params::id::startBar), 7.0f, 1.0e-4);
-    CHECK (! rig.typing() && ! rig.uses (space));
+    CHECK (! rig.editing() && ! rig.uses (space));
     setParameter (*rig.processor, params::id::repeat, 0.0f);
     pump (50);
 
@@ -848,7 +889,7 @@ ARTFREQ_TEST (uiKeysNumberFieldsGiveTheFocusBack)
     auto& level = rig.get ("level");
     rig.doubleClick (level, { 38.0f, 72.0f });
     pump (20);
-    CHECK (rig.typing() && juce::Component::getCurrentlyModalComponent() != nullptr);
+    CHECK (rig.editing() && juce::Component::getCurrentlyModalComponent() != nullptr);
     rig.type ("-12");
     CHECK (rig.uses (returnKey));
     CHECK_NEAR (getParameter (*rig.processor, params::id::level), -12.0f, 1.0e-3);
@@ -869,6 +910,15 @@ ARTFREQ_TEST (uiKeysNumberFieldsGiveTheFocusBack)
     CHECK_NEAR (getParameter (*rig.processor, params::id::level), -20.0f, 1.0e-3);
     CHECK (juce::Component::getCurrentlyModalComponent() == nullptr && rig.hasFocus ("canvas") && ! rig.uses (space));
 
+    // The space bar sets it and goes on to the DAW: the label stops being modal at once, so
+    // macOS passes the key on.
+    rig.doubleClick (level, { 38.0f, 72.0f });
+    pump (20);
+    rig.type ("-24");
+    CHECK (! rig.uses (space));
+    CHECK_NEAR (getParameter (*rig.processor, params::id::level), -24.0f, 1.0e-3);
+    CHECK (juce::Component::getCurrentlyModalComponent() == nullptr && rig.hasFocus ("canvas") && ! rig.editing());
+
     // A bar's value in the inspector (Intensity): a click to type, Return sets it. JUCE's own
     // label closes it; the focus comes home a moment later.
     rig.click (rig.canvas(), rig.onText());
@@ -877,13 +927,60 @@ ARTFREQ_TEST (uiKeysNumberFieldsGiveTheFocusBack)
     CHECK (intensity.isShowing());
     rig.click ("inspector-intensity");
     pump (20);
-    CHECK (rig.typing());
+    CHECK (rig.editing());
     rig.type ("50");
     CHECK (rig.uses (returnKey));
     pump (50);
     CHECK_NEAR (rig.processor->getDocument().find (rig.textId)->intensity, 0.5f, 1.0e-3);
     CHECK (juce::Component::getCurrentlyModalComponent() == nullptr);
     CHECK (rig.hasFocus ("canvas") && ! rig.uses (space) && ! rig.uses (returnKey));
+
+    // ... and a click on it, then the space bar: set, and the DAW's.
+    rig.click ("inspector-intensity");
+    pump (20);
+    rig.type ("70");
+    CHECK (! rig.uses (space));
+    pump (50);
+    CHECK_NEAR (rig.processor->getDocument().find (rig.textId)->intensity, 0.7f, 1.0e-3);
+    CHECK (juce::Component::getCurrentlyModalComponent() == nullptr && ! rig.editing() && rig.hasFocus ("canvas"));
+}
+
+ARTFREQ_TEST (uiKeysDeleteActsOnTheSelectionInTheLiveView)
+{
+    // An object selected (its settings in the inspector, or in ArtFreq FX's drawer) stays
+    // selected in the live view, and Delete and the arrows act on it there as on the canvas; they
+    // must not go on to the DAW, which might delete whatever is selected there. With nothing
+    // selected they are the DAW's.
+    if (! canDriveAWindow())
+        return;
+
+    for (const auto variant : { ArtFreqProcessor::Variant::instrument, ArtFreqProcessor::Variant::effect })
+    {
+        Rig rig (variant);
+        CHECK (rig.valid());
+
+        if (! rig.valid())
+            return;
+
+        rig.click (rig.canvas(), rig.onText());
+        pump (40);
+        CHECK (rig.editor->getSelectedObject() == rig.textId);
+        CHECK (variant == ArtFreqProcessor::Variant::instrument || rig.editor->isDrawerOpen());
+
+        rig.editor->showLiveView (true);
+        pump (40);
+        CHECK (rig.get ("live-view").isShowing() && rig.editor->getSelectedObject() == rig.textId);
+
+        const auto before = rig.processor->getDocument().find (rig.textId)->startTime;
+        CHECK (rig.uses (juce::KeyPress (juce::KeyPress::rightKey)));
+        CHECK_GREATER (rig.processor->getDocument().find (rig.textId)->startTime, before);
+        CHECK (rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)));
+        CHECK (rig.text() == "(gone)" && rig.editor->getSelectedObject().isNull());
+
+        CHECK (! rig.uses (juce::KeyPress (juce::KeyPress::deleteKey)) && ! rig.uses (juce::KeyPress (juce::KeyPress::backspaceKey)));
+        CHECK (! rig.uses (juce::KeyPress (juce::KeyPress::leftKey)) && ! rig.uses (space));
+        CHECK (rig.uses (juce::KeyPress ('z', juce::ModifierKeys::commandModifier, 0)) && rig.text() == "HELLO");
+    }
 }
 
 ARTFREQ_TEST (uiKeysTabAndThePanels)
@@ -942,7 +1039,7 @@ ARTFREQ_TEST (uiKeysTabAndThePanels)
     pump (50);
     rig.click ("range-low");
     pump (20);
-    CHECK (rig.typing());
+    CHECK (rig.editing());
     rig.type ("30");
     CHECK (rig.uses (returnKey));
     CHECK_NEAR (getParameter (*rig.processor, params::id::rangeLow), 30.0f, 1.0e-3);

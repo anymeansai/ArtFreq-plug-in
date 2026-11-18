@@ -31,8 +31,11 @@ namespace effectMetrics
 
 /** What ArtFreq FX will do, as the line in the bottom bar says it: "Carves once when you press
     play", "Draws once from bar 9", "Repeats every 4 bars", "Each note stencils it once", "Loops
-    while a note is held". The verb is the mode's (Carve + Draw draws, in a hole it carves). With
-    `shorter`, the same in fewer words, for a bar that has no room for the sentence. */
+    while a note is held". The verb is the mode's (Carve + Draw draws, in a hole it carves). While
+    the DAW plays and a pass on play waits for the track's audio: "Waiting for audio to carve".
+    Under a DAW loop shorter than the drawing (on play or with Repeat), what each round shows:
+    "Your loop shows 2 of 4 bars". With `shorter`, the same in fewer words, for a bar that has no
+    room for the sentence. */
 juce::String effectHint (ArtFreqProcessor& processor, bool shorter = false);
 
 /** A segmented control that also explains itself in a tooltip. */

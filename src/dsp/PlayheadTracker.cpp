@@ -188,10 +188,13 @@ void PlayheadTracker::setPreview (bool shouldPreview) noexcept
 }
 
 int PlayheadTracker::process (const HostTiming& timing, const juce::MidiBuffer& midi, int numSamples,
-                              const TrackerSettings& settings, PlaySegment* segments) noexcept
+                              const TrackerSettings& settings, PlaySegment* segments, int soundFrom) noexcept
 {
     if (numSamples <= 0 || segments == nullptr)
         return 0;
+
+    waitingForSound = false;
+    soundFrom = juce::jlimit (0, numSamples, soundFrom);
 
     const auto hostBpm = finite (timing.bpm);
     const auto useHost = settings.useHostTempo && hostBpm.has_value() && *hostBpm > 0.0;
@@ -248,7 +251,8 @@ int PlayheadTracker::process (const HostTiming& timing, const juce::MidiBuffer& 
         if (unheard)
         {
             Writer nowhere (nullptr, numSamples);
-            processTransport (timing, tempo, useHost, length, barLength, rate, settings, nowhere);
+            processTransport (timing, tempo, useHost, length, barLength, rate, settings, soundFrom, nowhere);
+            waitingForSound = false;   // (the preview plays meanwhile)
         }
 
         processPreview (midi, rate, settings.repeat, out);
@@ -266,14 +270,14 @@ int PlayheadTracker::process (const HostTiming& timing, const juce::MidiBuffer& 
     if (settings.mode == TriggerMode::midiNote)
         processMidi (midi, rate, settings.repeat, transportStopped, out);
     else
-        processTransport (timing, tempo, useHost, length, barLength, rate, settings, out);
+        processTransport (timing, tempo, useHost, length, barLength, rate, settings, soundFrom, out);
 
     return out.getCount();
 }
 
 void PlayheadTracker::processTransport (const HostTiming& timing, double tempo, bool usingHostTempo, double length,
                                         double barLength, double rate, const TrackerSettings& settings,
-                                        Writer& out) noexcept
+                                        int soundFrom, Writer& out) noexcept
 {
     const auto numSamples = out.getLength();
     const auto repeat = settings.repeat;
@@ -294,7 +298,7 @@ void PlayheadTracker::processTransport (const HostTiming& timing, double tempo, 
 
     if (! repeat)
     {
-        processSinglePass (timing, tempo, usingHostTempo, length, barLength, settings, out);
+        processSinglePass (timing, tempo, usingHostTempo, length, barLength, settings, soundFrom, out);
         return;
     }
 
@@ -359,10 +363,15 @@ double PlayheadTracker::countFromTime (double seconds, double tempo, int numSamp
 }
 
 void PlayheadTracker::processSinglePass (const HostTiming& timing, double tempo, bool usingHostTempo, double length,
-                                         double barLength, const TrackerSettings& settings, Writer& out) noexcept
+                                         double barLength, const TrackerSettings& settings, int soundFrom,
+                                         Writer& out) noexcept
 {
     const auto numSamples = out.getLength();
     const auto onPlay = settings.startAt == StartAt::play;
+
+    // On play, carving a song: a pass that is due begins where the input first sounds, which may
+    // be later in this block, or in a later one (nothing: wait).
+    const auto sound = onPlay && settings.waitForSound ? std::optional<int> (soundFrom) : std::nullopt;
     const auto ppq = finite (timing.ppqPosition);
     const auto hostBpm = finite (timing.bpm);
     const auto seconds = finite (timing.timeInSeconds);
@@ -399,6 +408,12 @@ void PlayheadTracker::processSinglePass (const HostTiming& timing, double tempo,
         songExpected = false;
         const auto begins = onPlay && ! (passPlaced && passFromPlay);
 
+        if (begins && sound.has_value() && *sound >= numSamples)
+        {
+            waitForSound (out);
+            return;
+        }
+
         if (begins)
         {
             passStart = 0.0;
@@ -410,7 +425,8 @@ void PlayheadTracker::processSinglePass (const HostTiming& timing, double tempo,
             passLength = length;
 
         const auto rate = tempo / 60.0 / sampleRate / (passPlaced ? passLength : length);
-        const auto position = hasExpected && ! begins ? expectedNextPosition : 0.0;
+        const auto opensAt = begins ? static_cast<double> (sound.value_or (0)) : 0.0;
+        const auto position = hasExpected && ! begins ? expectedNextPosition : -opensAt * rate;
 
         playSinglePass (position, rate, ! hasExpected || begins, out);
         expectNext (position, rate, numSamples, false);
@@ -422,8 +438,15 @@ void PlayheadTracker::processSinglePass (const HostTiming& timing, double tempo,
     const auto typedTempo = hostCount && ! usingHostTempo;
     const auto playRate = typedTempo ? tempo / 60.0 / sampleRate : songRate;
 
-    const auto follows = onPlay ? placePassOnPlay (*song, songRate, playRate, length, barLength, numSamples)
+    const auto follows = onPlay ? placePassOnPlay (*song, songRate, playRate, length, barLength, numSamples, sound)
                                 : placePass (*song, songRate, barStart, length, barLength, settings.startBar, numSamples);
+
+    if (! passPlaced)
+    {
+        waitForSound (out);
+        return;
+    }
+
     auto position = (*song - passStart) / passLength;
     auto rate = songRate / passLength;
 
@@ -538,9 +561,10 @@ bool PlayheadTracker::placePass (double song, double songRate, std::optional<dou
 }
 
 bool PlayheadTracker::placePassOnPlay (double song, double songRate, double playRate, double length,
-                                       double barLength, int numSamples) noexcept
+                                       double barLength, int numSamples, std::optional<int> soundFrom) noexcept
 {
     const auto follows = songFollowsOn (song, songRate);
+    const auto backwards = songExpected && song < expectedSong;
     auto begins = ! passPlaced || ! passFromPlay;
 
     if (! begins)
@@ -552,24 +576,35 @@ bool PlayheadTracker::placePassOnPlay (double song, double songRate, double play
 
         if (! follows)
         {
-            // The DAW moved (a relocation, or its loop wrapping round). Inside the pass it carries
-            // on at that place, so a loop over it draws the same picture every time round. Before
-            // its start (hosts round: give or take the jump tolerance) or where it can no longer
-            // sound (from its gate's close on), a new pass begins right there.
+            // The DAW moved (a relocation, or its loop wrapping round). Forwards inside the pass it
+            // carries on at that place. Back to the pass's own start (hosts round: give or take
+            // the jump tolerance) it carries on too: a loop from there draws the same picture every
+            // time round. Back to anywhere else, before its start, or where it can no longer sound
+            // (from its gate's close on), a new pass begins right there: a loop that wraps to inside
+            // the first pass (play was pressed before the loop) then draws the drawing from its
+            // start at the loop's start, from the second round on, rather than its second half.
             const auto rate = playRate / passLength;
             const auto landed = (song - passStart) / songRate * rate;
             const auto tolerance = jumpToleranceSeconds * sampleRate * rate;
             const auto gateLead = std::min (gateLeadSamples * rate, 0.5);
 
-            begins = landed < -tolerance || landed >= 1.0 - gateLead;
+            begins = landed < -tolerance || landed >= 1.0 - gateLead || (backwards && landed > tolerance);
         }
     }
 
-    if (begins)
+    if (begins && soundFrom.has_value() && *soundFrom >= numSamples)
     {
-        // Right here, where the DAW is; never before the song starts (a count-in before bar 1
-        // is silent, and the pass begins with the song).
-        passStart = std::max (song, 0.0);
+        // Due, but the input is silent: nothing to carve yet. It begins in the block where the
+        // input sounds (the DAW stopping meanwhile forgets it, as it would a pass).
+        passPlaced = false;
+        passFromPlay = false;
+    }
+    else if (begins)
+    {
+        // Right here, where the DAW is (or where the input first sounds in this block); never
+        // before the song starts (a count-in before bar 1 is silent, and the pass begins with
+        // the song).
+        passStart = std::max (song + soundFrom.value_or (0) * songRate, 0.0);
         passLength = length;
         passPlaced = true;
         passFromPlay = true;
@@ -580,6 +615,17 @@ bool PlayheadTracker::placePassOnPlay (double song, double songRate, double play
 
     // (A pass that has just begun counts its own time from here, also at a typed-in tempo.)
     return follows && ! begins;
+}
+
+void PlayheadTracker::waitForSound (Writer& out) noexcept
+{
+    // Silent, and nothing to follow on from: the block the pass begins in starts it with a jump
+    // (the gate is closed until then, so there is nothing to fade).
+    waitingForSound = true;
+    out.add (out.getLength(), false, 0.0, 0.0, false);
+    hasExpected = false;
+    lastRate = 0.0;
+    lastLength = 0;
 }
 
 bool PlayheadTracker::songFollowsOn (double song, double songRate) const noexcept

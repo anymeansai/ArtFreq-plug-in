@@ -66,15 +66,43 @@ juce::String formatNumber (double value, int maxDecimals);  // "120", "93.75", "
 double parseNumber (const juce::String& text, double fallback);
 
 //==============================================================================
-/** The value under a knob: double-click to type a value (a single click does nothing). Return
-    sets it and Esc leaves it, and both hand the keyboard focus back (see ui/KeyFocus.h). */
+/** The text box a number is typed into: a number field's, a knob's or a bar's value. Its keys
+    come to it as key presses rather than through the system's text input (a number needs no
+    input method, and on macOS that path takes every printable key before anything else sees
+    it), so the one key it has no use for still reaches the DAW: the space bar, which has no
+    place in a number, ends the typing (what was typed is set, as with Return) and is left
+    unused, so the DAW plays. A single click on a field followed by the space bar plays the DAW,
+    as the space bar does everywhere else in the window (see ui/KeyFocus.h). */
+class NumberTextBox final : public juce::TextEditor
+{
+public:
+    /** Ends the typing when the space bar is pressed in it. It may delete this text box. */
+    std::function<void()> onSpace;
+
+    bool isTextInputActive() const override   { return false; }
+    bool keyPressed (const juce::KeyPress&) override;
+
+    /** A key going down is no use of it by itself: what it types comes to keyPressed. (JUCE's
+        text box calls every key that goes down used, and a key used on its way down never
+        reaches the host, whatever keyPressed says.) */
+    bool keyStateChanged (bool) override   { return false; }
+};
+
+//==============================================================================
+/** The value of a knob (under it: double-click to type, a single click does nothing) or of a
+    bar or other slider (`forSlider`: a click to type, as JUCE's own value box; the wheel is
+    left to the slider, and screen readers read the slider). Return sets it and Esc leaves it,
+    and both hand the keyboard focus back (see ui/KeyFocus.h); it is typed into a
+    NumberTextBox, so the space bar sets it too and goes on to the DAW. */
 class ValueLabel final : public juce::Label
 {
 public:
-    ValueLabel();
+    explicit ValueLabel (bool forSlider = false);
 
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override;
 
 protected:
     juce::TextEditor* createEditorComponent() override;
@@ -82,6 +110,8 @@ protected:
     void textEditorEscapeKeyPressed (juce::TextEditor&) override;
 
 private:
+    const bool slider;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ValueLabel)
 };
 
@@ -180,7 +210,7 @@ private:
     bool dragMoved = false;
     double dragValue = 0.0;
     juce::Point<float> lastDragPosition;
-    std::unique_ptr<juce::TextEditor> editor;
+    std::unique_ptr<NumberTextBox> editor;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NumberField)
 };

@@ -377,6 +377,59 @@ ARTFREQ_TEST (uiEffectBottomBarSaysWhatWillHappen)
     CHECK (says ("Draws once when you press play"));
     setParameter (*effect, params::id::mode, 0.0f);
 
+    // While the DAW plays over a silent stretch of the track, the pass waits for its audio, and
+    // the line says so. Under a DAW loop shorter than the drawing, it says how much of the drawing
+    // each round shows (the same part every round).
+    {
+        testutil::FakePlayHead head;
+        effect->setPlayHead (&head);
+        juce::AudioBuffer<float> buffer (2, 512);
+        juce::MidiBuffer midi;
+
+        const auto block = [&] (bool playing, bool sound, double loopEnd)
+        {
+            head.set (playing, 120.0, 32.0, 16.0);
+
+            if (loopEnd > 0.0)
+            {
+                head.info.setIsLooping (true);
+                head.info.setLoopPoints (juce::AudioPlayHead::LoopPoints { 32.0, loopEnd });
+            }
+
+            buffer.clear();
+
+            if (sound)
+                for (int i = 0; i < 512; ++i)
+                    buffer.setSample (0, i, 0.25f * std::sin (0.1f * static_cast<float> (i)));
+
+            effect->processBlock (buffer, midi);
+        };
+
+        block (true, false, 0.0);
+        CHECK (says ("Waiting for audio to carve"));
+        setParameter (*effect, params::id::mode, 2.0f);
+        block (true, false, 0.0);
+        CHECK (says ("Waiting for audio to stencil"));
+        CHECK (ui::shell::effectHint (*effect, true) == "Waiting for audio");
+        setParameter (*effect, params::id::mode, 0.0f);
+
+        block (true, true, 40.0);
+        CHECK (says ("Your loop shows 2 of 4 bars"));
+        CHECK (ui::shell::effectHint (*effect, true) == "Loop shows 2 of 4 bars");
+        block (true, true, 38.0);
+        CHECK (says ("Your loop shows 1.5 of 4 bars"));
+        setParameter (*effect, params::id::repeat, 1.0f);
+        CHECK (says ("Your loop shows 1.5 of 4 bars"));
+        setParameter (*effect, params::id::repeat, 0.0f);
+        block (true, true, 48.0);
+        CHECK (says ("Carves once when you press play"));   // a loop of the whole drawing
+        block (true, true, 0.0);
+        CHECK (says ("Carves once when you press play"));
+        block (false, false, 0.0);
+        CHECK (says ("Carves once when you press play"));
+        effect->setPlayHead (nullptr);
+    }
+
     setParameter (*effect, params::id::startAt, static_cast<float> (params::atBarStartIndex));
     setParameter (*effect, params::id::startBar, 9.0f);
     CHECK (says ("Carves once from bar 9"));

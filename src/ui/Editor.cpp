@@ -406,11 +406,10 @@ namespace
                 return true;
             }
 
-            if (liveView.isVisible())
-                return false;
-
             // Delete and the arrows belong to the canvas; it handles them while it has the focus.
-            // From anywhere else in the window, hand them over.
+            // From anywhere else in the window, hand them over: also from the live view, where
+            // the selection is still shown (the inspector, ArtFreq FX's drawer) and acted on.
+            // With nothing selected they are no keys of ours, and the DAW gets them.
             if (key.isKeyCode (juce::KeyPress::deleteKey) || key.isKeyCode (juce::KeyPress::backspaceKey)
                 || key.isKeyCode (juce::KeyPress::leftKey) || key.isKeyCode (juce::KeyPress::rightKey)
                 || key.isKeyCode (juce::KeyPress::upKey) || key.isKeyCode (juce::KeyPress::downKey))
