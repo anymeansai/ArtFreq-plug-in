@@ -89,13 +89,12 @@ private:
 class LinkButton final : public juce::Button
 {
 public:
-    LinkButton (const juce::String& text, const juce::String& url);
+    LinkButton (const juce::String& buttonText, const juce::String& url);
 
     int getIdealWidth() const;
     const juce::String& getUrl() const noexcept   { return url; }
 
     void paintButton (juce::Graphics&, bool highlighted, bool down) override;
-    void clicked() override;
 
     /** For tests: called instead of opening the browser. */
     std::function<void (const juce::String&)> onOpen;
@@ -140,8 +139,8 @@ public:
         it sent is still on its way, or its result (activated) is shown until Continue. */
     bool wantsToStay() const noexcept   { return waitingForResult || showingSuccess; }
 
-    /** Called when Continue puts the success away. */
-    std::function<void()> onFinished;
+    /** Called when wantsToStay() may have changed: a result came in, or Continue was pressed. */
+    std::function<void()> onStateChanged;
 
     // For the snapshot tool and tests.
     KeyTextBox& getKeyField() noexcept               { return keyField; }
@@ -151,6 +150,7 @@ public:
     bool isBusy() const noexcept;
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
 
 private:
@@ -231,6 +231,8 @@ private:
 
     struct Layout;
     Layout layoutFor (int width) const;
+    juce::Font sentenceFont() const;
+    float sentenceSpacing() const;
 
     ArtFreqProcessor& processor;
     anymeans::license::LicenseManager& license;

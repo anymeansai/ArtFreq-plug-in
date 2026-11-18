@@ -235,8 +235,22 @@ void EffectTopBar::refresh()
 void EffectTopBar::setUndoState (bool canUndo, bool canRedo)
 {
     // Shown only while they have something to do, each in its own place (nothing else moves).
-    undoButton.setVisible (canUndo);
-    redoButton.setVisible (canRedo);
+    undoWanted = canUndo;
+    redoWanted = canRedo;
+    undoButton.setVisible (canUndo && ! locked);
+    redoButton.setVisible (canRedo && ! locked);
+}
+
+void EffectTopBar::setLocked (bool shouldBeLocked)
+{
+    if (locked == shouldBeLocked)
+        return;
+
+    locked = shouldBeLocked;
+    controls.setVisible (! locked);
+    liveButton.setVisible (! locked);
+    setUndoState (undoWanted, redoWanted);
+    repaint();
 }
 
 void EffectTopBar::paint (juce::Graphics& g)
@@ -258,7 +272,8 @@ void EffectTopBar::paint (juce::Graphics& g)
     g.setColour (theme::accent2);
     g.drawSingleLineText (effectMark, x, baseline);
 
-    drawVerticalDivider (g, dividerX, getHeight() / 2 - 9, getHeight() / 2 + 9);
+    if (! locked)
+        drawVerticalDivider (g, dividerX, getHeight() / 2 - 9, getHeight() / 2 + 9);
 }
 
 void EffectTopBar::resized()

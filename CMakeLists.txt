@@ -213,7 +213,9 @@ if(ARTFREQ_BUILD_TOOLS)
         ${ARTFREQ_CORE_SOURCES}
         ${ARTFREQ_DSP_SOURCES}
         ${ARTFREQ_UI_SOURCES})
-    target_include_directories(ArtFreqSnapshot PRIVATE src)
+    # tests/ for LicenseTestSupport.h: the tool runs every instance activated against a fake
+    # server, and renders the activation screen through it.
+    target_include_directories(ArtFreqSnapshot PRIVATE src tests)
     # The tool pumps the message loop by hand, which the plug-in itself never does.
     target_compile_definitions(ArtFreqSnapshot PRIVATE
         ${ARTFREQ_COMMON_DEFINITIONS}

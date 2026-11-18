@@ -1,6 +1,7 @@
 #include "ShellPanels.h"
 
 #include "KeyFocus.h"
+#include "Licensing.h"
 #include "Parameters.h"
 #include "ShellHeader.h"
 
@@ -35,7 +36,9 @@ namespace
     constexpr int effectTitleRowHeight = 46;
     constexpr int effectColumnWidth = 300;
     constexpr int effectColumnGap = 32;
-    constexpr int effectRowGap = 10;
+    constexpr int effectRowGap = 8;
+    constexpr int effectLicenceGap = 10;   // above and below the hairline over the licence
+    constexpr int effectBottomPad = 14;
 
     void paintTitle (juce::Graphics& g, const juce::String& title, int width, int rowHeight = titleRowHeight)
     {
@@ -238,6 +241,25 @@ SettingsPanel::SettingsPanel (ArtFreqProcessor& p)
         addChildComponent (*bpm);
     }
 
+    // What is activated on this computer, and Deactivate: ArtFreq FX's two columns have it in a
+    // row across the foot of the panel.
+    licence = std::make_unique<LicenceCard> (processor, effect);
+    licence->onActivateWanted = [this] { if (onActivateWanted != nullptr) onActivateWanted(); };
+    licence->onDeactivated = [this] (const anymeans::license::LicenseManager::Result& result)
+    {
+        if (onDeactivated != nullptr)
+            onDeactivated (result);
+    };
+    licence->onHeightChanged = [this]
+    {
+        const auto before = idealHeight;
+        resized();
+
+        if (idealHeight != before && onIdealHeightChanged != nullptr)
+            onIdealHeightChanged();
+    };
+    addAndMakeVisible (*licence);
+
     // Lay out once to learn the height the content needs.
     setSize (getPanelWidth(), 600);
     setSize (getPanelWidth(), idealHeight);
@@ -265,6 +287,7 @@ void SettingsPanel::setCurrentWindowScale (float current)
 void SettingsPanel::cancelReset()
 {
     showResetConfirmation (false);
+    licence->reset();
 }
 
 void SettingsPanel::showResetConfirmation (bool shouldShow)
@@ -328,7 +351,7 @@ void SettingsPanel::paint (juce::Graphics& g)
     if (effect)
     {
         // The hairline between the two columns, and what the timing rows say in words.
-        drawVerticalDivider (g, columnDividerX, effectTitleRowHeight + 16, getHeight() - cardPad);
+        drawVerticalDivider (g, columnDividerX, effectTitleRowHeight + 14, columnsBottom);
         wrappedText (midiNoteText(), static_cast<float> (midiNoteArea.getWidth())).draw (g, midiNoteArea.toFloat());
 
         g.setFont (fonts::ui (12.0f));
@@ -392,7 +415,7 @@ void SettingsPanel::layoutEffect()
 
     const auto h = metrics::controlHeight;
     const auto controlWidth = effectColumnWidth - labelWidth;
-    const auto top = effectTitleRowHeight + 16;
+    const auto top = effectTitleRowHeight + 14;
     const auto caption = [&] (const juce::String& text, int x, int& y)
     {
         sectionCaptions.push_back ({ text, y, x });
@@ -421,11 +444,11 @@ void SettingsPanel::layoutEffect()
     const auto unitWidth = 48;
     slope.setBounds (controlX, y, controlWidth - unitWidth, h);
     slopeUnitArea = { slope.getRight() + 10, y, unitWidth - 10, h };
-    y += h + 8;
+    y += h + 6;
 
     const auto noteHeight = static_cast<int> (std::ceil (wrappedText (noteText(), static_cast<float> (controlWidth)).getHeight()));
     noteArea = { controlX, y, controlWidth, noteHeight };
-    y = noteArea.getBottom() + 16;
+    y = noteArea.getBottom() + 12;
 
     caption ("Window", x, y);
     rows.push_back ({ "Size", y, x });
@@ -442,7 +465,7 @@ void SettingsPanel::layoutEffect()
 
     rows.push_back ({ "Trigger", y, x });
     trigger->setBounds (controlX, y, 168, h);
-    y += h + 8;
+    y += h + 6;
 
     const auto midiHeight = static_cast<int> (std::ceil (wrappedText (midiNoteText(), static_cast<float> (controlWidth)).getHeight()));
     midiNoteArea = { controlX, y, controlWidth, midiHeight };
@@ -458,7 +481,7 @@ void SettingsPanel::layoutEffect()
     tempoSource->setBounds (controlX, y, 116, h);
     bpm->setBounds (tempoSource->getRight() + 8, y, controlWidth - 116 - 8, h);
     tempoTextArea = { bpm->getX() + 2, y, bpm->getWidth() - 2, h };
-    y += h + 16;
+    y += h + 12;
 
     caption ("Drawing", x, y);
 
@@ -468,7 +491,15 @@ void SettingsPanel::layoutEffect()
     cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
     confirmTextArea = { x, y, cancelButton.getX() - 12 - x, h };
 
-    idealHeight = juce::jmax (leftBottom, y + h) + cardPad;
+    // ---- across the foot: the licence ----
+    columnsBottom = juce::jmax (leftBottom, y + h);
+    y = columnsBottom + effectLicenceGap;
+    dividers.push_back (y);
+    y += effectLicenceGap;
+
+    const auto cardWidth = getWidth() - 2 * cardPad;
+    licence->setBounds (cardPad, y, cardWidth, licence->getIdealHeight (cardWidth));
+    idealHeight = licence->getBottom() + effectBottomPad;
 }
 
 void SettingsPanel::resized()
@@ -539,6 +570,17 @@ void SettingsPanel::resized()
     cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
     confirmTextArea = { cardPad, y, cancelButton.getX() - 12 - cardPad, h };
     y += h + sectionGap;
+
+    dividers.push_back (y);
+    y += sectionGap;
+
+    // Licence
+    sectionCaptions.push_back ({ "Licence", y, cardPad });
+    y += 12 + rowGap + 4;
+
+    const auto cardWidth = getWidth() - 2 * cardPad;
+    licence->setBounds (cardPad, y, cardWidth, licence->getIdealHeight (cardWidth));
+    y = licence->getBottom() + sectionGap;
 
     idealHeight = y;
 }

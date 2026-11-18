@@ -64,6 +64,19 @@ Header::Header()
     addAndMakeVisible (viewSwitch);
 }
 
+void Header::setLocked (bool shouldBeLocked)
+{
+    if (locked == shouldBeLocked)
+        return;
+
+    locked = shouldBeLocked;
+
+    for (auto* control : std::initializer_list<juce::Component*> { &viewSwitch, &undoButton, &redoButton })
+        control->setVisible (! locked);
+
+    repaint();
+}
+
 void Header::paint (juce::Graphics& g)
 {
     g.fillAll (theme::panel);
@@ -84,7 +97,8 @@ void Header::paint (juce::Graphics& g)
     g.setFont (bylineFont());
     g.drawSingleLineText (byline, x + 8, baseline);
 
-    drawVerticalDivider (g, dividerX, getHeight() / 2 - 10, getHeight() / 2 + 10);
+    if (! locked)
+        drawVerticalDivider (g, dividerX, getHeight() / 2 - 10, getHeight() / 2 + 10);
 }
 
 void Header::resized()

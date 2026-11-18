@@ -104,6 +104,7 @@
 //
 // On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
 
+#include "LicenseTestSupport.h"
 #include "Parameters.h"
 #include "PluginProcessor.h"
 #include "core/Compositor.h"
@@ -115,6 +116,7 @@
 #include "ui/EffectShell.h"
 #include "ui/Inspector.h"
 #include "ui/KeyFocus.h"
+#include "ui/Licensing.h"
 #include "ui/LayerList.h"
 #include "ui/LiveView.h"
 #include "ui/ShellExport.h"
@@ -2202,6 +2204,276 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 //==============================================================================
 // The keyboard, the way the OS delivers it: through the window's peer.
 //
+//==============================================================================
+// Licensing: the activation screen of a plug-in that is not activated, in each of its states, and
+// the Licence card in the settings, for both plug-ins, through a fake server (nothing here
+// reaches the real one). Everything else in this tool runs activated (see main).
+
+/** The activation screen holds together: its card inside the screen, under the top bar, with
+    room around it; inside the card nothing overlaps or leaves it; nothing shown is greyed; the
+    top bar shows only the name, help and settings. */
+void checkActivationLayout (artfreq::ArtFreqEditor& editor, const juce::String& state)
+{
+    using namespace artfreq;
+
+    auto* screen = dynamic_cast<ui::ActivationScreen*> (findComponentWithId (editor, "activation"));
+    auto* top = findComponentWithId (editor, "header");
+
+    if (screen == nullptr || top == nullptr)
+    {
+        check (false, state + ": the activation screen exists");
+        return;
+    }
+
+    const auto card = screen->getCardBounds();
+    check (screen->isVisible() && screen->getY() == top->getBottom() && screen->getBottom() == screen->getParentHeight(),
+           state + ": the activation screen covers the window under the top bar");
+    check (screen->getLocalBounds().reduced (8).contains (card),
+           state + ": its card fits, with room around it (card " + card.toString() + " in " + screen->getLocalBounds().toString() + ")");
+
+    juce::StringArray problems;
+    std::vector<juce::Component*> shown;
+
+    for (auto* child : screen->getChildren())
+        if (child->isVisible())
+            shown.push_back (child);
+
+    for (size_t i = 0; i < shown.size(); ++i)
+    {
+        if (! card.reduced (12).contains (shown[i]->getBounds()))
+            problems.add (nameOf (*shown[i]) + " leaves the card");
+
+        for (size_t j = i + 1; j < shown.size(); ++j)
+            if (shown[i]->getBounds().intersects (shown[j]->getBounds()))
+                problems.add (nameOf (*shown[i]) + " overlaps " + nameOf (*shown[j]));
+    }
+
+    check (problems.isEmpty(), state + ": in the card nothing overlaps or is cut off"
+                                   + (problems.isEmpty() ? juce::String() : " (" + problems.joinIntoString ("; ") + ")"));
+
+    // The message is whole: the text box shows all of its lines.
+    const auto& message = screen->getMessageText();
+    check (message.getMessage().isEmpty() || message.getHeightFor (message.getWidth()) <= message.getHeight(),
+           state + ": the message fits its place");
+
+    juce::StringArray disabled;
+    collectDisabled (editor, disabled);
+    check (disabled.isEmpty(), state + ": nothing that is shown is greyed"
+                                   + (disabled.isEmpty() ? juce::String() : " (" + disabled.joinIntoString (", ") + ")"));
+
+    // The top bar while locked: the name, help and settings (nothing to edit with). (After an
+    // activation, while the screen says so, it is whole again.)
+    if (screen->isShowingSuccess())
+        return;
+
+    juce::StringArray inTopBar;
+
+    for (auto* child : top->getChildren())
+        if (child->isVisible())
+            inTopBar.add (nameOf (*child));
+
+    inTopBar.sort (true);
+    check (inTopBar.joinIntoString (",") == "help,settings", state + ": the top bar shows only help and settings (" + inTopBar.joinIntoString (",") + ")");
+
+}
+
+void checkLicensing (const juce::File& outputDir, float pixelScale)
+{
+    using namespace artfreq;
+    using Variant = ArtFreqProcessor::Variant;
+
+    for (const auto variant : { Variant::instrument, Variant::effect })
+    {
+        const auto effect = variant == Variant::effect;
+        const juce::String prefix (effect ? "artfreq-fx-" : "artfreq-");
+        const juce::String who (effect ? "ArtFreq FX" : "ArtFreq");
+
+        // Not activated: a folder of its own with nothing in it, and a fake server.
+        const licensetest::ScopedLockedLicensing licensing;
+        auto& server = *licensing.server;
+
+        ArtFreqProcessor processor (variant);
+        processor.setPlayConfigDetails (effect ? 2 : 0, 2, 48000.0, 512);
+        processor.prepareToPlay (48000.0, 512);
+        check (! processor.isLicensed(), who + " is locked with nothing activated");
+
+        const std::unique_ptr<ArtFreqEditor> editor (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
+
+        if (editor == nullptr)
+        {
+            check (false, who + " makes an editor");
+            continue;
+        }
+
+        const auto save = [&] (const juce::String& name, float scale)
+        {
+            pump (60);
+            const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
+            const auto file = outputDir.getChildFile (prefix + name + ".png");
+
+            if (writePng (image, file))
+                std::cout << file.getFullPathName() << std::endl;
+            else
+                check (false, "write " + file.getFullPathName());
+        };
+
+        pump (150);
+
+        auto* screen = find<ui::ActivationScreen> (*editor, "activation");
+        auto* field = find<ui::KeyTextBox> (*editor, "licence-key");
+        auto* activate = find<juce::Button> (*editor, "activate");
+
+        if (screen == nullptr || field == nullptr || activate == nullptr)
+            continue;
+
+        const auto message = [&] { return screen->getMessageText().getMessage(); };
+        const auto settle = [&] (const std::function<bool()>& done)
+        {
+            for (int waited = 0; waited < 5000 && ! done(); waited += 10)
+                pump (10);
+
+            return done();
+        };
+
+        // ---- the screen, empty -------------------------------------------------------------------
+        check (screen->isVisible(), who + ": the activation screen is shown on first run");
+        checkActivationLayout (*editor, who + ", empty");
+        save ("activate", pixelScale);
+
+        for (const auto scale : { 0.75f, 1.0f, 1.5f, 2.0f })
+        {
+            setWindowScale (*editor, scale);
+            pump (40);
+            checkActivationLayout (*editor, who + " at " + juce::String (juce::roundToInt (scale * 100.0f)) + " %");
+            save ("activate-" + juce::String (juce::roundToInt (scale * 100.0f)), 1.0f);
+        }
+
+        setWindowScale (*editor, 1.0f);
+        pump (40);
+
+        // ---- typing: any form, shown in groups of five ---------------------------------------------
+        field->setKey ("y1f2f jvxbx wcnvb");
+        check (field->getText() == "Y1F2F-JVXBX-WCNVB", who + ": the key shows in groups of five as it is typed (" + field->getText() + ")");
+        save ("activate-typing", pixelScale);
+
+        field->setKey ("Your key: y1f2f-jvxbx-wcnvb-vczkj (keep it safe)");
+        check (field->getText() == "Y1F2F-JVXBX-WCNVB-VCZKJ", who + ": a key pasted among other words is found (" + field->getText() + ")");
+
+        // ---- a typo: caught without the server ------------------------------------------------------
+        field->setKey ("Y1F2F-JVXBX-WCNVB-VCZKK");
+        activate->onClick();
+        check (settle ([&] { return message().isNotEmpty(); }) && message().contains ("typos") && server.numSent() == 0,
+               who + ": a typo is caught without asking the server (" + message() + ")");
+
+        // ---- busy: the request on its way ------------------------------------------------------------
+        field->setKey (licensetest::keyPro);
+        server.hang();
+        activate->onClick();
+        check (server.hanging.wait (3000) && screen->isBusy() && field->isReadOnly(), who + ": busy while the request is on its way");
+        checkActivationLayout (*editor, who + ", busy");
+        save ("activate-busy", pixelScale);
+
+        // Closing the window stops it (here: as the editor does when it goes).
+        processor.getLicense().cancelRequest();
+        check (settle ([&] { return ! screen->isBusy(); }) && ! field->isReadOnly(), who + ": a stopped request ends the busy state");
+
+        // ---- the server says no: its words, the support address in them -----------------------------
+        server.reply (licensetest::activateLimit);
+        activate->onClick();
+        check (settle ([&] { return message().isNotEmpty(); }) && message().contains (anymeans::license::SUPPORT_EMAIL),
+               who + ": a 409 shows the server's text with the support address (" + message() + ")");
+        checkActivationLayout (*editor, who + ", error");
+        save ("activate-error", pixelScale);
+
+        server.noConnection();
+        activate->onClick();
+        check (settle ([&] { return message().contains ("reach the server"); }), who + ": no connection says so (" + message() + ")");
+        check (! processor.isLicensed() && screen->isVisible(), who + ": still locked after the failures");
+
+        // ---- activated -------------------------------------------------------------------------------
+        // The instrument tries an ArtFreq key first: the server says a Pro key is for another
+        // product, and it is sent again as ArtFreq Pro's.
+        if (! effect)
+            server.reply (licensetest::activateProAsArtFreq);
+
+        server.reply (licensetest::activateProFresh);
+        activate->onClick();
+        check (settle ([&] { return screen->isShowingSuccess(); }) && processor.isLicensed() && screen->isVisible(),
+               who + ": activated, and the screen says so (" + message() + ")");
+        check (message().contains ("ArtFreq and ArtFreq FX"), who + ": the success names what is unlocked");
+        checkActivationLayout (*editor, who + ", success");
+        save ("activate-success", pixelScale);
+
+        activate->onClick();   // Continue
+        pump (40);
+        check (! screen->isVisible(), who + ": Continue puts the screen away");
+        check (findComponentWithId (*editor, effect ? "effect-controls" : "view-switch")->isVisible(), who + ": the top bar is whole again");
+
+        // ---- the Licence card ----------------------------------------------------------------------
+        auto* card = find<ui::LicenceCard> (*editor, "licence-card");
+        auto* panel = findComponentWithId (*editor, "settings-panel");
+
+        if (card == nullptr || panel == nullptr)
+            continue;
+
+        const auto panelFits = [&] (const juce::String& state)
+        {
+            check (panel->getBounds().getBottom() <= editor->getBaseHeight() - 6 && panel->getY() >= 0
+                       && panel->getLocalBounds().contains (card->getBounds()),
+                   who + ", " + state + ": the settings with the Licence card fit the window (" + panel->getBounds().toString() + ")");
+        };
+
+        editor->showSettings (true);
+        pump (40);
+        check (find<juce::Button> (*editor, "deactivate") != nullptr && findComponentWithId (*editor, "deactivate")->isVisible(),
+               who + ": activated, the card offers Deactivate");
+        panelFits ("activated");
+        save ("licence", pixelScale);
+
+        for (const auto scale : { 0.75f, 2.0f })
+        {
+            setWindowScale (*editor, scale);
+            pump (40);
+            save ("licence-" + juce::String (juce::roundToInt (scale * 100.0f)), 1.0f);
+        }
+
+        setWindowScale (*editor, 1.0f);
+        pump (40);
+
+        find<juce::Button> (*editor, "deactivate")->onClick();
+        pump (30);
+        check (card->isConfirming() && findComponentWithId (*editor, "deactivate-confirm")->isVisible(), who + ": Deactivate asks first");
+        panelFits ("confirming");
+        save ("licence-confirm", pixelScale);
+
+        // It fails: everything stays as it was, and the card says why.
+        server.noConnection();
+        find<juce::Button> (*editor, "deactivate-confirm")->onClick();
+        check (settle ([&] { return card->getMessageText().getMessage().isNotEmpty(); }) && processor.isLicensed(),
+               who + ": a deactivation that fails keeps the activation (" + card->getMessageText().getMessage() + ")");
+        panelFits ("failed");
+        save ("licence-error", pixelScale);
+
+        // It goes through: locked again, and the activation screen says so.
+        server.reply (licensetest::deactivateArtFreq);
+        find<juce::Button> (*editor, "deactivate")->onClick();
+        find<juce::Button> (*editor, "deactivate-confirm")->onClick();
+        check (settle ([&] { return ! processor.isLicensed() && screen->isVisible(); }) && ! panel->isVisible()
+                   && message().contains ("another computer"),
+               who + ": deactivated, the activation screen is back with the result (" + message() + ")");
+        save ("activate-deactivated", pixelScale);
+
+        // Not activated, the card offers the activation screen.
+        editor->showSettings (true);
+        pump (40);
+        check (findComponentWithId (*editor, "licence-activate")->isVisible(), who + ": not activated, the card offers Activate...");
+        panelFits ("not activated");
+        save ("licence-locked", pixelScale);
+        editor->showSettings (false);
+        pump (30);
+    }
+}
+
 // A plug-in cannot start the DAW's transport: it can only leave the DAW's play key (the space
 // bar, mostly) alone. On macOS JUCE hands a key on to the host's window when nothing used it
 // (juce_NSViewComponentPeer_mac.mm: keyDown -> sendEventToInputContextOrComponent, else
@@ -3115,6 +3387,10 @@ int main (int argc, char* argv[])
 
     using namespace artfreq;
 
+    // Every instance here is activated (a folder of the tool's own, a fake server), as a buyer
+    // sees the plug-ins once activated; checkLicensing makes its own locked ones.
+    licensetest::installRunnerLicensing();
+
     ArtFreqProcessor processor;
     processor.setRateAndBufferSizeDetails (48000.0, 512);
     processor.prepareToPlay (48000.0, 512);
@@ -3475,6 +3751,11 @@ int main (int argc, char* argv[])
     checkKeys (outputDir, pixelScale);
     checkEffectKeys (outputDir, pixelScale);
     pump (50);
+
+    // ---- licensing: the activation screen and the Licence card, in both plug-ins ----------------
+    checkLicensing (outputDir, pixelScale);
+    pump (50);
+    licensetest::removeRunnerLicensing();
 
     if (failed)
         std::cerr << "Some checks failed" << std::endl;

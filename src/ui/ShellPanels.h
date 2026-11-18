@@ -14,6 +14,11 @@
 #include <memory>
 #include <vector>
 
+namespace artfreq::ui
+{
+class LicenceCard;
+}
+
 namespace artfreq::ui::shell
 {
 
@@ -59,12 +64,23 @@ public:
     /** Shows which window size is in use (none if it is not one of the offered ones). */
     void setCurrentWindowScale (float scale);
 
-    /** Back to the "Reset drawing" button (when the panel is opened again). */
+    /** Back to the "Reset drawing" button and the plain Licence card (when the panel is opened
+        again). */
     void cancelReset();
 
     std::function<void()> onClose;
     std::function<void (float)> onWindowScaleChosen;
     std::function<void()> onResetDrawing;
+
+    /** The Licence card (see ui/Licensing.h): Activate... while not activated, and a
+        deactivation that went through (the plug-in is locked now). */
+    std::function<void()> onActivateWanted;
+    std::function<void (const anymeans::license::LicenseManager::Result&)> onDeactivated;
+
+    /** The height the content needs changed (the Licence card asks or says something). */
+    std::function<void()> onIdealHeightChanged;
+
+    LicenceCard& getLicenceCard() noexcept   { return *licence; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -86,6 +102,7 @@ private:
     ShellButton cancelButton { "Cancel" };
     ShellButton confirmButton { "Reset", ShellButton::Kind::danger };
     std::unique_ptr<ChoiceSegments> scaleAttachment, slopeAttachment;
+    std::unique_ptr<LicenceCard> licence;
     bool confirmingReset = false;
     int idealHeight = 456;
 
@@ -96,6 +113,7 @@ private:
     juce::Rectangle<int> midiNoteArea, startTextArea, tempoTextArea;
     juce::String startText, tempoText;
     int columnDividerX = 0;
+    int columnsBottom = 0;
 
     // Layout, filled by resized() and used by paint().
     struct Row
