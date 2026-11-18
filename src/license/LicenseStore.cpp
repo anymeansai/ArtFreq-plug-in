@@ -1,5 +1,6 @@
 #include "LicenseStore.h"
 
+#include "FolderAccess.h"
 #include "LicenseConfig.h"
 #include "LicenseKey.h"
 #include "SafeJson.h"
@@ -34,6 +35,7 @@ const juce::Identifier licenseProperty ("license");
 const juce::Identifier signatureProperty ("signature");
 const juce::Identifier activatedAtProperty ("activatedAt");
 const juce::Identifier activatedInProperty ("activatedIn");
+const juce::Identifier deactivatingProperty ("deactivating");
 
 juce::String stringProperty (const juce::var& object, const juce::Identifier& name)
 {
@@ -51,9 +53,10 @@ bool isEntryFor (const juce::var& entry, const juce::String& productId, const ju
 }
 
 /** Writes text to a temporary file next to the target and swaps it in, checking every step: a
-    full disk must leave the old file, not half of a new one.
+    full disk must leave the old file, not half of a new one. `forEveryAccount`: the file is made
+    readable by every account first, whatever this process's umask.
 */
-bool replaceFileAtomically (const juce::File& target, const juce::String& textToWrite)
+bool replaceFileAtomically (const juce::File& target, const juce::String& textToWrite, bool forEveryAccount)
 {
     // The same line endings everywhere (JUCE's JSON writer uses \r\n), so the file reads back
     // exactly as written.
@@ -78,6 +81,9 @@ bool replaceFileAtomically (const juce::File& target, const juce::String& textTo
     if (temporary.getFile().loadFileAsString() != text)
         return false;
 
+    if (forEveryAccount)
+        FolderAccess::makeReadableByEveryAccount (temporary.getFile());
+
     return temporary.overwriteTargetFileWithTemporary();
 }
 
@@ -98,6 +104,11 @@ LicenseStore::FolderLock::FolderLock (const juce::File& folder, int timeoutMs)
 
     const auto path = folder.getChildFile (lockFileName).getFullPathName();
     fileDescriptor = ::open (path.toRawUTF8(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+
+    // Made by another account (the computer's folder is shared by all of them): it can still be
+    // opened for reading, which is all flock() needs.
+    if (fileDescriptor < 0 && errno == EACCES)
+        fileDescriptor = ::open (path.toRawUTF8(), O_RDONLY | O_CLOEXEC);
 
     if (fileDescriptor < 0)
         return;
@@ -172,11 +183,33 @@ private:
 
 //==============================================================================
 LicenseStore::LicenseStore (juce::File directoryToUse)
-    : directory (std::move (directoryToUse))
+    : LicenseStore (directoryToUse,
+                    directoryToUse == defaultDirectory() && defaultDirectory() != userDirectory() ? Sharing::everyAccount
+                                                                                                  : Sharing::thisAccount)
+{
+}
+
+LicenseStore::LicenseStore (juce::File directoryToUse, Sharing sharingToUse)
+    : directory (std::move (directoryToUse)),
+      sharing (sharingToUse)
 {
 }
 
 juce::File LicenseStore::defaultDirectory()
+{
+    // The computer's, not the account's: the server counts computers. macOS: /Users/Shared, the
+    // folder every account may write to. Windows: ProgramData, where every account may make a
+    // folder (the one made here is then opened to all of them: FolderAccess).
+   #if JUCE_MAC
+    return juce::File::getSpecialLocation (juce::File::commonDocumentsDirectory).getChildFile ("AnyMeans");
+   #elif JUCE_WINDOWS
+    return juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory).getChildFile ("AnyMeans");
+   #else
+    return userDirectory();
+   #endif
+}
+
+juce::File LicenseStore::userDirectory()
 {
     // JUCE's user application data folder is ~/Library on macOS, %APPDATA% on Windows and
     // ~/.config on Linux; macOS keeps application data one level down.
@@ -187,6 +220,22 @@ juce::File LicenseStore::defaultDirectory()
    #else
     return base.getChildFile ("AnyMeans");
    #endif
+}
+
+bool LicenseStore::prepareDirectory() const
+{
+    if (directory.isDirectory())
+        return true;
+
+    if (directory.createDirectory().failed())
+        return false;
+
+    // Made here, so this account owns it and can open it to the others (if that fails, this
+    // account can still write to it; another one then falls back on its own folder).
+    if (sharing == Sharing::everyAccount)
+        FolderAccess::openToEveryAccount (directory);
+
+    return true;
 }
 
 LicenseStore::Contents LicenseStore::read() const
@@ -243,6 +292,7 @@ LicenseStore::Contents LicenseStore::read() const
             activation.signature   = stringProperty (entry, signatureProperty);
             activation.activatedAt = stringProperty (entry, activatedAtProperty);
             activation.activatedIn = stringProperty (entry, activatedInProperty);
+            activation.deactivatingSince = stringProperty (entry, deactivatingProperty);
 
             // Without these an entry can't be checked, so it can't count.
             if (activation.productId.isEmpty() || activation.key.isEmpty() || activation.machineId.isEmpty()
@@ -258,10 +308,11 @@ LicenseStore::Contents LicenseStore::read() const
 
 bool LicenseStore::modify (const std::function<void (juce::Array<juce::var>&)>& change) const
 {
-    const WriteLock lock (directory);
-
-    if (directory.createDirectory().failed())
+    // (Before the lock, whose file goes into the folder.)
+    if (! prepareDirectory())
         return false;
+
+    const WriteLock lock (directory);
 
     const auto file = getFile();
     juce::var root;
@@ -306,7 +357,7 @@ bool LicenseStore::modify (const std::function<void (juce::Array<juce::var>&)>& 
 
     object->setProperty (activationsProperty, activations);
 
-    return replaceFileAtomically (file, juce::JSON::toString (root) + "\n");
+    return replaceFileAtomically (file, juce::JSON::toString (root) + "\n", sharing == Sharing::everyAccount);
 }
 
 bool LicenseStore::put (const StoredActivation& activation) const
@@ -330,6 +381,9 @@ bool LicenseStore::put (const StoredActivation& activation) const
         entry->setProperty (activatedAtProperty, activation.activatedAt);
         entry->setProperty (activatedInProperty, activation.activatedIn);
 
+        if (activation.deactivatingSince.isNotEmpty())
+            entry->setProperty (deactivatingProperty, activation.deactivatingSince);
+
         for (int i = activations.size(); --i >= 0;)
             if (isEntryFor (activations.getReference (i), activation.productId, activation.key, activation.machineId))
                 activations.remove (i);
@@ -351,6 +405,42 @@ bool LicenseStore::remove (const juce::String& productId, const juce::String& ke
             if (isEntryFor (activations.getReference (i), productId, key, machineId))
                 activations.remove (i);
     });
+}
+
+bool LicenseStore::setDeactivating (const juce::String& productId, const juce::String& key, const juce::String& machineId,
+                                    const juce::String& since) const
+{
+    auto found = false;
+
+    const auto written = modify ([&] (juce::Array<juce::var>& activations)
+    {
+        for (auto& entry : activations)
+        {
+            if (! isEntryFor (entry, productId, key, machineId))
+                continue;
+
+            found = true;
+
+            if (auto* object = entry.getDynamicObject())
+            {
+                if (since.isNotEmpty())
+                    object->setProperty (deactivatingProperty, since);
+                else
+                    object->removeProperty (deactivatingProperty);
+            }
+        }
+    });
+
+    if (! written || ! found)
+        return false;
+
+    // As asked, read back.
+    for (const auto& entry : read().activations)
+        if (entry.productId == productId && LicenseKey::normalise (entry.key) == LicenseKey::normalise (key)
+            && entry.machineId == machineId && entry.deactivatingSince != since)
+            return false;
+
+    return true;
 }
 
 LicenseStore::Stamp LicenseStore::getStamp() const
@@ -376,19 +466,24 @@ juce::String LicenseStore::readOrCreateFallbackMachineIdentifier() const
         return id.length() == 32 && id.containsOnly ("0123456789abcdef");
     };
 
-    const WriteLock lock (directory);
     const auto file = directory.getChildFile ("MachineId.txt");
 
     if (const auto existing = file.loadFileAsString().trim(); isUsable (existing))
         return existing;
 
-    if (directory.createDirectory().failed())
+    if (! prepareDirectory())
         return {};
+
+    const WriteLock lock (directory);
+
+    // Made by another writer while this one waited for the lock: theirs is the one.
+    if (const auto existing = file.loadFileAsString().trim(); isUsable (existing))
+        return existing;
 
     // juce::Uuid is random (version 4): 32 hex digits.
     const auto fresh = juce::Uuid().toString().toLowerCase();
 
-    if (! replaceFileAtomically (file, fresh + "\n"))
+    if (! replaceFileAtomically (file, fresh + "\n", sharing == Sharing::everyAccount))
         return {};
 
     const auto stored = file.loadFileAsString().trim();

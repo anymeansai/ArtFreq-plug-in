@@ -20,17 +20,30 @@ struct StoredActivation
     juce::String signature;    // its signature, exactly as the server sent it (base64)
     juce::String activatedAt;  // when, by this computer's clock (ISO 8601)
     juce::String activatedIn;  // which plug-in activated it ("ArtFreq FX"), for support
+
+    /** When a deactivation of it was started on this computer (ISO 8601), if one is on its way or
+        was cut off before the server's answer was known (the project closed, the DAW quit): the
+        server may have freed this computer already. Empty: none. */
+    juce::String deactivatingSince;
 };
 
-/** The activations of every AnyMeans plug-in for one user, in one shared file:
+/** The activations of every AnyMeans plug-in on one computer, in one shared file:
 
-        macOS     ~/Library/Application Support/AnyMeans/Licenses.json
-        Windows   %APPDATA%\AnyMeans\Licenses.json
-        Linux     ~/.config/AnyMeans/Licenses.json
+        macOS     /Users/Shared/AnyMeans/Licenses.json
+        Windows   %ProgramData%\AnyMeans\Licenses.json
+        Linux     ~/.config/AnyMeans/Licenses.json    (not shipped: the user's own folder)
 
     One file for all the plug-ins, so a key entered in one (an ArtFreq Pro key in ArtFreq FX)
     activates every plug-in it covers on this computer (ArtFreq too), and the other AnyMeans
-    plug-ins (Creme, Vocalyst) keep theirs next to it, each under its own product ID.
+    plug-ins (Creme, Vocalyst) keep theirs next to it, each under its own product ID. And one for
+    every account on the computer: the server counts computers, so an activation made in one
+    account counts in all of them (none is asked for the key again), and deactivating in any of
+    them locks the computer. The folder is made so that every account can write to it
+    (Sharing::everyAccount, see FolderAccess.h).
+
+    The user's own folder (userDirectory(): ~/Library/Application Support/AnyMeans,
+    %APPDATA%\AnyMeans) held the file before; LicenseManager still reads it, removes activations
+    from it, and writes there if the computer's folder can't be written to.
 
     The file is JSON:
 
@@ -44,6 +57,8 @@ struct StoredActivation
               "activatedIn": "ArtFreq FX" }
           ]
         }
+
+    (An activation being deactivated also has "deactivating": "<ISO 8601>".)
 
     At most one activation per product, key and computer: a second key for the same product keeps
     its own entry, so each key's place on the server can still be freed from here. Activations
@@ -63,11 +78,27 @@ struct StoredActivation
 class LicenseStore
 {
 public:
-    /** A store in this folder (created when something is first written). */
-    explicit LicenseStore (juce::File directory);
+    /** Who a store's folder is for. */
+    enum class Sharing
+    {
+        thisAccount,   // one account's own folder
+        everyAccount   // the computer's: made so that every account on it can read and write it
+    };
 
-    /** The shared AnyMeans folder for this user (see above). */
+    /** A store in this folder (created when something is first written). The default sharing is
+        everyAccount for defaultDirectory() where that is the computer's folder, else thisAccount.
+    */
+    explicit LicenseStore (juce::File directory);
+    LicenseStore (juce::File directory, Sharing sharing);
+
+    /** The shared AnyMeans folder of this computer (see above). */
     static juce::File defaultDirectory();
+
+    /** This account's own AnyMeans folder, where the file was kept before (see above). The same
+        as defaultDirectory() on Linux. */
+    static juce::File userDirectory();
+
+    Sharing getSharing() const noexcept   { return sharing; }
 
     static constexpr const char* fileName = "Licenses.json";
 
@@ -101,6 +132,14 @@ public:
         afterwards (also when there was none).
     */
     bool remove (const juce::String& productId, const juce::String& key, const juce::String& machineId) const;
+
+    /** Marks the activation of this product with this key for this computer as being deactivated
+        since `since` (ISO 8601), or clears the mark (`since` empty): see
+        StoredActivation::deactivatingSince. True if the file holds that activation, marked as
+        asked, afterwards; false if it holds none or couldn't be written.
+    */
+    bool setDeactivating (const juce::String& productId, const juce::String& key, const juce::String& machineId,
+                          const juce::String& since) const;
 
     //==============================================================================
     /** A cheap fingerprint of the file (whether it exists, its size, its time and its identity),
@@ -170,9 +209,11 @@ public:
 private:
     class WriteLock;
 
+    bool prepareDirectory() const;
     bool modify (const std::function<void (juce::Array<juce::var>&)>& change) const;
 
     juce::File directory;
+    Sharing sharing = Sharing::thisAccount;
 };
 
 } // namespace anymeans::license

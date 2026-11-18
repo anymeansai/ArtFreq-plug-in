@@ -724,11 +724,16 @@ void ActivationScreen::paint (juce::Graphics& g)
         g.drawText (effect ? "Enter the ArtFreq Pro key from your purchase email." : "Enter the key from your purchase email.",
                     subtitleArea, juce::Justification::centred, false);
 
-        // Before anything has been tried: what activating means, where the message will go.
+        // Before anything has been tried: what activating means, where the message will go. Or,
+        // after a deactivation that was cut off (the project closed while it ran), why this
+        // computer is locked and how to finish it.
         if (messageText.getMessage().isEmpty() && ! isBusy())
         {
-            const auto info = layoutText ("Once activated, " + name + " works offline. A key activates two computers.",
-                                          SelectableText::messageFont(), theme::textFaint,
+            const auto finishing = license.getInterruptedDeactivation().has_value();
+            const auto text = finishing ? "Deactivating didn't finish, so the server may have freed this computer. "
+                                          "To free your key, deactivate in Settings; to use " + name + " here, activate again."
+                                        : "Once activated, " + name + " works offline. A key activates two computers.";
+            const auto info = layoutText (text, SelectableText::messageFont(), finishing ? theme::textDim : theme::textFaint,
                                           static_cast<float> (messageText.getWidth()), juce::Justification::centredTop, 1.0f);
             info.draw (g, messageText.getBounds().toFloat());
         }
@@ -850,7 +855,7 @@ void LicenceCard::reset()
 
 void LicenceCard::confirm (bool shouldConfirm)
 {
-    confirming = shouldConfirm;
+    confirming = shouldConfirm && license.getActivation().has_value();
 
     if (shouldConfirm)
         messageText.setMessage ({}, errorColour());
@@ -871,7 +876,14 @@ void LicenceCard::deactivate()
 
         safe->waitingForResult = false;
 
-        if (result.succeeded())
+        if (result.succeeded() && safe->license.isActivated())
+        {
+            // Another key keeps this plug-in activated (an ArtFreq key, once an ArtFreq Pro key
+            // went): the panel stays, and the card says what went and what stays.
+            safe->messageText.setMessage (result.message, theme::textDim);
+            safe->update();
+        }
+        else if (result.succeeded())
         {
             safe->update();
 
@@ -902,6 +914,13 @@ void LicenceCard::licenseStateChanged (LicenseManager&)
     update();
 }
 
+bool LicenceCard::isFinishingADeactivation() const
+{
+    // Not activated, with a deactivation that was cut off (the project closed while it ran): the
+    // card offers to finish it, beside Activate...
+    return ! license.getActivation().has_value() && license.getInterruptedDeactivation().has_value();
+}
+
 LicenceCard::Layout LicenceCard::layoutFor (int width) const
 {
     Layout l;
@@ -915,25 +934,36 @@ LicenceCard::Layout LicenceCard::layoutFor (int width) const
         l.caption = { 0, 0, licence::labelWidth, licence::lineHeight };
 
     // The buttons on the right, in the width they need.
-    const auto buttonsWidth = ! activation.has_value() ? activateButton.getIdealWidth()
-                            : confirming               ? cancelButton.getIdealWidth() + 8 + confirmButton.getIdealWidth()
-                                                       : deactivateButton.getIdealWidth();
+    const auto buttonsWidth = isFinishingADeactivation() ? confirmButton.getIdealWidth() + 8 + activateButton.getIdealWidth()
+                            : ! activation.has_value()   ? activateButton.getIdealWidth()
+                            : confirming                 ? cancelButton.getIdealWidth() + 8 + confirmButton.getIdealWidth()
+                                                         : deactivateButton.getIdealWidth();
 
     if (! activation.has_value() || confirming)
     {
         // A sentence (the status, or the question) and the buttons: beside it where there is
-        // room (wide), else under it, on the right.
+        // room (wide), else under it, on the right. Not activated, a failed attempt to finish a
+        // deactivation says why under the sentence.
         const auto sentence = ! activation.has_value() ? license.getStatusText() : license.getDeactivationWarning();
+        const auto withMessage = hasMessage && ! activation.has_value();
 
         if (wide)
         {
             const auto textWidth = room - buttonsWidth - 16;
             const auto sentenceHeight = textHeight (sentence, sentenceFont(), textWidth, sentenceSpacing());
-            const auto h = juce::jmax (licence::buttonHeight, sentenceHeight);
-            l.text = { x, 0, textWidth, h };
+            const auto messageHeight = withMessage ? juce::jmin (messageText.getHeightFor (textWidth),
+                                                                 licence::wideMessageLines * messageText.getLineHeight())
+                                                   : 0;
+            const auto contentHeight = sentenceHeight + (withMessage ? 2 + messageHeight : 0);
+            const auto h = juce::jmax (licence::buttonHeight, contentHeight);
+            const auto top = (h - contentHeight) / 2;
+            l.text = { x, top, textWidth, sentenceHeight };
 
-            // The caption on the sentence's first line (it is centred in the row).
-            l.caption.setY ((h - sentenceHeight) / 2);
+            if (withMessage)
+                l.message = { x, l.text.getBottom() + 2, textWidth, messageHeight };
+
+            // The caption on the sentence's first line.
+            l.caption.setY (top);
             l.caption.setHeight (static_cast<int> (std::ceil (sentenceFont().getHeight())) + 1);
             l.buttons = { width - buttonsWidth, (h - licence::buttonHeight) / 2, buttonsWidth, licence::buttonHeight };
             l.height = h;
@@ -942,7 +972,16 @@ LicenceCard::Layout LicenceCard::layoutFor (int width) const
         {
             const auto h = textHeight (sentence, sentenceFont(), room, sentenceSpacing());
             l.text = { x, 0, room, h };
-            l.buttons = { width - buttonsWidth, h + licence::gap, buttonsWidth, licence::buttonHeight };
+            auto y = h;
+
+            if (withMessage)
+            {
+                const auto messageHeight = juce::jmin (messageText.getHeightFor (room), licence::narrowMessageLines * messageText.getLineHeight());
+                l.message = { x, y + 4, room, messageHeight };
+                y = l.message.getBottom();
+            }
+
+            l.buttons = { width - buttonsWidth, y + licence::gap, buttonsWidth, licence::buttonHeight };
             l.height = l.buttons.getBottom();
         }
 
@@ -1007,12 +1046,13 @@ void LicenceCard::update()
 {
     const auto activated = license.getActivation().has_value();
     const auto busy = license.getRequestInProgress() == LicenseManager::Request::deactivating;
+    const auto finishing = isFinishingADeactivation();
 
-    activateButton.setVisible (! activated);
+    activateButton.setVisible (! activated && ! busy);
     deactivateButton.setVisible (activated && ! confirming && ! busy);
     cancelButton.setVisible (activated && confirming && ! busy);
-    confirmButton.setVisible (activated && confirming && ! busy);
-    messageText.setVisible (activated && ! confirming && messageText.getMessage().isNotEmpty());
+    confirmButton.setVisible (((activated && confirming) || finishing) && ! busy);
+    messageText.setVisible (! confirming && messageText.getMessage().isNotEmpty());
 
     if (busy && ! isTimerRunning())
         startTimerHz (30);
@@ -1049,7 +1089,14 @@ void LicenceCard::resized()
         auto row = l.buttons;
         activateButton.setBounds (row.removeFromRight (activateButton.getIdealWidth()));
         deactivateButton.setBounds (l.buttons.withLeft (l.buttons.getRight() - deactivateButton.getIdealWidth()));
-        confirmButton.setBounds (l.buttons.withLeft (l.buttons.getRight() - confirmButton.getIdealWidth()));
+
+        // Finishing a deactivation that was cut off: Deactivate beside Activate...
+        if (isFinishingADeactivation())
+            confirmButton.setBounds (activateButton.getX() - 8 - confirmButton.getIdealWidth(), l.buttons.getY(),
+                                     confirmButton.getIdealWidth(), l.buttons.getHeight());
+        else
+            confirmButton.setBounds (l.buttons.withLeft (l.buttons.getRight() - confirmButton.getIdealWidth()));
+
         cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), l.buttons.getY(),
                                 cancelButton.getIdealWidth(), l.buttons.getHeight());
     }

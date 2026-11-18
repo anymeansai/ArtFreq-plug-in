@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace anymeans::license
 {
@@ -39,7 +40,10 @@ public:
     */
     struct Environment
     {
-        juce::File sharedFolder;               // empty: LicenseStore::defaultDirectory()
+        juce::File sharedFolder;               // empty: LicenseStore::defaultDirectory(), the computer's
+        juce::File userFolder;                 // the account's own, read too and written when the shared
+                                               // one can't be. Empty: LicenseStore::userDirectory() if
+                                               // sharedFolder is empty too, else none
         std::shared_ptr<Transport> transport;  // empty: HTTPS to SERVER_BASE_URL
         juce::String machineId;                // empty: MachineId::get()
         juce::String publicKeyHex;             // empty: SIGNING_PUBLIC_KEY_HEX
@@ -80,6 +84,15 @@ public:
         juce::String maskedKey;        // "8K3QX-*****-*****-NV6ZH", with bullets (U+2022)
         juce::String activatedAt;      // ISO 8601
         juce::String activatedIn;      // the plug-in it was entered in
+
+        /** Of the plug-ins this activation unlocks, those another key activated on this computer
+            keeps unlocked without it ("ArtFreq", when this is an ArtFreq Pro key and there is an
+            ArtFreq key too), and that key's product ("ArtFreq"). Empty: none. */
+        juce::StringArray pluginsKeptByAnotherKey;
+        juce::String anotherKeyProduct;
+
+        /** getInterruptedDeactivation(): when that deactivation was started. */
+        juce::String deactivatingSince;
     };
 
     /** The activation in use, if the plug-in is activated. If the file holds several that apply
@@ -87,18 +100,27 @@ public:
     */
     const std::optional<Activation>& getActivation() const noexcept   { return current; }
 
+    /** An activation whose deactivation was started on this computer and cut off before the
+        server's answer was known (the project closed or the DAW quit meanwhile): the server may
+        have freed this computer already, so it no longer counts, and deactivate() finishes the
+        job. Activating again with the key (which the server answers with no extra computer, or
+        with the place it freed) replaces it.
+    */
+    const std::optional<Activation>& getInterruptedDeactivation() const noexcept   { return interrupted; }
+
     enum class Request { none, activating, deactivating };
 
     /** The request in progress, if any. */
     Request getRequestInProgress() const noexcept   { return requestInProgress; }
     bool isBusy() const noexcept                    { return requestInProgress != Request::none; }
 
-    /** One line for the interface: activated with which key, not activated, or what is happening. */
+    /** One line for the interface: activated with which key, not activated, a deactivation that
+        didn't finish, or what is happening. */
     juce::String getStatusText() const;
 
     /** What deactivating would do here, for a confirmation: which plug-ins it locks on this
         computer (deactivating an ArtFreq Pro activation locks ArtFreq and ArtFreq FX, since they
-        share it). Empty when not activated.
+        share it), and which another key keeps unlocked. Empty when not activated.
     */
     juce::String getDeactivationWarning() const;
 
@@ -148,6 +170,13 @@ public:
         just not have reached every copy of the server's records yet): otherwise the key would
         stay taken on the server with no way to free it from here. Returns false, and does
         nothing, if a request is in progress.
+
+        The activation is marked in the shared file before anything is sent, and the mark taken
+        off again if the server answers that it did not free the computer, or can't be reached.
+        If the request is cut off instead (the manager goes: the project closed, the DAW quit),
+        the mark stays, so the activation no longer counts anywhere once the request could have
+        ended (getInterruptedDeactivation()): the server may have freed this computer. Not
+        activated, this finishes an interrupted deactivation.
     */
     bool deactivate (Callback onDone);
 
@@ -174,8 +203,11 @@ public:
 
     //==============================================================================
     const PluginLicensing& getPluginLicensing() const noexcept  { return plugin; }
-    const LicenseStore& getStore() const noexcept               { return store; }
     const juce::String& getMachineId() const noexcept           { return machineId; }
+
+    /** The computer's shared store, and then the account's own if it is read too. */
+    const std::vector<LicenseStore>& getStores() const noexcept   { return stores; }
+    const LicenseStore& getStore() const noexcept                 { return stores.front(); }
 
 private:
     struct PendingRequest;
@@ -190,8 +222,7 @@ private:
     void notifyListeners();
 
     const PluginLicensing plugin;
-    const juce::File sharedFolder;
-    const LicenseStore store;
+    const std::vector<LicenseStore> stores;
     const std::shared_ptr<Transport> transport;
     const juce::String machineId;
     const juce::String publicKeyHex;
@@ -200,9 +231,10 @@ private:
     std::atomic<bool> activated { false };
     static_assert (std::atomic<bool>::is_always_lock_free, "the audio thread reads this flag");
 
-    std::optional<Activation> current;
+    std::optional<Activation> current, interrupted;
     bool activationForAnotherComputer = false;
-    LicenseStore::Stamp lastStamp;
+    std::vector<LicenseStore::Stamp> lastStamps;
+    juce::int64 reloadAtMs = 0;   // a deactivation mark that will be old enough to count then (0: none)
 
     Request requestInProgress = Request::none;
     std::shared_ptr<PendingRequest> pending;

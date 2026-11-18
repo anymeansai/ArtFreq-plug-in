@@ -194,8 +194,10 @@ private:
 /** The Licence card in the settings: what is activated ("ArtFreq Pro: ArtFreq and ArtFreq FX"),
     the key (masked), "Activated on this computer", and Deactivate, which first says in one line
     what will be locked and that the key can then be used on another computer. A deactivation
-    that fails keeps everything as it was and says why (the support address selectable). Not
-    activated, it says so and offers the activation screen.
+    that fails keeps everything as it was and says why (the support address selectable); one
+    after which another key keeps the plug-in activated says what went and what stays. Not
+    activated, it says so and offers the activation screen, and, after a deactivation that was
+    cut off (the project closed while it ran), Deactivate to finish it.
 
     `wide` (ArtFreq FX's two-column settings): one row across the panel, its caption on the left;
     otherwise a column under a caption the panel draws. */
@@ -219,8 +221,9 @@ public:
     /** Not activated: Activate... was pressed. The editor shows the activation screen. */
     std::function<void()> onActivateWanted;
 
-    /** The deactivation went through: the plug-in is locked now. The editor puts the panel away
-        and shows the result on the activation screen. */
+    /** The deactivation went through and the plug-in is locked now. The editor puts the panel
+        away and shows the result on the activation screen. (If another key keeps the plug-in
+        activated, the card says so itself and this is not called.) */
     std::function<void (const anymeans::license::LicenseManager::Result&)> onDeactivated;
 
     // For the snapshot tool and tests.
@@ -236,6 +239,7 @@ private:
     void confirm (bool shouldConfirm);
     void deactivate();
     void update();
+    bool isFinishingADeactivation() const;
 
     struct Layout;
     Layout layoutFor (int width) const;
