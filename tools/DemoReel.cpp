@@ -29,8 +29,8 @@
 //
 // It checks that the picture is the sound: the live view's newest column ("now") in every
 // frame, and every column of the whole live picture in the last frame, against an analysis of
-// the clip's sound made here separately (as the live view analyses: 4096 points, Blackman-
-// Harris, a column every 512 samples, the same rows and colours). A frame early or late, or a
+// the clip's sound made here separately (as the live view analyses with the default settings:
+// 8192 points, Hann, a column every 512 samples, the same rows and colours). A frame early or late, or a
 // column dropped or doubled, would not match. And, with ffprobe, the encoded files: frames,
 // durations, the sound.
 //
@@ -793,9 +793,10 @@ void checkFiles (const ClipSpec& clip, const juce::String& ffprobe, const juce::
 
 // ---- the picture against the sound ------------------------------------------------------------
 // The live view's colour window and analysis, as src/ui/LiveView.cpp and src/dsp/LiveAnalyzer.h
-// define them (a full-scale sine reads 0 dB; the colours run from -89 to -29 dB).
-constexpr float viewFloorDb = -89.0f;
-constexpr float viewCeilingDb = -29.0f;
+// define them with the default analyser settings (a full-scale sine reads 0 dB; the colours run
+// from -100 to 0 dB; FFT 8192, Hann, a column every sixteenth of it).
+constexpr float viewFloorDb = -100.0f;
+constexpr float viewCeilingDb = 0.0f;
 
 /** The colour-map level (0..255) a pixel of the live view shows, by the nearest colour of the map
     (grid lines and the frame lie over some pixels: their nearest colour is near their own). */
@@ -824,7 +825,7 @@ int levelOfPixel (juce::Colour c)
 }
 
 /** An analysis of the clip's sound made here, independently of the live view's code: an analyser
-    of 4096 points (Blackman-Harris) with a column every 512 samples from when the view was turned
+    of 8192 points (Hann) with a column every 512 samples from when the view was turned
     on (nothing before that), each column as the colour-map levels of the view's rows (`rows`
     tall over the scale). */
 class SoundAnalysis
@@ -843,14 +844,14 @@ public:
         for (int i = 0; i < size; ++i)
         {
             const auto x = juce::MathConstants<double>::twoPi * i / size;
-            window[static_cast<size_t> (i)] = static_cast<float> (0.35875 - 0.48829 * std::cos (x) + 0.14128 * std::cos (2.0 * x) - 0.01168 * std::cos (3.0 * x));
+            window[static_cast<size_t> (i)] = static_cast<float> (0.5 - 0.5 * std::cos (x));
             sum += window[static_cast<size_t> (i)];
         }
 
         magnitudeScale = static_cast<float> (2.0 / sum);
     }
 
-    static constexpr int order = 12, size = 1 << order, hop = 512;
+    static constexpr int order = 13, size = 1 << order, hop = size / 16;
 
     /** How many columns the analyser has made by `sample`. */
     int64_t columnsBy (int64_t sample) const { return std::max<int64_t> (0, (sample - start) / hop); }
@@ -872,7 +873,7 @@ public:
         std::vector<float> db (size / 2 + 1);
 
         for (size_t bin = 0; bin < db.size(); ++bin)
-            db[bin] = std::max (-140.0f, 20.0f * std::log10 (std::max (1.0e-7f, work[bin] * magnitudeScale)));
+            db[bin] = std::max (-160.0f, 20.0f * std::log10 (std::max (1.0e-8f, work[bin] * magnitudeScale)));
 
         std::vector<int> levels (static_cast<size_t> (rows), 0);
         const auto binHz = sampleRate / size;
@@ -884,21 +885,13 @@ public:
             const auto centre = scale.toHz (1.0 - (static_cast<double> (y) + 0.5) / rows);
             const auto first = std::max (0, static_cast<int> (std::ceil (bottom / binHz)));
             const auto last = std::min (static_cast<int> (db.size()) - 1, static_cast<int> (std::floor (top / binHz)));
-            float value;
+            // The spectrum between the bins around the row's centre, or the loudest bin inside it.
+            const auto position = static_cast<float> (std::clamp (centre / binHz, 0.0, static_cast<double> (db.size() - 2)));
+            const auto i = static_cast<size_t> (position);
+            auto value = db[i] + (db[i + 1] - db[i]) * (position - static_cast<float> (i));
 
-            if (last >= first)
-            {
-                value = db[static_cast<size_t> (first)];
-
-                for (auto bin = first + 1; bin <= last; ++bin)
-                    value = std::max (value, db[static_cast<size_t> (bin)]);
-            }
-            else
-            {
-                const auto position = static_cast<float> (std::clamp (centre / binHz, 0.0, static_cast<double> (db.size() - 2)));
-                const auto i = static_cast<size_t> (position);
-                value = db[i] + (db[i + 1] - db[i]) * (position - static_cast<float> (i));
-            }
+            for (auto bin = first; bin <= last; ++bin)
+                value = std::max (value, db[static_cast<size_t> (bin)]);
 
             const auto t = (value - viewFloorDb) / (viewCeilingDb - viewFloorDb);
             levels[static_cast<size_t> (y)] = juce::jlimit (0, 255, static_cast<int> (t * 255.0f + 0.5f));
@@ -1116,7 +1109,7 @@ bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::Fi
 
         analyzer.push (mono.data(), samplesPerFrame);
         auto loudest = -200.0f;
-        const auto binHz = sampleRate / LiveAnalyzer::fftSize;
+        const auto binHz = sampleRate / analyzer.getFftSize();
 
         analyzer.process ([&] (const float* db, int numBins)
         {
@@ -1145,7 +1138,7 @@ bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::Fi
               << "), live view from frame " << liveFrame << ", whose analysis peaks at " << firstFrameDb
               << " dB; the output before it peaks at " << juce::Decibels::gainToDecibels (missed, -200.0f) << " dBFS" << std::endl;
     check (missed < 1.0e-5f, clip.name + ": nothing sounds before the live view is shown");
-    check (firstFrameDb > -83.0f + 6.0f, clip.name + ": the live view's first frame shows the sound (no \"Nothing is playing\")");
+    check (firstFrameDb > viewFloorDb + 6.0f, clip.name + ": the live view's first frame shows the sound (no \"Nothing is playing\")");
 
     // ---- the filmed run ---------------------------------------------------------------------------
     auto processor = makeProcessor (clip);

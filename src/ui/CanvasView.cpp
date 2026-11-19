@@ -5,6 +5,7 @@
 #include "CanvasPlanImage.h"
 #include "EffectPreview.h"
 #include "KeyFocus.h"
+#include "MeasuredPreview.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "core/Compositor.h"
@@ -31,6 +32,26 @@ namespace
     constexpr float playheadCapHeight = 6.0f;
 
     constexpr double nudgeSessionGap = 1.0;    // seconds: nudges closer together are one undo step
+
+    // The cross-fades between the fast and the measured preview: the measured one fades in
+    // slowly enough to be seen as an update, not a flicker; the fast one takes over quickly, as
+    // it follows the mouse.
+    constexpr double fadeToMeasuredSeconds = 0.3;
+    constexpr double fadeToFastSeconds = 0.12;
+
+    double nowSeconds() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
+
+    /** Level, Depth and the pass's length as the previews use them: a host's tempo that wobbles in
+        its last digits, or automation of Level moving by a hair, does not start a new render. */
+    float quantisedGain (float gain)
+    {
+        if (! (gain > 0.0f))
+            return 0.0f;
+
+        return juce::Decibels::decibelsToGain (std::round (juce::Decibels::gainToDecibels (gain, -200.0f) * 4.0f) / 4.0f, -200.0f);
+    }
+
+    double quantisedSeconds (double seconds) { return std::round (seconds * 1000.0) / 1000.0; }
 
     enum Edge
     {
@@ -96,6 +117,8 @@ namespace
 //==============================================================================
 struct CanvasView::Impl
 {
+    enum class Shown { fast, measured };
+
     Impl (CanvasView& ownerToUse, ArtFreqProcessor& processorToUse, EditorState& stateToUse)
         : owner (ownerToUse), processor (processorToUse), state (stateToUse),
           lengthParameter (processor.getParameters().getRawParameterValue (params::id::length))
@@ -106,8 +129,13 @@ struct CanvasView::Impl
         timeSignature = processor.getTimeSignature();
         firstBar = processor.getSinglePassStartBar();
         effectMode = processor.getEffectMode();
-        depthDb = processor.getDepthDb();
-        outputGain = processor.getOutputGain();
+        depthDb = std::round (processor.getDepthDb() * 2.0f) / 2.0f;
+        outputGain = quantisedGain (processor.getOutputGain());
+        view = processor.getAnalyserView();
+        slope = processor.getPlanSettings().slopeDbPerOctave;
+        sampleRate = processor.getCurrentSampleRate();
+        passSeconds = quantisedSeconds (processor.getLengthSeconds());
+        shownStatus = statusText();
     }
 
     // ---- geometry ------------------------------------------------------------------------
@@ -535,14 +563,21 @@ struct CanvasView::Impl
         const auto newSignature = processor.getTimeSignature();
         const auto newFirstBar = processor.getSinglePassStartBar();
 
-        // ArtFreq FX: the mode, the depth and the level of the sines (against the stand-in song)
-        // change what the canvas shows.
+        // What the previews show also depends on Level, the length in seconds (the analyser's
+        // window blurs a shorter pass more), the analyser's settings and the sample rate; and in
+        // ArtFreq FX on the mode and the depth.
         const auto newMode = processor.getEffectMode();
-        const auto newDepth = processor.getDepthDb();
-        const auto newGain = processor.isEffect() ? processor.getOutputGain() : outputGain;
+        const auto newDepth = std::round (processor.getDepthDb() * 2.0f) / 2.0f;
+        const auto newGain = quantisedGain (processor.getOutputGain());
+        const auto newView = processor.getAnalyserView();
+        const auto newSlope = processor.getPlanSettings().slopeDbPerOctave;
+        const auto newRate = processor.getCurrentSampleRate();
+        const auto newPass = quantisedSeconds (processor.getLengthSeconds());
 
         if (newLength != lengthIndex || newScale != scale || newSignature != timeSignature || newFirstBar != firstBar
-            || newMode != effectMode || ! juce::exactlyEqual (newDepth, depthDb) || ! juce::exactlyEqual (newGain, outputGain))
+            || newMode != effectMode || ! juce::exactlyEqual (newDepth, depthDb) || ! juce::exactlyEqual (newGain, outputGain)
+            || newView != view || ! juce::exactlyEqual (newSlope, slope) || ! juce::exactlyEqual (newRate, sampleRate)
+            || ! juce::exactlyEqual (newPass, passSeconds))
         {
             lengthIndex = newLength;
             scale = newScale;
@@ -551,8 +586,278 @@ struct CanvasView::Impl
             effectMode = newMode;
             depthDb = newDepth;
             outputGain = newGain;
+            view = newView;
+            slope = newSlope;
+            sampleRate = newRate;
+            passSeconds = newPass;
             owner.repaint();
         }
+    }
+
+    // ---- the previews ----------------------------------------------------------------------
+    //
+    // The fast preview (CanvasPlanImage, EffectPreviewImage) is drawn from the plan in a few ms
+    // and follows every drag. The measured preview (MeasuredPreview) is the real sound, rendered
+    // and analysed in the background a moment after the last change. The canvas shows:
+    //
+    //  - the measured preview when it is of what is drawn and set now;
+    //  - the last measured preview while an update is on its way, as long as the drawing has not
+    //    moved (another Level, Depth, mode, length, Density, Contrast, analyser setting or window
+    //    size: the shapes are where they were, only their look is about to change), unless the
+    //    mouse is down changing it (a knob being turned should be seen turning);
+    //  - otherwise the fast preview: before the first measurement, and while the drawing changes
+    //    (painting, dragging, typing, undo), until the new measurement is in.
+    //
+    // Between them it cross-fades. The selection, the handles, the outlines and the brush cursor
+    // are drawn on top as always.
+
+    AnalyserModel analyserModel() const
+    {
+        AnalyserModel model;
+        model.scale = scale;
+        model.slopeDbPerOctave = slope;
+        model.view = view;
+        model.sampleRate = sampleRate;
+        model.passSeconds = passSeconds;
+        model.outputGain = outputGain;
+        return model;
+    }
+
+    /** The fast preview at a size (image pixels). */
+    juce::Image fastPicture (int width, int height)
+    {
+        auto picture = planImage.get (plan, analyserModel(), width, height);
+
+        // ArtFreq FX: over the stand-in song, as the mode will show it.
+        if (processor.isEffect())
+        {
+            EffectPreviewImage::Settings settings;
+            settings.mode = effectMode;
+            settings.depthDb = depthDb;
+            settings.view = view;
+            settings.sampleRate = sampleRate;
+            settings.passSeconds = passSeconds;
+            picture = effectPreview.get (planImage.getPixelDbBeforeLevel(), planImage.getLevelDb(), planImage.getRenderCount(),
+                                         settings, processor.getCurrentMasks(), scale, width, height);
+        }
+
+        return picture;
+    }
+
+    MeasureRequest makeRequest (int width, int height) const
+    {
+        MeasureRequest request;
+        request.effect = processor.isEffect();
+        request.plan = plan;
+        request.masks = request.effect ? processor.getCurrentMasks() : nullptr;
+        request.mode = effectMode;
+        request.depthDb = depthDb;
+        request.outputGain = outputGain;
+
+        // ArtFreq FX's Carve and Stencil play no sines: neither the plan nor Level changes their
+        // sound (Density, Contrast and Lows rebuild the plan, not the masks), so a change to them
+        // renders nothing again.
+        if (request.effect && ! playsSines (effectMode))
+        {
+            request.plan = nullptr;
+            request.outputGain = 1.0f;
+        }
+        request.passSeconds = passSeconds;
+        request.sampleRate = sampleRate;
+        request.scale = scale;
+        request.slopeDbPerOctave = slope;
+        request.view = view;
+        request.width = width;
+        request.height = height;
+        request.documentRevision = processor.getDocumentRevision();
+        return request;
+    }
+
+    /** Shows a finished measurement (cross-fading to it if it is to be seen and `fade`). */
+    void installMeasurement (std::unique_ptr<MeasuredPreview::Result> result, bool fade)
+    {
+        const auto& r = result->request;
+        juce::Image image (juce::Image::RGB, juce::jmax (1, r.width), juce::jmax (1, r.height), false);
+
+        if (result->pixels.size() == static_cast<size_t> (r.width) * static_cast<size_t> (r.height))
+        {
+            juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
+
+            for (int y = 0; y < r.height; ++y)
+                writePixelRow (data, y, result->pixels.data() + static_cast<size_t> (y) * static_cast<size_t> (r.width), r.width);
+        }
+
+        // A newer measurement while one is on screen: cross-fade from it.
+        if (fade && shown == Shown::measured && measuredImage.isValid())
+            startFade (Shown::measured, false, measuredImage, fadeToMeasuredSeconds);
+        else if (! fade)
+            fading = false;
+
+        measuredImage = image;
+        measuredRequest = r;
+        measuredAnalysis = result->analysis;
+        hasMeasured = true;
+        lastMeasureMilliseconds = result->milliseconds;
+        updateMeasuredSong();
+        owner.repaint (area().getSmallestIntegerContainer());
+    }
+
+    /** ArtFreq FX's fast preview draws the stand-in as the last measurement analysed it, when it
+        was made for the same scale, FFT, rate and length. */
+    void updateMeasuredSong()
+    {
+        if (! processor.isEffect())
+            return;
+
+        const auto& r = measuredRequest;
+        const auto compatible = hasMeasured && r.scale == scale && r.view.fftSize == view.fftSize
+                             && juce::exactlyEqual (r.sampleRate, sampleRate) && juce::exactlyEqual (r.passSeconds, passSeconds);
+        effectPreview.setMeasuredSong (compatible ? measuredAnalysis : nullptr);
+    }
+
+    void startFade (Shown target, bool fromFast, juce::Image fromImage, double seconds)
+    {
+        fadeFromFast = fromFast;
+        fadeFromImage = std::move (fromImage);
+        fadeStart = nowSeconds();
+        fadeSeconds = seconds;
+        fading = true;
+        shown = target;
+    }
+
+    float fadeProgress() const
+    {
+        return fading ? static_cast<float> (juce::jlimit (0.0, 1.0, (nowSeconds() - fadeStart) / fadeSeconds)) : 1.0f;
+    }
+
+    /** From the timer: asks for a measurement of what is shown, takes one that is in, and decides
+        what the canvas shows. */
+    void updateMeasured()
+    {
+        if (pictureWidth <= 0 || pictureHeight <= 0)
+            return;   // not painted yet
+
+        const auto request = makeRequest (pictureWidth, pictureHeight);
+        lastRequest = request;
+
+        // Not before the plan is rebuilt (the request would name the new drawing with the old
+        // plan), and only while the canvas can be seen.
+        measured.update (request, owner.isShowing() && ! processor.isPlanPending());
+
+        if (auto result = measured.takeResult())
+            installMeasurement (std::move (result), true);
+
+        updateMeasuredSong();
+
+        auto target = shown;
+
+        if (hasMeasured && measuredRequest == request)
+        {
+            target = Shown::measured;
+        }
+        else if (shown == Shown::measured)
+        {
+            const auto shapesMoved = ! hasMeasured || measuredRequest.documentRevision != request.documentRevision
+                                  || measuredRequest.scale != request.scale;
+            auto sameSize = request;
+            sameSize.width = measuredRequest.width;
+            sameSize.height = measuredRequest.height;
+            const auto soundChanged = ! measuredRequest.sameAnalysis (sameSize);
+            const auto mouseDown = juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown();
+
+            if (shapesMoved || (mouseDown && soundChanged))
+                target = Shown::fast;
+        }
+
+        if (target != shown)
+        {
+            if (target == Shown::measured)
+                startFade (Shown::measured, true, {}, fadeToMeasuredSeconds);
+            else
+                startFade (Shown::fast, false, measuredImage, fadeToFastSeconds);
+
+            owner.repaint (area().getSmallestIntegerContainer());
+        }
+
+        if (fading)
+        {
+            if (fadeProgress() >= 1.0f)
+            {
+                fading = false;
+                fadeFromImage = {};
+            }
+
+            owner.repaint (area().getSmallestIntegerContainer());
+        }
+
+        const auto text = statusText();
+
+        if (text != shownStatus)
+        {
+            shownStatus = text;
+            owner.repaint (statusArea().getSmallestIntegerContainer());
+        }
+    }
+
+    bool measurementIsCurrent() const
+    {
+        return hasMeasured && shown == Shown::measured && measuredRequest == lastRequest;
+    }
+
+    juce::String statusText() const
+    {
+        if (measurementIsCurrent())
+            return processor.isEffect() ? "Real output, on a stand-in song" : "Preview of the real sound";
+
+        return "Updating" + juce::String::fromUTF8 ("\xe2\x80\xa6");
+    }
+
+    /** Where the status line goes: the right end of the time axis, under the drawing. */
+    juce::Rectangle<float> statusArea() const
+    {
+        const auto a = area();
+        const auto width = juce::jmin (a.getWidth() * 0.5f, 220.0f);
+        return { a.getRight() - width, a.getBottom() + 3.0f, width, static_cast<float> (axisHeight) - 5.0f };
+    }
+
+    void paintStatus (juce::Graphics& g)
+    {
+        if (shownStatus.isEmpty())
+            return;
+
+        const auto r = statusArea();
+        g.setFont (fonts::ui (11.0f));
+        g.setColour (measurementIsCurrent() ? theme::textFaint : theme::textDim);
+        g.drawText (shownStatus, r, juce::Justification::centredRight, true);
+    }
+
+    /** Where the time labels must stop, so they never run into the status line. */
+    float statusStart() const
+    {
+        if (shownStatus.isEmpty())
+            return 1.0e9f;
+
+        return statusArea().getRight() - juce::GlyphArrangement::getStringWidth (fonts::ui (11.0f), shownStatus) - 10.0f;
+    }
+
+    void paintPicture (juce::Graphics& g, juce::Rectangle<float> a, int width, int height)
+    {
+        g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
+
+        const auto showFast = shown == Shown::fast || ! measuredImage.isValid();
+        const auto current = showFast ? fastPicture (width, height) : measuredImage;
+
+        if (fading && fadeProgress() < 1.0f)
+        {
+            const auto from = fadeFromFast || ! fadeFromImage.isValid() ? fastPicture (width, height) : fadeFromImage;
+            g.drawImage (from, a);
+            g.setOpacity (fadeProgress());
+            g.drawImage (current, a);
+            g.setOpacity (1.0f);
+            return;
+        }
+
+        g.drawImage (current, a);
     }
 
     // ---- painting --------------------------------------------------------------------------
@@ -583,17 +888,9 @@ struct CanvasView::Impl
         if (g.clipRegionIntersects (drawingBounds))
         {
             const auto pixelScale = g.getInternalContext().getPhysicalPixelScaleFactor();
-            auto picture = planImage.get (plan, scale,
-                                          juce::roundToInt (a.getWidth() * pixelScale),
-                                          juce::roundToInt (a.getHeight() * pixelScale), pixelScale);
-
-            // ArtFreq FX: over a stand-in for the song, as the mode will show it.
-            if (processor.isEffect())
-                picture = effectPreview.get (planImage.getPixelLevels(), planImage.getRenderCount(), effectMode, depthDb,
-                                             EffectPreviewImage::sinesDbFor (planImage.getLoudestAmplitude(), outputGain),
-                                             processor.getCurrentMasks(), picture.getWidth(), picture.getHeight());
-            g.setImageResamplingQuality (juce::Graphics::lowResamplingQuality);
-            g.drawImage (picture, a);
+            pictureWidth = juce::jmax (1, juce::roundToInt (a.getWidth() * pixelScale));
+            pictureHeight = juce::jmax (1, juce::roundToInt (a.getHeight() * pixelScale));
+            paintPicture (g, a, pictureWidth, pictureHeight);
 
             const auto marks = axes::timeMarks (lengthIndex, timeSignature.numerator, timeSignature.denominator, a.getWidth(), firstBar);
             axes::drawFrequencyGrid (g, a, scale, juce::Colours::white.withAlpha (0.06f));
@@ -620,6 +917,7 @@ struct CanvasView::Impl
             paintPlayheadCap (g, a);
 
         paintAxes (g, a);
+        paintStatus (g);
         paintSelectionHandles (g);
 
         if (cursorVisible && brushActive())
@@ -803,7 +1101,8 @@ struct CanvasView::Impl
 
         if (g.clipRegionIntersects (timeAxis.getSmallestIntegerContainer()))
             axes::drawTimeLabels (g, timeAxis, a, axes::timeMarks (lengthIndex, timeSignature.numerator,
-                                                                    timeSignature.denominator, a.getWidth(), firstBar));
+                                                                    timeSignature.denominator, a.getWidth(), firstBar),
+                                  statusStart());
     }
 
     void paintBrushCursor (juce::Graphics& g)
@@ -871,13 +1170,33 @@ struct CanvasView::Impl
     EditorState& state;
     std::atomic<float>* lengthParameter = nullptr;
 
-    CanvasPlanImage planImage;
+    CanvasPlanImage planImage;            // the fast preview
     EffectPreviewImage effectPreview;     // ArtFreq FX: the drawing as the effect's output shows it
     std::shared_ptr<const ArtPlan> plan;  // kept alive while it is shown
     FrequencyScale scale;
     EffectMode effectMode = EffectMode::carve;
     float depthDb = 0.0f;
-    float outputGain = 1.0f;              // ... and Level, as a gain (the sines' level on the canvas)
+    float outputGain = 1.0f;              // Level, as a gain
+    AnalyserView view;                    // the user's analyser (Settings)
+    float slope = 0.0f;
+    double sampleRate = 48000.0;
+    double passSeconds = 8.0;
+
+    // The measured preview
+    MeasuredPreview measured;
+    juce::Image measuredImage;
+    MeasureRequest measuredRequest, lastRequest;
+    std::shared_ptr<const MeasuredSpectrogram> measuredAnalysis;
+    bool hasMeasured = false;
+    double lastMeasureMilliseconds = 0.0;
+    int pictureWidth = 0, pictureHeight = 0;   // image pixels, as last painted
+
+    Shown shown = Shown::fast;
+    bool fading = false;
+    bool fadeFromFast = true;
+    juce::Image fadeFromImage;
+    double fadeStart = 0.0, fadeSeconds = fadeToMeasuredSeconds;
+    juce::String shownStatus;
     int lengthIndex = params::defaultLengthIndex;
     juce::AudioPlayHead::TimeSignature timeSignature;  // the host's, for the bar and beat grid
     int firstBar = 0;   // the song's bar the drawing plays at (a single Transport pass), else 0
@@ -1300,6 +1619,41 @@ void CanvasView::timerCallback()
 {
     impl->updatePlayhead();
     impl->pollParameters();
+    impl->updateMeasured();
+}
+
+CanvasView::PreviewStatus CanvasView::getPreviewStatus() const
+{
+    const auto& d = *impl;
+    PreviewStatus status;
+    status.measuredShown = d.shown == Impl::Shown::measured && d.measuredImage.isValid();
+    status.current = d.measurementIsCurrent();
+    status.fading = d.fading;
+    status.text = d.shownStatus.isNotEmpty() ? d.shownStatus : d.statusText();
+    return status;
+}
+
+void CanvasView::settleMeasuredPreview (float pixelScale)
+{
+    auto& d = *impl;
+    d.pollParameters();
+    d.processorChanged();
+
+    const auto a = getDrawingArea();
+    d.pictureWidth = juce::jmax (1, juce::roundToInt (a.getWidth() * pixelScale));
+    d.pictureHeight = juce::jmax (1, juce::roundToInt (a.getHeight() * pixelScale));
+    d.lastRequest = d.makeRequest (d.pictureWidth, d.pictureHeight);
+
+    if (auto result = MeasuredPreview::renderNow (d.lastRequest))
+    {
+        d.installMeasurement (std::move (result), false);
+        d.shown = Impl::Shown::measured;
+        d.fading = false;
+        d.fadeFromImage = {};
+    }
+
+    d.shownStatus = d.statusText();
+    repaint();
 }
 
 } // namespace artfreq::ui

@@ -50,17 +50,18 @@ ARTFREQ_TEST (analyzerFullScaleSineReadsZeroDb)
     analyzer.prepare (sampleRate);
     CHECK_NEAR (analyzer.getSampleRate(), sampleRate, 0.0);
 
-    // 1 kHz falls a third of the way between two bins: the strongest bin reads within the
-    // window's scalloping of 0 dB.
+    // 1 kHz falls between two bins: the strongest bin reads within the window's scalloping
+    // (Hann: up to 1.4 dB) of 0 dB.
     int columns = 0;
     auto column = analyse (analyzer, sine (1000.0, 1.0, 16384), columns);
-    CHECK (columns == 16384 / LiveAnalyzer::hopSize);
-    CHECK (column.size() == static_cast<size_t> (LiveAnalyzer::numBins));
+    CHECK (analyzer.getFftSize() == LiveAnalyzer::defaultFftSize);
+    CHECK (columns == 16384 / analyzer.getHopSize());
+    CHECK (column.size() == static_cast<size_t> (analyzer.getNumBins()));
 
-    const auto binHz = sampleRate / LiveAnalyzer::fftSize;
+    const auto binHz = sampleRate / analyzer.getFftSize();
     const auto strongest = static_cast<size_t> (std::max_element (column.begin(), column.end()) - column.begin());
     CHECK_NEAR (static_cast<double> (strongest) * binHz, 1000.0, binHz);
-    CHECK_NEAR (column[strongest], 0.0, 0.5);
+    CHECK_NEAR (column[strongest], 0.0, 1.5);
     std::printf ("    1 kHz full-scale sine: strongest bin %.2f dBFS (bin %d)\n", static_cast<double> (column[strongest]),
                  static_cast<int> (strongest));
 
@@ -74,8 +75,17 @@ ARTFREQ_TEST (analyzerFullScaleSineReadsZeroDb)
     column = analyse (centred, sine (100.0 * binHz, 0.5, 16384), columns);
     CHECK_NEAR (column[100], -6.02, 0.02);
 
-    // Blackman-Harris sidelobes: far from the tone the spectrum is deep down.
+    // Hann, as analysers use: far from the tone the spectrum is deep down.
     CHECK_LESS (column[300], -90.0f);
+
+    // The FFT size follows the analyser's (Settings): a column per sixteenth of the window.
+    LiveAnalyzer resized;
+    resized.prepare (sampleRate);
+    resized.setFftSize (16384);
+    column = analyse (resized, sine (1000.0, 1.0, 32768), columns);
+    CHECK (resized.getFftSize() == 16384);
+    CHECK (column.size() == 8193u);
+    CHECK (columns == 32768 / 1024);
 }
 
 ARTFREQ_TEST (analyzerSilenceReadsTheFloor)
@@ -86,8 +96,8 @@ ARTFREQ_TEST (analyzerSilenceReadsTheFloor)
     int columns = 0;
     const auto column = analyse (analyzer, std::vector<float> (8192, 0.0f), columns);
     CHECK (columns == 16);
-    CHECK (*std::max_element (column.begin(), column.end()) <= -140.0f);
-    CHECK (*std::min_element (column.begin(), column.end()) >= -140.0f);
+    CHECK (*std::max_element (column.begin(), column.end()) <= artfreq::SpectrumAnalyser::floorDb);
+    CHECK (*std::min_element (column.begin(), column.end()) >= artfreq::SpectrumAnalyser::floorDb);
 }
 
 ARTFREQ_TEST (analyzerDropsWhatDoesNotFit)
@@ -104,11 +114,11 @@ ARTFREQ_TEST (analyzerDropsWhatDoesNotFit)
         analyzer.push (loud.data(), static_cast<int> (loud.size()));
 
     const auto columns = analyzer.process ({});
-    CHECK (columns <= LiveAnalyzer::fifoSize / LiveAnalyzer::hopSize);
-    CHECK (columns >= (LiveAnalyzer::fifoSize - 4096) / LiveAnalyzer::hopSize);
+    CHECK (columns <= LiveAnalyzer::fifoSize / analyzer.getHopSize());
+    CHECK (columns >= (LiveAnalyzer::fifoSize - 4096) / analyzer.getHopSize());
 
     // And it carries on afterwards.
     analyzer.push (loud.data(), static_cast<int> (loud.size()));
-    CHECK (analyzer.process ({}) == 4096 / LiveAnalyzer::hopSize);
+    CHECK (analyzer.process ({}) == 4096 / analyzer.getHopSize());
     CHECK (analyzer.process ({}) == 0);
 }

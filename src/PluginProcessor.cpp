@@ -133,13 +133,17 @@ ArtFreqProcessor::ArtFreqProcessor (Variant variantToUse)
     rangeLowParam    = parameters.getRawParameterValue (params::id::rangeLow);
     rangeHighParam   = parameters.getRawParameterValue (params::id::rangeHigh);
     slopeParam       = parameters.getRawParameterValue (params::id::slope);
+    analyserFftParam     = parameters.getRawParameterValue (params::id::analyserFft);
+    analyserFloorParam   = parameters.getRawParameterValue (params::id::analyserFloor);
+    analyserCeilingParam = parameters.getRawParameterValue (params::id::analyserCeiling);
 
     jassert (levelParam != nullptr && lengthParam != nullptr && triggerParam != nullptr
              && repeatParam != nullptr && startAtParam != nullptr && startBarParam != nullptr
              && tempoSourceParam != nullptr
              && bpmParam != nullptr && densityParam != nullptr && contrastParam != nullptr
              && lowEndParam != nullptr && scaleParam != nullptr && rangeLowParam != nullptr
-             && rangeHighParam != nullptr && slopeParam != nullptr);
+             && rangeHighParam != nullptr && slopeParam != nullptr && analyserFftParam != nullptr
+             && analyserFloorParam != nullptr && analyserCeilingParam != nullptr);
 
     if (isEffect())
     {
@@ -622,13 +626,7 @@ void ArtFreqProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
     }
 
     const auto mode = getEffectMode();
-    const auto carving = ! bypassed && carvesAudio (mode);
-
-    CarveSettings carve;
-    carve.mode = mode == EffectMode::stencil ? CarveMode::stencil : CarveMode::carve;
-    carve.depthDb = carving ? juce::jlimit (params::minDepthDb, 0.0f, depthParam->load()) : 0.0f;
-    carve.haloBins = mode == EffectMode::carveDraw ? carveDrawHaloBins : 1;
-    carve.holdLoudest = mode == EffectMode::carveDraw;
+    const auto carve = carveSettingsFor (mode, depthParam->load(), ! bypassed);
 
     // Carve + Draw carves its hole a little larger than the drawing: the halo masks.
     if (currentMasks != nullptr)
@@ -912,6 +910,25 @@ FrequencyScale ArtFreqProcessor::getScale() const
     return scale.sanitised();
 }
 
+AnalyserView ArtFreqProcessor::getAnalyserView() const noexcept
+{
+    AnalyserView view;
+    view.fftSize = params::analyserFftSizeForIndex (juce::roundToInt (analyserFftParam->load()));
+    view.floorDb = analyserFloorParam->load();
+    view.ceilingDb = analyserCeilingParam->load();
+    return view.sanitised();
+}
+
+CarveSettings ArtFreqProcessor::carveSettingsFor (EffectMode mode, float depthDb, bool carving) noexcept
+{
+    CarveSettings carve;
+    carve.mode = mode == EffectMode::stencil ? CarveMode::stencil : CarveMode::carve;
+    carve.depthDb = carving && carvesAudio (mode) ? juce::jlimit (params::minDepthDb, 0.0f, depthDb) : 0.0f;
+    carve.haloBins = mode == EffectMode::carveDraw ? carveDrawHaloBins : 1;
+    carve.holdLoudest = mode == EffectMode::carveDraw;
+    return carve;
+}
+
 PlanSettings ArtFreqProcessor::getPlanSettings() const
 {
     PlanSettings settings;
@@ -988,6 +1005,7 @@ void ArtFreqProcessor::timerCallback()
 
 void ArtFreqProcessor::documentChanged()
 {
+    ++documentRevision;
     documentDirty = true;
     savedDocumentStale = true;
     lastEditTime = juce::Time::getMillisecondCounter();
@@ -1314,6 +1332,7 @@ void ArtFreqProcessor::applyDocumentState (const juce::ValueTree& documentTree)
     history.clear();
     lastCoalesceKey.clear();
 
+    ++documentRevision;
     documentDirty = true;
     rebuildPlanIfNeeded();
 

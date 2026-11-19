@@ -20,6 +20,7 @@
 #include "dsp/LiveAnalyzer.h"
 #include "dsp/PlanExchange.h"
 #include "dsp/PlayheadTracker.h"
+#include "dsp/SpectrumAnalysis.h"
 #include "dsp/TunedCarver.h"
 #include "license/LicenseManager.h"
 
@@ -96,6 +97,10 @@ public:
     FrequencyScale getScale() const;
     PlanSettings getPlanSettings() const;
 
+    /** How the user's analyser draws (Settings): its FFT size and the levels its colours span.
+        Not heard: the canvas and the live view draw the sound with it. */
+    AnalyserView getAnalyserView() const noexcept;
+
     // ---- the drawing (message thread only) -----------------------------------------------
     // Every change to the document goes through editDocument, so undo, the plan and the
     // editor stay in step. The processor sends a change message (ChangeBroadcaster) after
@@ -103,6 +108,10 @@ public:
     // (not loads) also tell the host the project has unsaved changes.
 
     const ArtDocument& getDocument() const noexcept { return document; }
+
+    /** Counts the changes to the document (edits, undo, redo, loads): equal numbers, the same
+        drawing. Message thread. */
+    uint64_t getDocumentRevision() const noexcept { return documentRevision; }
 
     /** Applies `edit` to the document. An undo step is recorded first unless `coalesceKey` is
         non-empty and equal to the key of the previous edit (so a whole brush stroke, or typing
@@ -201,6 +210,10 @@ public:
     /** ... and it carves this many FFT bins wider still (Carve itself widens by one). */
     static constexpr int carveDrawHaloBins = 3;
 
+    /** How the carver carves in a mode at a depth (`carving` false: it changes nothing, as in
+        Draw and in bypass): what the audio thread uses, and the canvas's measured preview. */
+    static CarveSettings carveSettingsFor (EffectMode mode, float depthDb, bool carving) noexcept;
+
     /** The output level as a linear gain (for the WAV export). */
     float getOutputGain() const noexcept;
 
@@ -248,6 +261,7 @@ private:
     Canvas canvas;
     PlanSettings lastBuiltSettings;
     bool documentDirty = true;
+    uint64_t documentRevision = 0;
     std::atomic<bool> parametersDirty { true };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };  // 0 = default size
     int builtHaloColumns = -1;   // the effect's masks were built with this halo (-1: none yet)
@@ -320,6 +334,9 @@ private:
     std::atomic<float>* rangeLowParam = nullptr;
     std::atomic<float>* rangeHighParam = nullptr;
     std::atomic<float>* slopeParam = nullptr;
+    std::atomic<float>* analyserFftParam = nullptr;
+    std::atomic<float>* analyserFloorParam = nullptr;
+    std::atomic<float>* analyserCeilingParam = nullptr;
     std::atomic<float>* modeParam = nullptr;       // the effect only
     std::atomic<float>* depthParam = nullptr;      // the effect only
 

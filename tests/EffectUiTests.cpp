@@ -836,8 +836,10 @@ ARTFREQ_TEST (uiEffectCanvasFollowsLevel)
 
 ARTFREQ_TEST (uiEffectCanvasShowsEachMode)
 {
-    // A band drawn in the middle of the canvas (columns 300 to 700), its sines' picture at full
-    // brightness there.
+    // A band drawn in the middle of the canvas (columns 300 to 700), its sines' picture at a
+    // full-scale sine's level there (0 dBFS before Level). The colours are levels over the
+    // analyser's range (-100 to 0 dBFS by default), as the measured preview and the live view
+    // show them; the stand-in song sits around -40 dBFS a cell at FFT 8192.
     Canvas canvas;
 
     for (int y = 400; y < 600; ++y)
@@ -849,65 +851,93 @@ ARTFREQ_TEST (uiEffectCanvasShowsEachMode)
     masks->halo = widenMaskPlan (*masks->exact, 4, 8);
 
     constexpr int width = 200, height = 100;
-    std::vector<uint8_t> sines (static_cast<size_t> (width * height), 0);
+    std::vector<float> sines (static_cast<size_t> (width * height), -200.0f);
 
     for (int y = 40; y < 59; ++y)
         for (int x = 59; x < 137; ++x)
-            sines[static_cast<size_t> (y * width + x)] = 255;
+            sines[static_cast<size_t> (y * width + x)] = 0.0f;
 
     ui::EffectPreviewImage preview;
     const auto inside = juce::Point<int> (100, 50), outside = juce::Point<int> (100, 15);
     const std::shared_ptr<const MaskPlanSet> shared = masks;
+    const FrequencyScale scale;
+    const auto settingsFor = [] (EffectMode mode, float depthDb)
+    {
+        ui::EffectPreviewImage::Settings settings;
+        settings.mode = mode;
+        settings.depthDb = depthDb;
+        return settings;
+    };
+    const auto picture = [&] (EffectMode mode, float depthDb, float levelDb, uint64_t key = 1)
+    {
+        return preview.get (sines, levelDb, key, settingsFor (mode, depthDb), shared, scale, width, height);
+    };
 
-    // Carve at -80 dB: the drawing is black, the song around it is not (also just before it).
-    const auto justBefore = juce::Point<int> (57, 50);   // column 294: 6 before the band
-    auto image = preview.get (sines, 1, EffectMode::carve, -80.0f, 0.0f, shared, width, height);
+    // Carve at -80 dB: the drawing is black, the song around it is not (also just before it,
+    // where the carver's and the analyser's windows blur the edge only a little).
+    const auto justBefore = juce::Point<int> (55, 50);   // a few pixels before the band
+    auto image = picture (EffectMode::carve, -80.0f, 0.0f);
     CHECK (levelOf (image, inside.x, inside.y) == 0);
-    CHECK_GREATER (levelOf (image, outside.x, outside.y), 40);
-    CHECK_GREATER (levelOf (image, justBefore.x, justBefore.y), 20);
+    CHECK_GREATER (levelOf (image, outside.x, outside.y), 120);
+    CHECK_GREATER (levelOf (image, justBefore.x, justBefore.y), 100);
 
     // At -24 dB it is darker than the song but not black.
     const auto song = levelOf (image, outside.x, outside.y);
-    image = preview.get (sines, 1, EffectMode::carve, -24.0f, 0.0f, shared, width, height);
-    CHECK_GREATER (levelOf (image, inside.x, inside.y), 0);
+    image = picture (EffectMode::carve, -24.0f, 0.0f);
+    CHECK_GREATER (levelOf (image, inside.x, inside.y), 40);
+    CHECK_LESS (levelOf (image, inside.x, inside.y), song - 40);
 
     // Stencil: the other way round.
-    image = preview.get (sines, 1, EffectMode::stencil, -80.0f, 0.0f, shared, width, height);
-    CHECK_GREATER (levelOf (image, inside.x, inside.y), 40);
+    image = picture (EffectMode::stencil, -80.0f, 0.0f);
+    CHECK_GREATER (levelOf (image, inside.x, inside.y), 120);
     CHECK (levelOf (image, outside.x, outside.y) == 0);
 
-    // Carve + Draw: the sines bright in the band, a dark edge just outside it (the halo).
-    image = preview.get (sines, 1, EffectMode::carveDraw, -80.0f, 0.0f, shared, width, height);
+    // Carve + Draw: the sines bright in the band, a darker edge just before it (the halo: 60 ms,
+    // a pixel and a half here, so the windows blur it to about 10 dB), the song as it is further
+    // out.
+    image = picture (EffectMode::carveDraw, -80.0f, 0.0f);
     CHECK (levelOf (image, inside.x, inside.y) == 255);
-    CHECK (levelOf (image, justBefore.x, justBefore.y) == 0);
+    CHECK_LESS (levelOf (image, 58, 50), levelOf (image, 52, 50) - 15);
     CHECK (levelOf (image, outside.x, outside.y) == song);
 
     // Draw: the sines over the song, nothing carved.
-    image = preview.get (sines, 1, EffectMode::draw, -80.0f, 0.0f, shared, width, height);
+    image = picture (EffectMode::draw, -80.0f, 0.0f);
     CHECK (levelOf (image, inside.x, inside.y) == 255);
     CHECK (levelOf (image, outside.x, outside.y) == song);
 
-    // The sines at their level against the song (sinesDb: the plan's loudest with Level), their
-    // power added to the song's: 30 dB down they are half way down the colours (up to 3 dB
-    // brighter where the song is as loud); 60 dB down they are gone, and Carve + Draw shows its
-    // hole alone.
-    const auto songInside = levelOf (preview.get (sines, 1, EffectMode::draw, -80.0f, -200.0f, shared, width, height), inside.x, inside.y);
-    image = preview.get (sines, 1, EffectMode::draw, -80.0f, -30.0f, shared, width, height);
-    CHECK (levelOf (image, inside.x, inside.y) >= std::max (songInside, 128));
-    CHECK (levelOf (image, inside.x, inside.y) <= std::max (songInside, 128) + 13);
-    image = preview.get (sines, 1, EffectMode::draw, -80.0f, -60.0f, shared, width, height);
-    CHECK (levelOf (image, inside.x, inside.y) == songInside);
-    image = preview.get (sines, 1, EffectMode::carveDraw, -80.0f, -60.0f, shared, width, height);
+    // The sines at their level (Level included) against the song, their power added to the
+    // song's: at -30 dBFS they show as -30 dBFS (a little brighter where the song is as loud);
+    // at -60 they are lost in the song, and Carve + Draw shows its hole alone.
+    const auto songInside = levelOf (picture (EffectMode::draw, -80.0f, -200.0f, 2), inside.x, inside.y);
+    image = picture (EffectMode::draw, -80.0f, -30.0f, 3);
+    CHECK (levelOf (image, inside.x, inside.y) >= colourLevelFor (-30.0f, -100.0f, 0.0f));
+    CHECK (levelOf (image, inside.x, inside.y) <= colourLevelFor (-27.0f, -100.0f, 0.0f));
+    image = picture (EffectMode::draw, -80.0f, -60.0f, 4);
+    CHECK_NEAR (levelOf (image, inside.x, inside.y), songInside, 1);
+    image = picture (EffectMode::carveDraw, -80.0f, -200.0f, 5);
     CHECK (levelOf (image, inside.x, inside.y) == 0);
-    CHECK_LESS (std::abs (ui::EffectPreviewImage::sinesDbFor (0.1f, 0.5f) - (-26.02f + ui::EffectPreviewImage::sinesCalibrationDb)), 0.01f);
 
     // Nothing drawn: every mode shows the song as it is (Stencil does not black it out).
     auto empty = std::make_shared<MaskPlanSet>();
     empty->exact = buildMaskPlan (Canvas(), MaskSettings());
     empty->halo = widenMaskPlan (*empty->exact, 4, 8);
-    image = preview.get (std::vector<uint8_t> (static_cast<size_t> (width * height), 0), 2, EffectMode::stencil, -80.0f, 0.0f, empty, width, height);
+    image = preview.get (std::vector<float> (static_cast<size_t> (width * height), -200.0f), 0.0f, 6,
+                         settingsFor (EffectMode::stencil, -80.0f), empty, scale, width, height);
     CHECK (levelOf (image, outside.x, outside.y) == song);
-    CHECK_GREATER (levelOf (image, inside.x, inside.y), 20);
+    CHECK_GREATER (levelOf (image, inside.x, inside.y), 100);
+
+    // Once the measured preview has analysed the stand-in, the fast preview draws that instead
+    // of the level it was made with (here, a flat -50 dBFS).
+    auto measured = std::make_shared<ui::MeasuredSpectrogram>();
+    measured->frames = 4;
+    measured->rows = 10;
+    measured->output.assign (40, -16000);
+    measured->input.assign (40, -5000);
+    preview.setMeasuredSong (measured);
+    image = preview.get (std::vector<float> (static_cast<size_t> (width * height), -200.0f), 0.0f, 6,
+                         settingsFor (EffectMode::stencil, -80.0f), empty, scale, width, height);
+    CHECK (levelOf (image, outside.x, outside.y) == colourLevelFor (-50.0f, -100.0f, 0.0f));
+    preview.setMeasuredSong (nullptr);
 
     // The stand-in song is louder in the lows than in the highs, and never above the top.
     CHECK_GREATER (ui::EffectPreviewImage::songDb (0.3, 0.1), ui::EffectPreviewImage::songDb (0.3, 0.9));

@@ -708,9 +708,10 @@ ARTFREQ_TEST (engineCombFadesInAboveTheLowestLine)
 
 ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
 {
-    // A block over 60 - 900 Hz and another over 3 - 4 kHz, all at full value. The canvas shows
-    // the comb's band filled at every height (Stripes: scan lines with dark gaps, as before), and
-    // as bright as the lines above it, as an analyser of 8192 points would.
+    // A block over 60 - 900 Hz and another over 3 - 4 kHz, all at full value. The canvas's fast
+    // preview draws what an analyser of 8192 points shows: the comb's band filled at every
+    // height, Stripes as lines with darker gaps between them, and the comb as bright as the lines
+    // above it.
     Canvas canvas = bandCanvas (60.0, 900.0);
     const auto highs = bandCanvas (3000.0, 4000.0);
 
@@ -720,41 +721,74 @@ ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
     const FrequencyScale scale;
     constexpr int width = 200, height = 500;
     const auto& table = ui::theme::spectrumTable();
+    ui::AnalyserModel model;
+    model.scale = scale;
 
     const auto picture = [&] (LowEnd lowEnd)
     {
         std::shared_ptr<ArtPlan> plan (buildPlan (canvas, combSettings (lowEnd)).release());
         plan->version = lowEnd == smooth ? 1 : 2;
         ui::CanvasPlanImage image;
-        return image.get (plan, scale, width, height, 1.0f);
+        return image.get (plan, model, width, height);
+    };
+
+    // The colour-map level of a pixel (0..255).
+    const auto levelAt = [&] (const juce::Image& image, int x, int y)
+    {
+        const auto pixel = image.getPixelAt (x, y);
+        auto best = 0, bestDistance = 1 << 30;
+
+        for (int i = 0; i < 256; ++i)
+        {
+            const auto c = juce::Colour (table[static_cast<size_t> (i)].getUnpremultiplied());
+            const auto dr = c.getRed() - pixel.getRed(), dg = c.getGreen() - pixel.getGreen(), db = c.getBlue() - pixel.getBlue();
+
+            if (dr * dr + dg * dg + db * db < bestDistance)
+            {
+                bestDistance = dr * dr + dg * dg + db * db;
+                best = i;
+            }
+        }
+
+        return best;
     };
 
     const auto rowOf = [&] (double hz) { return static_cast<int> ((1.0 - scale.toNorm (hz)) * height); };
-    const auto darkRows = [&] (const juce::Image& image, double lowHz, double highHz)
+
+    // Rows more than 12 dB (31 levels) darker than the brightest row in a range of heights.
+    const auto gapRows = [&] (const juce::Image& image, double lowHz, double highHz)
     {
-        int dark = 0;
+        auto brightest = 0;
 
         for (int y = rowOf (highHz); y <= rowOf (lowHz); ++y)
-            dark += image.getPixelAt (width / 2, y).getBrightness() < 0.2f ? 1 : 0;
+            brightest = std::max (brightest, levelAt (image, width / 2, y));
 
-        return dark;
+        int gaps = 0;
+
+        for (int y = rowOf (highHz); y <= rowOf (lowHz); ++y)
+            gaps += levelAt (image, width / 2, y) < brightest - 31 ? 1 : 0;
+
+        return gaps;
     };
 
     const auto smoothImage = picture (smooth);
     const auto stripesImage = picture (stripes);
-    const auto rows = rowOf (70.0) - rowOf (800.0) + 1;
-    std::printf ("    dark rows in 70 - 800 Hz (of %d): smooth %d, stripes %d\n", rows, darkRows (smoothImage, 70.0, 800.0),
-                 darkRows (stripesImage, 70.0, 800.0));
-    CHECK (darkRows (smoothImage, 70.0, 800.0) == 0);
-    CHECK_GREATER (darkRows (stripesImage, 70.0, 800.0), rows / 3);
+    const auto rows = rowOf (200.0) - rowOf (800.0) + 1;
+    std::printf ("    rows 12 dB darker in 200 - 800 Hz (of %d): smooth %d, stripes %d\n", rows, gapRows (smoothImage, 200.0, 800.0),
+                 gapRows (stripesImage, 200.0, 800.0));
+    CHECK (gapRows (smoothImage, 70.0, 800.0) == 0);
+    CHECK_GREATER (gapRows (stripesImage, 200.0, 800.0), rows / 4);
 
-    // Inside the comb's band and on the lines at 3 - 4 kHz: the loudest colour of the map.
-    const auto loudest = juce::Colour (table[255]);
-    CHECK (smoothImage.getPixelAt (width / 2, rowOf (200.0)) == loudest);
-    CHECK (smoothImage.getPixelAt (width / 2, rowOf (3500.0)) == loudest);
+    // Inside the comb's band and on the lines at 3 - 4 kHz: as bright as each other (within
+    // 3 dB), and the level an analyser reads, far above the floor.
+    const auto combLevel = levelAt (smoothImage, width / 2, rowOf (200.0));
+    const auto lineLevel = levelAt (smoothImage, width / 2, rowOf (3500.0));
+    CHECK_NEAR (combLevel, lineLevel, 8);
+    CHECK_GREATER (combLevel, 128);
 
     // Thin strokes are played by the replaced lows' own lines, so the canvas draws them as
-    // Stripes does: the very same picture, a line where each one plays (at the lowest line too).
+    // Stripes does: the very same picture, a line where each one plays (at the lowest line too),
+    // blurred by the analyser's window: dark again a few bins away.
     for (const auto hz : { 21.0, 100.0, 400.0 })
     {
         const auto thin = rowCanvas (hz);
@@ -763,7 +797,7 @@ ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
             std::shared_ptr<ArtPlan> plan (buildPlan (thin, combSettings (lowEnd)).release());
             plan->version = lowEnd == smooth ? 3 : 4;
             ui::CanvasPlanImage image;
-            return image.get (plan, scale, width, height, 1.0f);
+            return image.get (plan, model, width, height);
         };
 
         const auto smoothThin = thinPicture (smooth);
@@ -780,6 +814,6 @@ ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
 
         CHECK (same);
         CHECK_GREATER (lit, 0);
-        CHECK (smoothThin.getPixelAt (width / 2, rowOf (hz * 1.5)).getBrightness() < 0.2f);
+        CHECK (levelAt (smoothThin, width / 2, rowOf (hz * 1.5 + 30.0)) == 0);
     }
 }

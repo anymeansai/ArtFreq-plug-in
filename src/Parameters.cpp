@@ -63,6 +63,12 @@ juce::StringArray scaleNames()       { return { "Log", "Linear", "Mel" }; }
 juce::StringArray slopeNames()       { return { "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct" }; }
 juce::StringArray lowEndNames()      { return { "Smooth", "Stripes" }; }
 juce::StringArray modeNames()        { return { "Carve", "Carve + Draw", "Stencil", "Draw" }; }
+juce::StringArray analyserFftNames() { return { "4096", "8192", "16384" }; }
+
+int analyserFftSizeForIndex (int index) noexcept
+{
+    return 4096 << juce::jlimit (0, 2, index);
+}
 
 double lengthInQuarterNotes (int lengthIndex, double quarterNotesPerBar) noexcept
 {
@@ -240,6 +246,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect
     layout.add (std::make_unique<Choice> (
         juce::ParameterID { id::slope, 1 }, "Analyser slope", slopeNames(), 0,
         ChoiceAttributes().withAutomatable (false)));
+
+    // ---- analyser view: the FFT size and level range of the user's spectrogram, so the canvas
+    // shows the sound as that analyser will (its blur in the lows, its colours). They change
+    // nothing in the sound. Version hint 6: they came with the measured preview. -------------
+    layout.add (std::make_unique<Choice> (
+        juce::ParameterID { id::analyserFft, 6 }, "Analyser FFT", analyserFftNames(), defaultAnalyserFftIndex,
+        ChoiceAttributes().withAutomatable (false)));
+
+    layout.add (std::make_unique<Float> (
+        juce::ParameterID { id::analyserFloor, 6 }, "Analyser floor",
+        juce::NormalisableRange<float> (-140.0f, -40.0f, 1.0f), defaultAnalyserFloorDb,
+        FloatAttributes()
+            .withAutomatable (false)
+            .withLabel ("dB")
+            .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
+            // Levels below full scale: "100" typed in means -100 dB.
+            .withValueFromStringFunction ([] (const juce::String& t) { return -std::abs (parseNumber (t)); })));
+
+    layout.add (std::make_unique<Float> (
+        juce::ParameterID { id::analyserCeiling, 6 }, "Analyser top",
+        juce::NormalisableRange<float> (-60.0f, 12.0f, 1.0f), defaultAnalyserCeilingDb,
+        FloatAttributes()
+            .withAutomatable (false)
+            .withLabel ("dB")
+            .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
+            .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
 
     // ---- ArtFreq FX: what happens to the audio coming in. Both act on the audio thread at once
     // (the masks for every mode are built together, and Depth is read per frame), so unlike the

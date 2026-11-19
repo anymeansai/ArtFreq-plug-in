@@ -55,6 +55,12 @@ namespace id
     inline constexpr const char* rangeHigh   = "rangeHigh";    // Hz, 2000..24000, default 20000
     inline constexpr const char* slope       = "slope";        // choice: 0, 3, 4.5, 6 dB/oct
 
+    // Analyser view (not automatable, and not heard): how the user's spectrogram draws, so the
+    // canvas can show the sound as it will: its FFT size and the levels its colours span
+    inline constexpr const char* analyserFft     = "analyserFft";      // choice: 4096, 8192, 16384 (default 8192)
+    inline constexpr const char* analyserFloor   = "analyserFloor";    // dBFS, -140..-40, default -100: the darkest colour
+    inline constexpr const char* analyserCeiling = "analyserCeiling";  // dBFS, -60..+12, default 0: the brightest colour
+
     // ArtFreq FX only: what happens to the audio coming in
     inline constexpr const char* mode        = "mode";         // choice: Carve, Carve + Draw, Stencil, Draw
     inline constexpr const char* depth       = "depth";        // dB, -120..0, default -80: how far carved frequencies drop
@@ -72,8 +78,22 @@ juce::StringArray scaleNames();        // "Log", "Linear", "Mel"
 juce::StringArray slopeNames();        // "0 dB/oct", "3 dB/oct", "4.5 dB/oct", "6 dB/oct"
 juce::StringArray lowEndNames();       // "Smooth", "Stripes"
 juce::StringArray modeNames();         // "Carve", "Carve + Draw", "Stencil", "Draw"
+juce::StringArray analyserFftNames();  // "4096", "8192", "16384"
 
 constexpr int defaultLengthIndex = 4;  // "4 bars"
+
+/** The analyser view. FFT 8192: the size the Smooth lows are tuned for, and a usual choice in
+    MiniMeters and other spectrograms. Levels: a full-scale sine reads 0 dBFS in an analyser's
+    cell, and -100 dBFS is about where a spectrogram's noise floor turns black; the audit
+    (docs/ACCURACY.md) measured with this range. MiniMeters' own defaults could not be looked up:
+    the help says to set the range to whatever the user's analyser uses. */
+constexpr int defaultAnalyserFftIndex = 1;
+constexpr float defaultAnalyserFloorDb = -100.0f;
+constexpr float defaultAnalyserCeilingDb = 0.0f;
+constexpr float minAnalyserSpanDb = 20.0f;   // the colours span at least this many dB
+
+/** The FFT size for an analyserFft choice. */
+int analyserFftSizeForIndex (int index) noexcept;
 
 /** Depth: deep enough by default that carved shapes look black on an analyser even over a
     master's bass and kick (about -15 dB there, against a floor near -95 dB). */

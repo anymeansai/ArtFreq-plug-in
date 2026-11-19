@@ -3,6 +3,7 @@
 #include "Parameters.h"
 #include "Theme.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -212,7 +213,7 @@ void drawTimeGrid (juce::Graphics& g, juce::Rectangle<float> area, const std::ve
 }
 
 void drawTimeLabels (juce::Graphics& g, juce::Rectangle<float> axis, juce::Rectangle<float> area,
-                     const std::vector<TimeMark>& marks)
+                     const std::vector<TimeMark>& marks, float labelsEnd)
 {
     g.setFont (labelFont());
 
@@ -228,7 +229,7 @@ void drawTimeLabels (juce::Graphics& g, juce::Rectangle<float> axis, juce::Recta
 
         const auto box = juce::Rectangle<float> (x + 4.0f, axis.getY() + 2.0f, 48.0f, axis.getHeight() - 4.0f);
 
-        if (box.getX() + juce::GlyphArrangement::getStringWidth (labelFont(), mark.label) > area.getRight())
+        if (box.getX() + juce::GlyphArrangement::getStringWidth (labelFont(), mark.label) > std::min (area.getRight(), labelsEnd))
             continue;
 
         g.setColour (mark.major ? labelColour() : theme::textFaint);
