@@ -1,18 +1,20 @@
 # Demo clips
 
 Short clips of ArtFreq and ArtFreq FX at work, for anymeansaudio.com. Each clip is the plug-in's
-own window, filmed while the plug-in plays. Nothing in a clip is mocked up, edited or composited.
-The spectrogram in the Live part is ArtFreq's live view analysing the plug-in's real output, and
-the sound in the MP4 is that same output. `tools/DemoReel.cpp` made all of them in one run (see
+own window, filmed while the plug-in plays. Nothing in a clip is mocked up or composited. The
+spectrogram in the Live part is ArtFreq's live view analysing the plug-in's real output, and the
+sound in the MP4 is that same output. The only edits: the sound fades out over the MP4's last
+0.25 s (ArtFreq FX's song is still playing when the clip ends, and a hard cut clicks), and each GIF
+holds its last frame for 1.5 s before it loops, so the finished picture can be seen. `tools/DemoReel.cpp` made all of them in one run (see
 "Making them again" below).
 
 | File | What it is | Size |
 | --- | --- | --- |
 | `artfreq-demo.mp4` | ArtFreq, 5.5 s with sound: 1280 x 822, 30 fps, 165 frames, H.264 (High, yuv420p, BT.709), AAC 48 kHz stereo, moov first ("faststart", so it starts playing while it loads) | 539 KB |
-| `artfreq-demo.gif` | The same clip, silent, looping: 800 x 514, 15 fps (every other frame), 83 frames, 128 colours | 1.5 MB |
+| `artfreq-demo.gif` | The same clip, silent, looping: 800 x 514, 15 fps (every other frame), 83 frames, 128 colours; the last frame held 1.5 s (7.0 s a loop) | 1.5 MB |
 | `artfreq-demo-poster.png` | Its last frame (the whole drawing in the live view), 1280 x 822, for the video's `poster` | 483 KB |
 | `artfreq-fx-demo.mp4` | ArtFreq FX in Carve, 5.8 s with sound: 1280 x 782, 30 fps, 174 frames, as above | 1.2 MB |
-| `artfreq-fx-demo.gif` | The same, silent, looping: 800 x 489, 15 fps, 87 frames, 128 colours | 4.7 MB |
+| `artfreq-fx-demo.gif` | The same, silent, looping: 800 x 489, 15 fps, 87 frames, 128 colours; the last frame held 1.5 s (7.2 s a loop) | 4.7 MB |
 | `artfreq-fx-demo-poster.png` | Its last frame, 1280 x 782 | 1.2 MB |
 | `artfreq-fx-carve-draw-demo.mp4` | ArtFreq FX in Carve + Draw, 5.8 s with sound, as above | 1.1 MB |
 | `artfreq-fx-carve-draw-demo.gif` | The same, silent, looping, as above | 4.0 MB |
@@ -20,7 +22,17 @@ the sound in the MP4 is that same output. `tools/DemoReel.cpp` made all of them 
 
 On a web page: `<video src="artfreq-demo.mp4" poster="artfreq-demo-poster.png" autoplay muted loop playsinline>`
 plays the MP4 like the GIF (browsers only autoplay muted video), sharper and at a quarter to a
-third of the GIF's size. The GIFs are for places that take no video.
+third of the GIF's size. The GIFs are for places that take no video. The posters are full-quality
+PNGs (0.5 - 1.2 MB); for a page that should load fast, a JPEG of the same frame is far smaller.
+
+Captions, ready to paste (they say what the viewer sees first, and that it is real):
+
+- ArtFreq: *"First the drawing in ArtFreq, then its Live view analysing what it plays. Real
+  output, recorded from the plug-in."*
+- ArtFreq FX, Carve: *"ArtFreq FX carving a word into a song: first the drawing, then the Live
+  view of the song coming out of the plug-in. Real output, on a test song made for the demo."*
+- ArtFreq FX, Carve + Draw: *"The same in Carve + Draw: the word carved out of the song and played
+  into the hole. Real output, on a test song made for the demo."*
 
 ## What each clip shows
 
@@ -88,13 +100,16 @@ The tool fails if any of these does not hold, and printed, for this run:
   first frame already shows it and never says "Nothing is playing".
 - **The files.** ffprobe: every frame in the MP4 (165, 174, 174), picture and sound each exactly
   the clip's length (5.5 s, 5.8 s, 5.8 s), H.264 yuv420p and AAC 48 kHz, every other frame in the
-  GIF (83, 87, 87), each GIF under 6 MB. Frames from the MP4s and GIFs were also looked at.
+  GIF (83, 87, 87), each GIF under 6 MB and holding its last frame 1.5 s. Frames from the MP4s
+  and GIFs were also looked at, and a spectrogram of the MP4s' own sound, made apart from the tool,
+  matches the live view's last frame.
 
 ## What could mislead
 
 - **The canvas is not a measurement.** The first second of each clip is the canvas, where the
-  drawing is made. ArtFreq's canvas shows what an analyser should show; ArtFreq FX's canvas draws
-  a stand-in song texture under the word (the plug-in cannot know the song while drawing). Only
+  drawing is made. ArtFreq's canvas is a preview of what a perfect analyser would show (a real
+  one blurs the lows, see below and `docs/ACCURACY.md`); ArtFreq FX's canvas draws a stand-in
+  song texture under the word (the plug-in cannot know the song while drawing). Only
   the Live part analyses what really comes out. In ArtFreq FX the stand-in looks smoother and
   more even than the real song that follows it, and in Carve + Draw it shows the letters pink, the
   Live view white-hot.
@@ -117,7 +132,8 @@ The tool fails if any of these does not hold, and printed, for this run:
 - **Made offline.** The clips play at real speed (a second of video is a second of the plug-in's
   output), but they were rendered frame by frame, not captured from a DAW: no DAW window, no mouse
   pointer, and the switches to the Live view happen without a click. On a computer the live view
-  scrolls at 60 Hz; the MP4 shows 30 frames a second and the GIF 15.
+  scrolls at 60 Hz; the MP4 shows 30 frames a second and the GIF 15. The GIF stands still on its
+  last frame for 1.5 s; the plug-in itself keeps scrolling.
 - **Latency.** ArtFreq FX's sound in its clips is its output as it comes out, 85 ms after the
   song went in (a DAW makes up for that with the other tracks).
 - The GIFs have 128 colours with ordered dithering; the MP4s are 4:2:0 (fine coloured detail is

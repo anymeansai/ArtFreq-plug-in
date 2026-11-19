@@ -16,7 +16,8 @@
 //     so every frame takes every column there is, none dropped and none twice, however long a
 //     frame takes to draw. Then the window is drawn (createComponentSnapshot at 2x), and ffmpeg
 //     scales it down (Lanczos) to 1280 px.
-//   - The sound of the clip is the processor's own output for those same blocks.
+//   - The sound of the clip is the processor's own output for those same blocks (in the MP4 it
+//     fades out over the last 0.25 s, so the clip does not end on a click).
 //
 // Each clip opens on the canvas with the DAW stopped (a second), the DAW starts, and the window
 // switches to the live view at the start of the frame in which the output first sounds (switched
@@ -34,7 +35,7 @@
 // durations, the sound.
 //
 // Clips (each: <name>.mp4, H.264 with the sound as AAC, <name>.gif, silent and looping, every
-// other frame, and <name>-poster.png, the last frame):
+// other frame, its last frame held 1.5 s before it loops, and <name>-poster.png, the last frame):
 //
 //   artfreq-demo                 ArtFreq: "ArtFreq" in the high band over a picture made here (a
 //                                striped sun going down behind mountains, 70 Hz - 2.8 kHz)
@@ -96,6 +97,8 @@ constexpr float pixelScale = 2.0f;               // the window is drawn at 2x, t
 constexpr int videoWidth = 1280;
 constexpr int gifWidth = 800;
 constexpr int gifFramesPerSecond = 15;           // every other frame: the GIF's size
+constexpr int gifHoldCentiseconds = 150;         // the GIF's last frame stays 1.5 s before it loops
+constexpr double soundFadeSeconds = 0.25;        // the MP4's sound fades out over its last 0.25 s
 
 static_assert (samplesPerFrame * framesPerSecond == static_cast<int> (sampleRate), "whole samples per frame");
 static_assert (blockSize * blocksPerFrame == samplesPerFrame && blockSize <= maxBlockSize, "blocks fill a frame");
@@ -781,6 +784,10 @@ void checkFiles (const ClipSpec& clip, const juce::String& ffprobe, const juce::
            clip.name + ".mp4: the picture and the sound last the clip");
     check (codecs.startsWith ("h264 yuv420p, aac 48000"), clip.name + ".mp4: H.264 in yuv420p, AAC at 48 kHz");
     check (loopedFrames == gifFrames, clip.name + ".gif has every other frame");
+    const auto gifSeconds = probe (ffprobe, gif, "", "duration").getDoubleValue();
+    const auto gifExpected = (gifFrames - 1) / static_cast<double> (gifFramesPerSecond) + gifHoldCentiseconds / 100.0;
+    std::cout << "  " << gif.getFileName() << ": " << gifSeconds << " s a loop (the last frame held " << gifHoldCentiseconds / 100.0 << " s)" << std::endl;
+    check (std::abs (gifSeconds - gifExpected) < 0.05, clip.name + ".gif holds its last frame before it loops");
     check (gif.getSize() < 6 * 1024 * 1024, clip.name + ".gif is under 6 MB");
 }
 
@@ -1333,19 +1340,25 @@ bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::Fi
     const auto poster = outputDir.getChildFile (clip.name + "-poster.png");
 
     // H.264 (High, yuv420p, BT.709 and tagged so), the sound as AAC, moov first (plays as it loads).
+    // The sound fades out over the clip's last quarter second: the song in ArtFreq FX is still
+    // playing when the clip ends, and a cut at full level clicks (and clicks again on every loop).
+    const auto clipSeconds = totalFrames / static_cast<double> (framesPerSecond);
     check (run (quoted (ffmpeg) + " -hide_banner -loglevel error -y -framerate " + juce::String (framesPerSecond) + " -i " + frames
                 + " -i " + quoted (wav.getFullPathName())
                 + " -map 0:v -map 1:a -c:v libx264 -preset slower -crf 18 -profile:v high -tune animation"
+                + " -af afade=t=out:st=" + juce::String (clipSeconds - soundFadeSeconds, 3) + ":d=" + juce::String (soundFadeSeconds, 3)
                 + " -vf scale=out_color_matrix=bt709:out_range=tv,format=yuv420p"
                 + " -colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv"
                 + " -c:a aac -b:a 192k -ar 48000 -movflags +faststart -shortest " + quoted (mp4.getFullPathName())) == 0,
            "encode " + mp4.getFullPathName());
 
-    // A silent GIF that loops: every other frame, one palette for the whole clip.
+    // A silent GIF that loops: every other frame, one palette for the whole clip, and the last frame
+    // (the whole drawing in view) held for a moment before it starts again.
     check (run (quoted (ffmpeg) + " -hide_banner -loglevel error -y -framerate " + juce::String (framesPerSecond) + " -i " + frames
                 + " -vf \"fps=" + juce::String (gifFramesPerSecond) + ",scale=" + juce::String (gifWidth)
                 + ":-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128:stats_mode=full[p];"
-                + "[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle\" -loop 0 " + quoted (gif.getFullPathName())) == 0,
+                + "[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle\" -loop 0 -final_delay "
+                + juce::String (gifHoldCentiseconds) + " " + quoted (gif.getFullPathName())) == 0,
            "encode " + gif.getFullPathName());
 
     // The poster: the last frame (the whole drawing in view).
