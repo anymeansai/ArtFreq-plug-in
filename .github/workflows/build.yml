@@ -682,6 +682,10 @@ jobs:
 
           Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
 
+          **New in 0.6**
+          - **The canvas shows the real sound.** A moment after each change, ArtFreq plays the drawing silently in the background, analyses it like a spectrogram analyser and draws that on the canvas, so it shows what your analyser will show: blurry lows, scan lines and all. ArtFreq FX shows its real carve. While you drag or paint, a quick preview shows until the measured one fades in.
+          - Settings > Match your analyser: new **FFT size** (4096 / 8192 / 16384) and **level range**, so the canvas and the Live view blur and colour like your analyser.
+
           **New in 0.5.1**
           - **Windows installer**: download the \`.exe\` and run it. It installs both plug-ins (either can be left out) into \`C:\Program Files\Common Files\VST3\`, replaces earlier copies (also the FreqArt ones from before 0.4) and adds an uninstaller under Settings > Apps, which keeps your activation. The zip stays for installing by hand.
 
