@@ -165,8 +165,8 @@ SettingsPanel::SettingsPanel (ArtFreqProcessor& p)
     slopeAttachment = std::make_unique<ChoiceSegments> (slope, *state.getParameter (params::id::slope));
     addAndMakeVisible (slope);
 
-    // How the analyser draws: the canvas shows the sound as an analyser with this FFT size and
-    // these colours shows it (the lows' blur, the scan lines, the colours).
+    // How the analyser draws: the canvas shows the sound as an analyser with this FFT size shows
+    // it (the lows' blur, the scan lines), its levels over this range in ArtFreq's palette.
     fftSize.setTitle ("Analyser FFT size");
     fftSize.setComponentID ("analyser-fft");
     fftAttachment = std::make_unique<ChoiceSegments> (fftSize, *state.getParameter (params::id::analyserFft));
@@ -635,7 +635,8 @@ namespace
             { "1", { "Put ArtFreq on an instrument track.", "It makes the sound itself; MIDI notes can trigger it." } },
             { "2", { "Open a spectrogram on its output.", "MiniMeters, or any analyser with a scrolling spectrogram." } },
             { "3", { "Match your analyser.", "In Settings (the gear), choose the scale, range, slope, FFT size and "
-                                             "levels your analyser uses. MiniMeters: Log, 20 Hz to 20 kHz." } },
+                                             "levels your analyser uses. MiniMeters: Log, 20 Hz to 20 kHz. Colours "
+                                             "depend on your analyser." } },
             { "4", { "Draw.", "Add text, drop in a picture, or paint. A moment after each change the canvas shows "
                               "the real sound, as your analyser will." } },
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
@@ -697,7 +698,7 @@ namespace
     const std::vector<Paragraph>& effectNotes()
     {
         static const std::vector<Paragraph> list {
-            { "The canvas:", "the real output, on a stand-in song." },
+            { "The canvas:", "the real output, on your track once it plays." },
             { "Settings:", "the trigger, where a pass starts, the tempo." },
             { "Latency:", "85 ms; your DAW makes up for it." },
             { "Keys:", "Space plays your DAW. V, B and E pick a tool." },

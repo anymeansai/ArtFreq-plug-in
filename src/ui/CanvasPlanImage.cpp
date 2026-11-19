@@ -72,6 +72,33 @@ namespace
         return 24.0f * static_cast<float> (bits & 0xffff) / 65535.0f - 12.0f;
     }
 
+    constexpr float combTimeHazeDb = 44.0f;
+
+    /** The maximum of `values` within `reach` either side of each, into `out` (a running maximum:
+        O(count) whatever the reach). */
+    void slidingMax (const float* values, float* out, int count, int reach)
+    {
+        std::vector<int> window;   // indices of a falling run of values
+        window.reserve (static_cast<size_t> (2 * reach + 2));
+        size_t head = 0;
+
+        for (int i = 0, next = 0; i < count; ++i)
+        {
+            for (; next < count && next <= i + reach; ++next)
+            {
+                while (window.size() > head && values[window.back()] <= values[next])
+                    window.pop_back();
+
+                window.push_back (next);
+            }
+
+            while (window[head] < i - reach)
+                ++head;
+
+            out[i] = values[window[head]];
+        }
+    }
+
     /** The comb's texture: its sines, combSpacingHz apart and gliding up together, show on an
         analyser as stripes rising across the shape, about this many dB either way (the truth
         lab: 6 to 8 dB between the 10th and 90th percentile inside low shapes). */
@@ -391,6 +418,17 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
     const auto glideInWindowHz = static_cast<double> (plan->combSlope) * model.view.fftSize / model.sampleRate;
     const auto combWiden = std::sqrt (1.0 + std::pow (0.5 * glideInWindowHz / (2.0 * binHz), 2.0));
 
+    // ... and beyond the lobe a skirt the sines' entering and leaving shapes spreads (the truth
+    // lab, under low text at FFT 8192: 10 dB down 6 Hz beyond a shape's edge, 18 at 12 Hz, 28 at
+    // 20 Hz: about 1.4 dB a Hz, as much less steep as the window is longer).
+    const auto combSkirtDbPerHz = 1.4 * 34.0 / std::max (1.0, glideInWindowHz);
+    const auto combSkirtReachHz = (-model.view.floorDb + 20.0) / combSkirtDbPerHz;
+    const auto combWeight = [&] (double outsideHz)
+    {
+        return std::max (lobe (static_cast<float> (outsideHz / (binHz * combWiden))),
+                         static_cast<float> (std::pow (10.0, -combSkirtDbPerHz * outsideHz / 20.0)));
+    };
+
     std::vector<Reach> reaches;
     reaches.reserve (static_cast<size_t> (numLines));
     rowStart.assign (static_cast<size_t> (height) + 1, 0);
@@ -405,9 +443,8 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
 
         const auto hzPerRow = std::max (1.0e-6, rowHigh[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]
                                                   - rowLow[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]);
-        const auto widen = line < combGridLinesForReach ? combWiden : 1.0;
         const auto reachBins = juce::jlimit (minLobeReachBins, maxLobeReachBins, lobeReachRows * hzPerRow / binHz);
-        const auto reachHz = reachBins * binHz * widen;
+        const auto reachHz = line < combGridLinesForReach ? std::max (reachBins * binHz * combWiden, combSkirtReachHz) : reachBins * binHz;
         const auto first = juce::jmax (0, static_cast<int> (std::floor (rowAt (hz + reachHz))));
         const auto last = juce::jmin (height - 1, static_cast<int> (std::floor (rowAt (std::max (s.minHz * 0.5, hz - reachHz)))));
 
@@ -431,12 +468,12 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         const auto hz = static_cast<double> (plan->frequencies[static_cast<size_t> (r.line)]);
         const auto loudest = lineLoudest[static_cast<size_t> (r.line)];
 
-        const auto lobeHz = binHz * (r.line < combGridLinesForReach ? combWiden : 1.0);
+        const auto inComb = r.line < combGridLinesForReach;
 
         for (auto y = r.firstRow; y <= r.lastRow; ++y)
         {
             const auto outside = std::max (0.0, std::max (rowLow[static_cast<size_t> (y)] - hz, hz - rowHigh[static_cast<size_t> (y)]));
-            const auto weight = lobe (static_cast<float> (outside / lobeHz));
+            const auto weight = inComb ? combWeight (outside) : lobe (static_cast<float> (outside / binHz));
 
             if (weight * loudest > faintest)
                 contributions[static_cast<size_t> (fill[static_cast<size_t> (y)]++)] = { r.line, weight };
@@ -537,6 +574,28 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
 
             for (int x = 0; x < width; ++x)
                 combRow[x] = combAcc[x] > 1.0e-10f ? dbPerOctave * fastLog2 (combAcc[x]) + offset : silentDb;
+        }
+    }
+
+    // ... and around them in time: where the sines enter and leave a shape, and as the window
+    // slides past its ends, energy spills into the gaps between shapes, about 44 dB under them
+    // (the truth lab, between low letters at FFT 8192: -83 dBFS beside letters at -39). Each row
+    // of the band is lit at least that far under its loudest within a window either side.
+    if (combGridLines > 0)
+    {
+        const auto combTopHz = static_cast<double> (plan->frequencies[static_cast<size_t> (combGridLines - 1)]) + 0.5 * plan->combGridHz;
+        const auto topRow = juce::jlimit (0, height, static_cast<int> (std::floor (rowAt (combTopHz))));
+        const auto reach = std::max (1, static_cast<int> (std::lround (model.view.fftSize / model.sampleRate / std::max (1.0e-6, model.passSeconds) * width)));
+        std::vector<float> spread (static_cast<size_t> (width));
+
+        for (int y = topRow; y < height; ++y)
+        {
+            auto* rowDb = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
+            const auto* combRow = combDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
+            slidingMax (combRow, spread.data(), width, reach);
+
+            for (int x = 0; x < width; ++x)
+                rowDb[x] = std::max (rowDb[x], spread[static_cast<size_t> (x)] - combTimeHazeDb);
         }
     }
 

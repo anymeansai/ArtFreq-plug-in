@@ -287,8 +287,10 @@ void settleCanvas (juce::Component& editor, float scale, const juce::String& nam
     check (status.measuredShown && status.current && ! status.fading, name + ": the canvas shows the measured preview");
     const auto* processor = dynamic_cast<artfreq::ArtFreqProcessor*> (dynamic_cast<juce::AudioProcessorEditor&> (editor).getAudioProcessor());
     const auto effect = processor != nullptr && processor->isEffect();
-    check (status.text == (effect ? "Real output, on a stand-in song" : "Preview of the real sound"),
-           name + ": the canvas says it shows the real sound");
+    // ArtFreq FX carves the song that played once a pass has (else a stand-in), and says which.
+    const auto usersSong = effect && processor->getSongCapture() != nullptr && processor->getSongCapture()->getSerial() != 0;
+    check (status.text == (! effect ? "Preview of the real sound" : usersSong ? "Real output, on your track's last pass" : "Real output, on a stand-in song"),
+           name + ": the canvas says it shows the real sound (" + status.text + ")");
 }
 
 /** A stand-in for an imported picture: a shaded disc and a frame on a white background, the
@@ -2349,6 +2351,112 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     processor.releaseResources();
 }
 
+/** ArtFreq FX once a pass of the user's song has played: the canvas carves that song (here a
+    bass track: a kick, a bass line and a little low-mid body, nothing high), not the stand-in, so
+    the carve shows where the song has something to carve and nowhere else, and says so. */
+void checkEffectOnTheUsersSong (const juce::File& outputDir, float pixelScale)
+{
+    using namespace artfreq;
+
+    ArtFreqProcessor processor (ArtFreqProcessor::Variant::effect);
+    processor.setPlayConfigDetails (2, 2, 48000.0, 512);
+    processor.prepareToPlay (48000.0, 512);
+    juce::Uuid textId, imageId;
+    makeRichDrawing (processor, textId, imageId);
+    processor.rebuildPlanIfNeeded();
+
+    const std::unique_ptr<ArtFreqEditor> editor (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
+
+    if (editor == nullptr)
+    {
+        check (false, "ArtFreq FX makes an ArtFreqEditor");
+        return;
+    }
+
+    editor->setVisible (true);
+    pump (150);
+
+    auto* canvas = dynamic_cast<ui::CanvasView*> (findComponentWithId (*editor, "canvas"));
+
+    if (canvas == nullptr)
+    {
+        check (false, "ArtFreq FX has a canvas");
+        return;
+    }
+
+    const auto standIn = [&]
+    {
+        canvas->settleMeasuredPreview (pixelScale);
+        return canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+    }();
+
+    // One pass of the bass track, as a DAW plays it into the effect (the editor has been open,
+    // so the effect keeps what comes in).
+    processor.enableSongCapture();
+
+    struct PlayHead final : public juce::AudioPlayHead
+    {
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+        PositionInfo info;
+    } head;
+
+    processor.setPlayHead (&head);
+    juce::AudioBuffer<float> buffer (2, 512);
+    juce::MidiBuffer midi;
+    const auto passSamples = static_cast<int64_t> (std::llround (processor.getLengthSeconds() * 48000.0));
+    double kick = 0.0, bass = 0.0, body = 0.0;
+
+    for (int64_t done = 0; done < passSamples + 24000; done += 512)
+    {
+        const auto t = static_cast<double> (done) / 48000.0;
+        head.info = {};
+        head.info.setIsPlaying (true);
+        head.info.setBpm (120.0);
+        head.info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
+        head.info.setPpqPosition (t * 2.0);
+        head.info.setTimeInSeconds (t);
+
+        for (int i = 0; i < 512; ++i)
+        {
+            const auto n = done + i;
+            const auto sinceBeat = std::fmod (static_cast<double> (n), 24000.0) / 48000.0;
+            kick += juce::MathConstants<double>::twoPi * (50.0 + 90.0 * std::exp (-sinceBeat * 30.0)) / 48000.0;
+            bass += juce::MathConstants<double>::twoPi * ((n / 48000) % 2 == 0 ? 55.0 : 41.2) / 48000.0;
+            body += juce::MathConstants<double>::twoPi * 330.0 / 48000.0;
+            const auto x = 0.5 * std::exp (-sinceBeat * 10.0) * std::sin (kick) + 0.2 * std::sin (bass) + 0.01 * std::sin (body);
+            buffer.setSample (0, i, static_cast<float> (x));
+            buffer.setSample (1, i, static_cast<float> (x));
+        }
+
+        midi.clear();
+        processor.processBlock (buffer, midi);
+    }
+
+    head.info.setIsPlaying (false);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+    processor.setPlayHead (nullptr);
+
+    check (processor.getSongCapture() != nullptr && processor.getSongCapture()->getSerial() != 0,
+           "ArtFreq FX keeps the song that played");
+
+    pump (60);
+    settleCanvas (*editor, pixelScale, "fx-carve-your-track");
+    const auto ownSong = canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+    check (countDifferentPixels (standIn, ownSong) > 20000, "the canvas carves the song that played, not the stand-in");
+
+    const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, pixelScale);
+    const auto file = outputDir.getChildFile ("artfreq-fx-carve-your-track.png");
+
+    if (writePng (image, file))
+        std::cout << file.getFullPathName() << std::endl;
+    else
+        check (false, "write " + file.getFullPathName());
+
+    saveStateBeside (file, processor, *editor, pixelScale);
+    processor.releaseResources();
+}
+
 //==============================================================================
 // Licensing: the activation screen of a plug-in that is not activated, in each of its states, and
 // the Licence card in the settings, for both plug-ins, through a fake server (nothing here
@@ -3999,6 +4107,7 @@ int main (int argc, char* argv[])
 
     // ---- ArtFreq FX: the same editor on the effect ----------------------------------------------
     checkEffect (outputDir, pixelScale);
+    checkEffectOnTheUsersSong (outputDir, pixelScale);
     pump (50);
 
     // ---- the DAW's play key, in both plug-ins --------------------------------------------------------

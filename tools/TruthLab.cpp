@@ -1014,6 +1014,7 @@ juce::String settingsLine (ArtFreqProcessor& p)
 struct CanvasCompare
 {
     BandCompares before, after, fast;
+    BandCompares standIn;   // ArtFreq FX: the new canvas before any pass has played (the stand-in song)
 };
 
 struct StateResult
@@ -1150,6 +1151,11 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
     const auto drawing = drawingOnGrid (canvas, w, h);
 
     // ---- the sound -----------------------------------------------------------------------------
+    // ArtFreq FX keeps the song that comes in, as it does once its editor has been open: the new
+    // canvas then carves the song that played (and before any pass, the stand-in: both measured).
+    if (effect)
+        p.enableSongCapture();
+
     const auto rendered = play (p, effect ? &song : nullptr);
     const auto from = static_cast<double> (rendered.passStart);
     const auto to = from + rendered.passSamples;
@@ -1163,7 +1169,8 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         writeWav (rendered.stereo, options.outputDir.getChildFile ("truth-" + name + ".wav"));
 
     std::map<int, Display> displays, songs;
-    std::map<int, std::vector<float>> afterDbs;
+    std::map<int, std::vector<float>> afterDbs, standInDbs;
+    juce::Image newCanvas;   // the new canvas at the state's FFT, as the editor shows it (after a pass, in ArtFreq FX)
 
     for (const auto n : options.ffts)
     {
@@ -1191,6 +1198,26 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
 
         afterDbs[n] = dbOfAnalysis (*measuredResult->analysis, w, h);
 
+        if (n == view.fftSize && measuredResult->pixels.size() == idx (w) * idx (h))
+        {
+            newCanvas = juce::Image (juce::Image::RGB, w, h, false);
+            juce::Image::BitmapData data (newCanvas, juce::Image::BitmapData::writeOnly);
+
+            for (int y = 0; y < h; ++y)
+                ui::writePixelRow (data, y, measuredResult->pixels.data() + idx (y) * idx (w), w);
+        }
+
+        // ArtFreq FX before any pass: the stand-in.
+        if (effect)
+        {
+            auto standInRequest = request;
+            standInRequest.song = nullptr;
+            standInRequest.songSerial = 0;
+
+            if (const auto standIn = ui::MeasuredPreview::renderNow (standInRequest))
+                standInDbs[n] = dbOfAnalysis (*standIn->analysis, w, h);
+        }
+
         // The new fast preview alone (what shows while dragging), at the same size.
         std::vector<float> fastDb (idx (w) * idx (h));
         {
@@ -1212,6 +1239,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
             {
                 planImage.prepareLevels (p.getCurrentPlan(), model, w, h);
                 ui::EffectPreviewImage preview;
+                preview.setMeasuredSong (measuredResult->analysis);   // as the canvas has it once measured
                 ui::EffectPreviewImage::Settings settings;
                 settings.mode = request.mode;
                 settings.depthDb = request.depthDb;
@@ -1262,6 +1290,9 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         }
         c.fast = compareCanvas (displays[n], fastDb, drawing, scale, options.lowDb, options.highDb);
 
+        if (standInDbs.count (n) != 0)
+            c.standIn = compareCanvas (displays[n], standInDbs[n], drawing, scale, options.lowDb, options.highDb);
+
         if (haveBefore)
             c.before = compareCanvas (displays[n], beforeDb, drawing, scale, options.lowDb, options.highDb);
 
@@ -1270,10 +1301,11 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
     }
 
     // The screenshot shows what the direct render shows (grid lines and outlines aside).
-    if (afterDbs.count (view.fftSize) != 0)
+    // (The screenshot tool plays no audio: ArtFreq FX's screenshot is of the stand-in.)
+    if (const auto& renders = effect ? standInDbs : afterDbs; renders.count (view.fftSize) != 0)
     {
         std::vector<double> diffs;
-        const auto& direct = afterDbs[view.fftSize];
+        const auto& direct = renders.at (view.fftSize);
 
         for (size_t i = 0; i < direct.size(); ++i)
             diffs.push_back (std::abs (juce::jlimit (options.lowDb, options.highDb, direct[i]) - afterShotDb[i]));
@@ -1286,7 +1318,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
     const auto f = 13.0f;                     // label size, image pixels
     const auto pw = static_cast<float> (w) * 0.5f, ph = static_cast<float> (h) * 0.5f;
     const auto margin = f * 4.5f;
-    const auto columns = 3;
+    const auto columns = effect ? 4 : 3;
     const auto width = juce::roundToInt (margin + columns * (pw + margin));
     std::vector<int> stripFfts;
 
@@ -1294,7 +1326,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         if (n != mainFft)
             stripFfts.push_back (n);
 
-    const auto stripPanels = static_cast<int> (stripFfts.size()) + (effect ? 1 : 0);
+    const auto stripPanels = static_cast<int> (stripFfts.size()) + (effect ? 2 : 0);
     const auto tableH = f * 1.55f * 14.0f;
     const auto height = juce::roundToInt (f * 6.5f + ph + f * 3.2f + (stripPanels > 0 ? ph + f * 3.2f : 0.0f) + tableH);
 
@@ -1323,8 +1355,8 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         drawPanel (g, beforeCrop, { x, top, pw, ph }, "Old canvas (the screenshot before)", scale, f, true);
 
     x += pw + margin;
-    drawPanel (g, afterCrop, { x, top, pw, ph }, effect ? "New canvas (real carve, stand-in song)" : "New canvas (the real sound, measured)",
-               scale, f, true);
+    drawPanel (g, effect && newCanvas.isValid() ? newCanvas : afterCrop, { x, top, pw, ph },
+               effect ? "New canvas (the real carve of the song that played)" : "New canvas (the real sound, measured)", scale, f, true);
     x += pw + margin;
     drawPanel (g, displayImage (displays[mainFft], options.lowDb, options.highDb), { x, top, pw, ph },
                "Real output, FFT " + juce::String (mainFft) + (effect ? " (test master)" : ""), scale, f, true);
@@ -1342,8 +1374,12 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         }
 
         if (effect)
+        {
             drawPanel (g, displayImage (songs[mainFft], options.lowDb, options.highDb), { x, top, pw, ph },
                        "The test master going in, FFT " + juce::String (mainFft), scale, f * 0.9f, true);
+            x += pw + margin;
+            drawPanel (g, afterCrop, { x, top, pw, ph }, "New canvas before any pass (stand-in song)", scale, f * 0.9f, true);
+        }
 
         top += ph + f * 3.2f;
     }
@@ -1374,6 +1410,15 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
                  << (num (before.meanDiffDb, 1) + " -> " + num (after.meanDiffDb, 1)).paddedLeft (' ', 20)
                  << (num (before.excessContrastDb, 1) + " -> " + num (after.excessContrastDb, 1)).paddedLeft (' ', 24);
             writeLine (line, after.drawn < 50 ? faint() : ink());
+
+            if (effect)
+            {
+                const auto& standIn = c.standIn[b];
+                juce::String second;
+                second << juce::String ("  stand-in").paddedRight (' ', 16) << num (standIn.r, 2).paddedLeft (' ', 16)
+                       << num (standIn.meanDiffDb, 1).paddedLeft (' ', 20) << num (standIn.excessContrastDb, 1).paddedLeft (' ', 24);
+                writeLine (second, faint());
+            }
         }
     }
 
@@ -1416,7 +1461,8 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
          << "absolute difference; inside / around: median canvas - real over drawn cells / cells around the drawing; contrast:\n"
          << "median drawn - median around; excess: |canvas contrast| - |real contrast| (> 0: the canvas makes more of the\n"
          << "drawing than reality does: brighter shapes, a cleaner background, deeper carves).\n"
-         << "ArtFreq FX: the new canvas carves a stand-in song, the real output a dense synthetic master: the songs differ.\n\n";
+         << "ArtFreq FX: 'new' is the canvas once a pass has played (it carves the song that came in: here the dense\n"
+         << "synthetic master), 'standin' the canvas before any pass (the stand-in song, against the master: two songs).\n\n";
 
     for (const auto& r : results)
     {
@@ -1436,6 +1482,9 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
                 text << "   " << juce::String (bands[b].name).paddedRight (' ', 9) << juce::String (n).paddedLeft (' ', 6) << "  "
                      << bandLine ("old", c.before[b]) << "\n";
                 text << "   " << juce::String().paddedRight (' ', 17) << bandLine ("new", c.after[b]) << "\n";
+
+                if (r.effect)
+                    text << "   " << juce::String().paddedRight (' ', 17) << bandLine ("standin", c.standIn[b]) << "\n";
                 text << "   " << juce::String().paddedRight (' ', 17) << bandLine ("fast", c.fast[b]) << "\n";
             }
         }
@@ -1444,7 +1493,7 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
     }
 
     // The summary: at each state's analyser FFT (8192), old -> new.
-    text << "Summary at FFT 8192 (old -> new): r, mean dB, excess contrast dB\n";
+    text << "Summary at FFT 8192 (old -> new; ArtFreq FX's new: once a pass has played, [before: on the stand-in]): r, mean dB, excess contrast dB\n";
     text << "state            band        r                mean dB              excess dB\n";
 
     for (const auto& r : results)
@@ -1462,6 +1511,8 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
                  << (num (before.r, 2) + " -> " + num (after.r, 2)).paddedLeft (' ', 14)
                  << (num (before.meanDiffDb, 1) + " -> " + num (after.meanDiffDb, 1)).paddedLeft (' ', 20)
                  << (num (before.excessContrastDb, 1) + " -> " + num (after.excessContrastDb, 1)).paddedLeft (' ', 20)
+                 << (r.effect ? "   [" + num (found->second.standIn[b].r, 2) + ", " + num (found->second.standIn[b].meanDiffDb, 1) + ", "
+                                    + num (found->second.standIn[b].excessContrastDb, 1) + "]" : juce::String())
                  << (after.drawn < 50 ? "   (nothing drawn)" : "") << "\n";
         }
     }
@@ -1517,6 +1568,9 @@ juce::var toJson (const std::vector<StateResult>& results)
                 trio->setProperty ("old", bandVar (c.before[b]));
                 trio->setProperty ("new", bandVar (c.after[b]));
                 trio->setProperty ("fast", bandVar (c.fast[b]));
+
+                if (r.effect)
+                    trio->setProperty ("standIn", bandVar (c.standIn[b]));
                 perBand->setProperty (bands[b].name, juce::var (trio));
             }
 
