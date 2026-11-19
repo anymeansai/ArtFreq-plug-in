@@ -1,7 +1,9 @@
 #include "EffectPreview.h"
 
 #include "CanvasPlanImage.h"
+#include "PluginProcessor.h"
 #include "Theme.h"
+#include "dsp/StandInSong.h"
 
 #include <algorithm>
 #include <array>
@@ -11,115 +13,138 @@ namespace artfreq::ui
 {
 namespace
 {
-    /** A repeatable value 0..1 for a pair of integers: the stand-in's grain. */
-    float hash (int a, int b) noexcept
-    {
-        auto h = static_cast<uint32_t> (a) * 73856093u ^ static_cast<uint32_t> (b) * 19349663u;
-        h ^= h >> 13;
-        h *= 0x5bd1e995u;
-        h ^= h >> 15;
-        return static_cast<float> (h & 0xffffu) / 65535.0f;
-    }
+    constexpr float silentDb = -200.0f;
 
-    constexpr float levelsPerDb = 255.0f / CanvasPlanImage::windowDb;
+    /** What adding a quieter sound to a louder one adds to the louder, in dB, by how far apart
+        they are (in steps of a quarter dB, up to 40 dB): powers add, as in an analyser's cell. */
+    constexpr int powerSteps = 160;
 
-    /** What adding a quieter sound to a louder one adds to the louder, in colour levels, by how
-        far apart they are in levels (0..255): powers add, as in an analyser's cell. */
-    const std::array<float, 256>& powerSumTable()
+    const std::array<float, powerSteps + 1>& powerSumTable()
     {
         static const auto table = []
         {
-            std::array<float, 256> t {};
+            std::array<float, powerSteps + 1> t {};
 
             for (size_t i = 0; i < t.size(); ++i)
-                t[i] = 10.0f * std::log10 (1.0f + std::pow (10.0f, -static_cast<float> (i) / levelsPerDb / 10.0f)) * levelsPerDb;
+                t[i] = 10.0f * std::log10 (1.0f + std::pow (10.0f, -0.25f * static_cast<float> (i) / 10.0f));
 
             return t;
         }();
 
         return table;
     }
+
+    inline float powerSum (float a, float b) noexcept
+    {
+        const auto louder = std::max (a, b);
+        const auto apart = static_cast<int> (std::abs (a - b) * 4.0f + 0.5f);
+        return apart >= powerSteps ? louder : louder + powerSumTable()[static_cast<size_t> (apart)];
+    }
+
+    /** The carver's frame (TunedCarver: about 85 ms at any rate), and its bins' width. */
+    constexpr double carverFrameSeconds = 4096.0 / 48000.0;
+
+    /** Up to here the carve is modelled bin by bin through the analyser's lobe (makeCarve). */
+    constexpr double lobeModelTopHz = 1500.0;
+
+    /** A symmetric box of `width` over each row of `values` (`width` x `height`), the parts
+        beyond the ends reading `outside`. */
+    void boxRows (float* values, int width, int height, int boxWidth, float outside, std::vector<double>& sums)
+    {
+        if (boxWidth <= 1)
+            return;
+
+        const auto before = boxWidth / 2, after = boxWidth - 1 - before;
+        sums.resize (static_cast<size_t> (width) + 1);
+
+        for (int y = 0; y < height; ++y)
+        {
+            auto* row = values + static_cast<size_t> (y) * static_cast<size_t> (width);
+            sums[0] = 0.0;
+
+            for (int x = 0; x < width; ++x)
+                sums[static_cast<size_t> (x) + 1] = sums[static_cast<size_t> (x)] + row[x];
+
+            for (int x = 0; x < width; ++x)
+            {
+                const auto from = x - before, to = x + after + 1;
+                const auto inFrom = std::max (0, from), inTo = std::min (width, to);
+                const auto outsideCount = (inFrom - from) + (to - inTo);
+                const auto total = sums[static_cast<size_t> (inTo)] - sums[static_cast<size_t> (inFrom)] + outsideCount * static_cast<double> (outside);
+                row[x] = static_cast<float> (std::max (0.0, total / boxWidth));
+            }
+        }
+    }
 } // namespace
 
-float EffectPreviewImage::songDb (double x, double y) noexcept
+float EffectPreviewImage::songDb (double x, double hz) noexcept
 {
-    // A spectrum that falls towards the highs, as a mix's does on a log scale, well below the
-    // loudest colours (the sines of the Draw modes are drawn at their own level over it).
-    auto db = -22.0 - 18.0 * y;
-
-    // Sixteen beats across the length: a kick in the lows on the beat, a hat in the highs on the
-    // off-beat, each decaying.
-    const auto beats = x * 16.0;
-    const auto onBeat = beats - std::floor (beats);
-    const auto offBeat = beats + 0.5 - std::floor (beats + 0.5);
-
-    if (y < 0.35)
-        db += 9.0 * std::exp (-7.0 * onBeat) * (1.0 - y / 0.35);
-
-    if (y > 0.6)
-        db += 7.0 * std::exp (-18.0 * offBeat) * (y - 0.6) / 0.4;
-
-    // Held notes: five partials, a new chord every four beats.
-    const auto chord = static_cast<int> (std::floor (beats / 4.0));
-
-    for (int k = 0; k < 5; ++k)
-    {
-        const auto centre = 0.30 + 0.06 * k + 0.03 * static_cast<double> (hash (chord, k));
-        const auto distance = std::abs (y - centre);
-
-        if (distance < 0.005)
-            db += 8.0 * (1.0 - distance / 0.005);
-    }
-
-    // Grain, smooth over a grid of the canvas (so it does not shimmer when the window resizes).
-    const auto gx = x * 192.0, gy = y * 128.0;
-    const auto ix = static_cast<int> (std::floor (gx)), iy = static_cast<int> (std::floor (gy));
-    const auto fx = static_cast<float> (gx - ix), fy = static_cast<float> (gy - iy);
-    const auto top = hash (ix, iy + 1) + (hash (ix + 1, iy + 1) - hash (ix, iy + 1)) * fx;
-    const auto bottom = hash (ix, iy) + (hash (ix + 1, iy) - hash (ix, iy)) * fx;
-    db += 8.0 * (static_cast<double> (bottom + (top - bottom) * fy) - 0.5);
-
-    return static_cast<float> (std::min (0.0, db));
+    return standInSongDb (x, hz);
 }
 
-namespace
+void EffectPreviewImage::setMeasuredSong (std::shared_ptr<const MeasuredSpectrogram> newSong)
 {
-    /** The stand-in is worked out once, at this size, and resampled to whatever size the canvas
-        has. Worked out pixel by pixel at the canvas's size it cost 50 to 200 ms on a Retina
-        display whenever that size changed (every step of a corner drag), most of the canvas's
-        cost. Its finest details are a few texels wide here: a hat (a 1/18 beat) 2.7, a held
-        note (1 % of the height) 3.8, the grain's grid (192 x 128) 4 and 3. */
-    constexpr int baseWidth = 768, baseHeight = 384;
+    if (newSong != nullptr && (newSong->input.empty() || newSong->frames <= 0 || newSong->rows <= 0))
+        newSong = nullptr;
 
-    /** The stand-in at baseWidth x baseHeight, as colour-map levels (row 0 at the top). */
-    const std::vector<float>& baseTexture()
+    if (newSong == measuredSong)
+        return;
+
+    measuredSong = std::move (newSong);
+    songDirty = true;
+}
+
+void EffectPreviewImage::makeSong (const Settings& settings, const FrequencyScale& scale, int width, int height)
+{
+    if (! songDirty && width == songWidth && height == songHeight && songFft == settings.view.fftSize
+        && songMeasured == (measuredSong != nullptr) && songScale == scale)
+        return;
+
+    songDirty = false;
+    ++songVersion;
+    songWidth = width;
+    songHeight = height;
+    songFft = settings.view.fftSize;
+    songScale = scale;
+    songMeasured = measuredSong != nullptr;
+    song.resize (static_cast<size_t> (width) * static_cast<size_t> (height));
+
+    if (measuredSong != nullptr)
     {
-        static const auto base = []
+        // The stand-in as the analyser really showed it (stretched to this size).
+        const auto& a = *measuredSong;
+        std::vector<int> frame0 (static_cast<size_t> (width)), frame1 (static_cast<size_t> (width));
+        std::vector<float> fraction (static_cast<size_t> (width));
+
+        for (int x = 0; x < width; ++x)
+            MeasuredSpectrogram::columnPosition (x, width, a.frames, frame0[static_cast<size_t> (x)], frame1[static_cast<size_t> (x)],
+                                                 fraction[static_cast<size_t> (x)]);
+
+        for (int y = 0; y < height; ++y)
         {
-            std::vector<float> t (static_cast<size_t> (baseWidth) * static_cast<size_t> (baseHeight));
+            const auto row = juce::jlimit (0, a.rows - 1, static_cast<int> ((y + 0.5) * a.rows / height));
+            auto* out = song.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
 
-            for (int y = 0; y < baseHeight; ++y)
+            for (int x = 0; x < width; ++x)
             {
-                const auto up = 1.0 - (y + 0.5) / baseHeight;
-
-                for (int x = 0; x < baseWidth; ++x)
-                    t[static_cast<size_t> (y) * static_cast<size_t> (baseWidth) + static_cast<size_t> (x)]
-                        = (CanvasPlanImage::windowDb + EffectPreviewImage::songDb ((x + 0.5) / baseWidth, up)) * levelsPerDb;
+                const auto d0 = a.inputDb (row, frame0[static_cast<size_t> (x)]);
+                const auto d1 = a.inputDb (row, frame1[static_cast<size_t> (x)]);
+                out[x] = d0 + (d1 - d0) * fraction[static_cast<size_t> (x)];
             }
+        }
 
-            return t;
-        }();
-
-        return base;
+        return;
     }
 
-    /** For each of `size` pixels, the texel before its centre (of `baseSize`) and how far on to
-        the next it lies, for a linear resample with the texels' centres where they were sampled. */
-    void resampleSteps (int size, int baseSize, std::vector<int>& index, std::vector<float>& fraction)
-    {
-        index.resize (static_cast<size_t> (size));
-        fraction.resize (static_cast<size_t> (size));
+    // The level it is made with: a cell of noise reads 3 dB lower per doubling of the FFT (each
+    // bin is half as wide), from the 4096 points its levels are given at.
+    const auto offset = -10.0f * std::log10 (static_cast<float> (settings.view.fftSize) / 4096.0f);
+    const auto& base = standInSongTexture();
+    std::vector<int> columns (static_cast<size_t> (width)), rows (static_cast<size_t> (height));
+    std::vector<float> columnFractions (static_cast<size_t> (width)), rowFractions (static_cast<size_t> (height));
 
+    const auto steps = [] (int size, int baseSize, std::vector<int>& index, std::vector<float>& fraction)
+    {
         for (int i = 0; i < size; ++i)
         {
             const auto at = (i + 0.5) * baseSize / size - 0.5;
@@ -127,30 +152,27 @@ namespace
             index[static_cast<size_t> (i)] = before;
             fraction[static_cast<size_t> (i)] = static_cast<float> (juce::jlimit (0.0, 1.0, at - before));
         }
-    }
-} // namespace
+    };
 
-void EffectPreviewImage::makeTexture (int width, int height)
-{
-    if (width == textureWidth && height == textureHeight)
-        return;
+    steps (width, standInTextureWidth, columns, columnFractions);
 
-    textureWidth = width;
-    textureHeight = height;
-    texture.resize (static_cast<size_t> (width) * static_cast<size_t> (height));
-
-    const auto& base = baseTexture();
-    std::vector<int> columns, rows;
-    std::vector<float> columnFractions, rowFractions;
-    resampleSteps (width, baseWidth, columns, columnFractions);
-    resampleSteps (height, baseHeight, rows, rowFractions);
+    // The texture's rows run in log frequency: each canvas row reads the one at its height.
+    const auto s = scale.sanitised();
 
     for (int y = 0; y < height; ++y)
     {
-        const auto* above = base.data() + static_cast<size_t> (rows[static_cast<size_t> (y)]) * static_cast<size_t> (baseWidth);
-        const auto* below = above + baseWidth;
+        const auto at = standInTextureRow (s.toHz (1.0 - (y + 0.5) / height));
+        const auto before = juce::jmin (standInTextureHeight - 2, static_cast<int> (at));
+        rows[static_cast<size_t> (y)] = before;
+        rowFractions[static_cast<size_t> (y)] = static_cast<float> (juce::jlimit (0.0, 1.0, at - before));
+    }
+
+    for (int y = 0; y < height; ++y)
+    {
+        const auto* above = base.data() + static_cast<size_t> (rows[static_cast<size_t> (y)]) * static_cast<size_t> (standInTextureWidth);
+        const auto* below = above + standInTextureWidth;
         const auto fy = rowFractions[static_cast<size_t> (y)];
-        auto* out = texture.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
+        auto* out = song.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
 
         for (int x = 0; x < width; ++x)
         {
@@ -158,110 +180,426 @@ void EffectPreviewImage::makeTexture (int width, int height)
             const auto fx = columnFractions[static_cast<size_t> (x)];
             const auto top = above[i] + (above[i + 1] - above[i]) * fx;
             const auto bottom = below[i] + (below[i + 1] - below[i]) * fx;
-            out[x] = top + (bottom - top) * fy;
+            out[x] = top + (bottom - top) * fy + offset;
         }
     }
 }
 
-float EffectPreviewImage::sinesDbFor (float loudestAmplitude, float outputGain) noexcept
+void EffectPreviewImage::makeCarve (const MaskPlan* mask, const Settings& settings, const FrequencyScale& scaleIn, int width, int height)
 {
-    const auto amplitude = loudestAmplitude * outputGain;
-    return amplitude > 0.0f && std::isfinite (amplitude) ? 20.0f * std::log10 (amplitude) + sinesCalibrationDb : -200.0f;
+    // What the carver leaves of the song, as the analyser shows it: per pixel, the share of the
+    // song's power left (as dB to add to the song), modelled on what TunedCarver and the analyser
+    // really do, so a carve looks as soft and as filled-in as it will (in the lows above all):
+    //
+    //  1. the carver's bins (sampleRate / its FFT: 11.7 Hz): per bin, the drawing's mean over the
+    //     bin's band (Stencil: its maximum, and everything not drawn goes), each carved bin
+    //     widened by the mode's halo bins (1, Carve + Draw 3), gain = Depth ^ amount;
+    //  2. the analyser's window spreading the song across frequency: in the lows and low mids,
+    //     where a row is narrower than two of its bins, each bin reads the song's power around it
+    //     through the window's main lobe and first side lobes, carved as it is there (a hole
+    //     narrower than the lobe fills in, from the song's own loud lines above all); higher up a
+    //     row reads its loudest bin, so the least carved bin inside it;
+    //  3. in time, the analyser's window and a quarter of the carver's frame (thin strokes in
+    //     time come out faint).
+    const auto pixels = static_cast<size_t> (width) * static_cast<size_t> (height);
+    carve.assign (pixels, 0.0f);
+
+    if (mask == nullptr)
+        return;
+
+    const auto scale = scaleIn.sanitised();
+    const auto stencil = settings.mode == EffectMode::stencil;
+    const auto halo = stencil ? 0 : (settings.mode == EffectMode::carveDraw ? ArtFreqProcessor::carveDrawHaloBins : 1);
+    const auto depth = juce::jlimit (params::minDepthDb, 0.0f, settings.depthDb);
+    const auto rate = settings.sampleRate;
+    const auto h = static_cast<double> (height);
+
+    // The carver's FFT at this rate (TunedCarver::prepareCarver: about 85 ms, whole hops, the
+    // next power of two).
+    const auto frame = std::max (64, juce::roundToInt (carverFrameSeconds * rate / 4.0) * 4);
+    auto carverFft = 16;
+
+    while (carverFft < frame)
+        carverFft *= 2;
+
+    const auto binHz = rate / carverFft;
+    const auto numBins = carverFft / 2 + 1;
+
+    // The bins' bands in the mask's rows (as the carver looks them up), and how many reach the
+    // canvas's range.
+    binEdgeRows.resize (static_cast<size_t> (numBins) + 1);
+
+    for (int edge = 0; edge <= numBins; ++edge)
+        binEdgeRows[static_cast<size_t> (edge)] = mask->rowAt (std::max (0.0, (edge - 0.5) * binHz));
+
+    const auto top = static_cast<double> (mask->numRows) - 0.5;
+    auto binsInRange = numBins;
+
+    while (binsInRange > 0 && binEdgeRows[static_cast<size_t> (binsInRange - 1)] >= top)
+        --binsInRange;
+
+    // Per bin, its band among the mask's cells, as TunedCarver::columnAmounts reads it (the share
+    // outside the canvas's range counts as nothing drawn).
+    struct Band
+    {
+        int firstCell = 0, lastCell = -1;      // lastCell < 0: the band misses the canvas
+        double fromFraction = 0.0, toFraction = 0.0, perRow = 0.0;
+    };
+
+    std::vector<Band> bands (static_cast<size_t> (binsInRange));
+    const auto rows = mask->numRows;
+
+    for (int k = 0; k < binsInRange; ++k)
+    {
+        const auto low = binEdgeRows[static_cast<size_t> (k)], high = binEdgeRows[static_cast<size_t> (k) + 1];
+        const auto from = std::max (low, -0.5), to = std::min (high, top);
+
+        if (! (to > from && high > low))
+            continue;
+
+        auto& band = bands[static_cast<size_t> (k)];
+        band.firstCell = juce::jlimit (0, rows - 1, static_cast<int> (std::floor (from + 0.5)));
+        band.lastCell = juce::jlimit (band.firstCell, rows - 1, static_cast<int> (std::ceil (to - 0.5)));
+        band.fromFraction = from + 0.5 - band.firstCell;
+        band.toFraction = to + 0.5 - band.lastCell;
+        band.perRow = 1.0 / (high - low);
+    }
+
+    // The analyser's bins, up to where a row spans two of them; each row's place among them, or
+    // the carver's bins inside it.
+    const auto analyserBinHz = rate / settings.view.fftSize;
+    std::vector<double> rowLowHz (static_cast<size_t> (height)), rowHighHz (static_cast<size_t> (height));
+    auto lowRows = 0;   // rows [height - lowRows, height) are modelled bin by bin
+
+    for (int y = 0; y < height; ++y)
+    {
+        rowHighHz[static_cast<size_t> (y)] = scale.toHz (1.0 - y / h);
+        rowLowHz[static_cast<size_t> (y)] = scale.toHz (1.0 - (y + 1.0) / h);
+    }
+
+    // (Above lobeModelTopHz the lobe's +-23 Hz is a few rows at most: left out, it costs most.)
+    for (int y = height - 1; y >= 0 && rowHighHz[static_cast<size_t> (y)] - rowLowHz[static_cast<size_t> (y)] < 2.0 * analyserBinHz
+                             && rowHighHz[static_cast<size_t> (y)] < lobeModelTopHz; --y)
+        ++lowRows;
+
+    constexpr int lobeReach = 4;   // bins: the main lobe and the first side lobes (to -44 dB)
+    const auto crossoverHz = lowRows > 0 ? rowHighHz[static_cast<size_t> (height - lowRows)] : 0.0;
+    const auto numAnalyserBins = lowRows > 0 ? static_cast<int> (std::ceil (crossoverHz / analyserBinHz)) + lobeReach + 2 : 0;
+    std::array<float, 2 * lobeReach + 1> lobePower {};
+
+    for (int d = -lobeReach; d <= lobeReach; ++d)
+    {
+        const auto amplitude = CanvasPlanImage::lobe (static_cast<float> (d));
+        lobePower[static_cast<size_t> (d + lobeReach)] = amplitude * amplitude;
+    }
+
+    // Per analyser bin: the song's row (fractional) and the carver's bin (fractional).
+    std::vector<float> songRowOfBin (static_cast<size_t> (numAnalyserBins)), carverBinOfBin (static_cast<size_t> (numAnalyserBins));
+
+    for (int b = 0; b < numAnalyserBins; ++b)
+    {
+        const auto hz = b * analyserBinHz;
+        songRowOfBin[static_cast<size_t> (b)] = static_cast<float> (juce::jlimit (0.0, h - 1.0, (1.0 - scale.toNorm (std::max (scale.minHz, hz))) * h - 0.5));
+        carverBinOfBin[static_cast<size_t> (b)] = static_cast<float> (hz / binHz);
+    }
+
+    // Per row above them: the carver's bins inside it (at least the one at its centre).
+    std::vector<int> firstBinOfRow (static_cast<size_t> (height)), lastBinOfRow (static_cast<size_t> (height));
+
+    for (int y = 0; y < height - lowRows; ++y)
+    {
+        const auto centre = 0.5 * (rowLowHz[static_cast<size_t> (y)] + rowHighHz[static_cast<size_t> (y)]);
+        const auto middle = juce::jlimit (0, numBins - 1, static_cast<int> (std::lround (centre / binHz)));
+        firstBinOfRow[static_cast<size_t> (y)] = std::min (middle, juce::jlimit (0, numBins - 1, static_cast<int> (std::ceil (rowLowHz[static_cast<size_t> (y)] / binHz - 0.5))));
+        lastBinOfRow[static_cast<size_t> (y)] = std::max (middle, juce::jlimit (0, numBins - 1, static_cast<int> (std::floor (rowHighHz[static_cast<size_t> (y)] / binHz + 0.5))));
+    }
+
+    // The song's power at each analyser bin, column by column (it changes far less often than the
+    // carve: kept while it is the same song at the same size).
+    if (songBinVersion != songVersion || songBinWidth != width || songBinCount != numAnalyserBins || songBinHeight != height)
+    {
+        songBinVersion = songVersion;
+        songBinWidth = width;
+        songBinHeight = height;
+        songBinCount = numAnalyserBins;
+        songBinPower.resize (static_cast<size_t> (width) * static_cast<size_t> (numAnalyserBins));
+
+        for (int b = 0; b < numAnalyserBins; ++b)
+        {
+            const auto rowPosition = songRowOfBin[static_cast<size_t> (b)];
+            const auto r0 = static_cast<int> (rowPosition);
+            const auto r1 = std::min (height - 1, r0 + 1);
+            const auto t = rowPosition - static_cast<float> (r0);
+            const auto* row0 = song.data() + static_cast<size_t> (r0) * static_cast<size_t> (width);
+            const auto* row1 = song.data() + static_cast<size_t> (r1) * static_cast<size_t> (width);
+
+            for (int x = 0; x < width; ++x)
+                songBinPower[static_cast<size_t> (x) * static_cast<size_t> (numAnalyserBins) + static_cast<size_t> (b)]
+                    = std::pow (10.0f, 0.1f * (row0[x] + (row1[x] - row0[x]) * t));
+        }
+    }
+
+    std::vector<float> amounts (static_cast<size_t> (numBins)), widened (static_cast<size_t> (numBins)), gains (static_cast<size_t> (numBins));
+    std::vector<float> songPower (static_cast<size_t> (numAnalyserBins)), carvedPower (static_cast<size_t> (numAnalyserBins)),
+        binGain (static_cast<size_t> (numAnalyserBins));
+    std::vector<double> prefix (static_cast<size_t> (mask->numRows) + 1);
+    const auto all = std::pow (10.0f, depth / 10.0f);
+    const auto perAmount = depth * 0.23025851f;   // ln (10) / 10: power
+
+    for (int x = 0; x < width; ++x)
+    {
+        const auto c = juce::jlimit (0, mask->numColumns - 1, static_cast<int> ((x + 0.5) * mask->numColumns / width));
+        const auto used = mask->isColumnUsed (c);
+
+        // 1. The carver's gains in this column (power).
+        if (! used)
+        {
+            // Nothing drawn: Carve leaves the song, Stencil takes it all.
+            std::fill (gains.begin(), gains.end(), stencil ? all : 1.0f);
+        }
+        else
+        {
+            const auto* cells = mask->column (c);
+            prefix[0] = 0.0;
+
+            for (int r = 0; r < rows; ++r)
+                prefix[static_cast<size_t> (r) + 1] = prefix[static_cast<size_t> (r)] + static_cast<double> (cells[r]);
+
+            std::fill (amounts.begin(), amounts.end(), 0.0f);
+            auto firstDrawn = numBins, lastDrawn = -1;   // the bins with something drawn in their band
+
+            for (int k = 0; k < binsInRange; ++k)
+            {
+                const auto& band = bands[static_cast<size_t> (k)];
+
+                if (band.lastCell < 0)
+                    continue;
+
+                float amount = 0.0f;
+
+                if (stencil)
+                {
+                    amount = *std::max_element (cells + band.firstCell, cells + band.lastCell + 1);
+                }
+                else
+                {
+                    // The mean over the band, rows at its ends counted by how much of them it covers.
+                    const auto atTo = prefix[static_cast<size_t> (band.lastCell)] + band.toFraction * static_cast<double> (cells[band.lastCell]);
+                    const auto atFrom = prefix[static_cast<size_t> (band.firstCell)] + band.fromFraction * static_cast<double> (cells[band.firstCell]);
+                    amount = static_cast<float> ((atTo - atFrom) * band.perRow);
+                }
+
+                if (amount > 0.0f)
+                {
+                    amounts[static_cast<size_t> (k)] = amount;
+                    firstDrawn = std::min (firstDrawn, k);
+                    lastDrawn = k;
+                }
+            }
+
+            // Only the bins about what is drawn need more work: elsewhere Carve leaves the song
+            // and Stencil takes it.
+            const auto from = std::max (0, firstDrawn - halo), to = std::min (numBins - 1, lastDrawn + halo);
+            std::fill (gains.begin(), gains.end(), stencil ? all : 1.0f);
+
+            if (stencil)
+            {
+                for (int k = from; k <= to; ++k)
+                    amounts[static_cast<size_t> (k)] = 1.0f - std::min (amounts[static_cast<size_t> (k)], 1.0f);
+            }
+            else if (halo > 0 && from <= to)
+            {
+                std::copy (amounts.begin() + from, amounts.begin() + to + 1, widened.begin() + from);
+
+                for (int k = from; k <= to; ++k)
+                    amounts[static_cast<size_t> (k)] = *std::max_element (widened.begin() + std::max (from, k - halo),
+                                                                          widened.begin() + std::min (to, k + halo) + 1);
+            }
+
+            for (int k = from; k <= to; ++k)
+            {
+                const auto amount = amounts[static_cast<size_t> (k)];
+                gains[static_cast<size_t> (k)] = amount <= 0.0f ? 1.0f : (amount >= 1.0f ? all : std::exp (perAmount * amount));
+            }
+        }
+
+        // 2a. The lows, bin by bin: the song's power around each bin, carved, through the lobe.
+        if (numAnalyserBins > 0)
+        {
+            const auto* songColumn = songBinPower.data() + static_cast<size_t> (x) * static_cast<size_t> (numAnalyserBins);
+
+            for (int b = 0; b < numAnalyserBins; ++b)
+            {
+                const auto power = songColumn[b];
+                const auto k = carverBinOfBin[static_cast<size_t> (b)];
+                const auto k0 = std::min (numBins - 1, static_cast<int> (k));
+                const auto k1 = std::min (numBins - 1, k0 + 1);
+                const auto g = gains[static_cast<size_t> (k0)] + (gains[static_cast<size_t> (k1)] - gains[static_cast<size_t> (k0)]) * (k - static_cast<float> (k0));
+
+                songPower[static_cast<size_t> (b)] = power;
+                carvedPower[static_cast<size_t> (b)] = power * g;
+            }
+
+            for (int b = 0; b < numAnalyserBins; ++b)
+            {
+                auto kept = 0.0f, total = 0.0f;
+
+                for (int d = -lobeReach; d <= lobeReach; ++d)
+                {
+                    const auto j = juce::jlimit (0, numAnalyserBins - 1, b + d);
+                    const auto w = lobePower[static_cast<size_t> (d + lobeReach)];
+                    kept += w * carvedPower[static_cast<size_t> (j)];
+                    total += w * songPower[static_cast<size_t> (j)];
+                }
+
+                binGain[static_cast<size_t> (b)] = total > 0.0f ? kept / total : 1.0f;
+            }
+
+            for (int y = height - lowRows; y < height; ++y)
+            {
+                const auto centre = 0.5 * (rowLowHz[static_cast<size_t> (y)] + rowHighHz[static_cast<size_t> (y)]);
+                const auto at = static_cast<float> (centre / analyserBinHz);
+                const auto b0 = juce::jlimit (0, numAnalyserBins - 2, static_cast<int> (at));
+                const auto t = juce::jlimit (0.0f, 1.0f, at - static_cast<float> (b0));
+                carve[static_cast<size_t> (y) * static_cast<size_t> (width) + static_cast<size_t> (x)]
+                    = binGain[static_cast<size_t> (b0)] + (binGain[static_cast<size_t> (b0) + 1] - binGain[static_cast<size_t> (b0)]) * t;
+            }
+        }
+
+        // 2b. Higher up: the least carved of the carver's bins in each row (a bin left whole ends
+        // the search: nothing is brighter).
+        for (int y = 0; y < height - lowRows; ++y)
+        {
+            auto least = 0.0f;
+
+            for (int k = firstBinOfRow[static_cast<size_t> (y)], end = lastBinOfRow[static_cast<size_t> (y)]; k <= end && least < 1.0f; ++k)
+                least = std::max (least, gains[static_cast<size_t> (k)]);
+
+            carve[static_cast<size_t> (y) * static_cast<size_t> (width) + static_cast<size_t> (x)] = least;
+        }
+    }
+
+    // 3. In time: half of the analyser's window and a quarter of the carver's frame, twice (a
+    // triangle). Outside the pass the song is not carved.
+    const auto boxSeconds = 0.5 * settings.view.fftSize / rate + 0.25 * carverFrameSeconds;
+    const auto boxWidth = static_cast<int> (std::lround (boxSeconds / std::max (1.0e-6, settings.passSeconds) * width));
+    boxRows (carve.data(), width, height, boxWidth, 1.0f, runningSums);
+    boxRows (carve.data(), width, height, boxWidth, 1.0f, runningSums);
+
+    // To dB (a fast log: this runs on every drag step).
+    for (auto& value : carve)
+    {
+        // value = m 2^(bits - 1) with m in [1, 2); the polynomial is log2 (m) + 1 to within 0.005.
+        auto bits = 0;
+        const auto m = 2.0f * std::frexp (std::max (1.0e-13f, value), &bits);
+        value = 3.0103f * (static_cast<float> (bits - 2) + (-0.34484843f * m + 2.02466578f) * m - 0.67487759f);
+    }
 }
 
-juce::Image EffectPreviewImage::get (const std::vector<uint8_t>& planLevels, uint64_t planKey, EffectMode mode, float depthDb,
-                                     float sinesDb, const std::shared_ptr<const MaskPlanSet>& masks, int width, int height)
+juce::Image EffectPreviewImage::get (const std::vector<float>& sinesDb, float levelDb, uint64_t sinesKey, const Settings& settingsIn,
+                                     const std::shared_ptr<const MaskPlanSet>& masks, const FrequencyScale& scale, int width, int height,
+                                     const MeasuredPatch* patch)
 {
     width = juce::jmax (1, width);
     height = juce::jmax (1, height);
-    sinesDb = std::isfinite (sinesDb) ? juce::jlimit (-200.0f, 60.0f, sinesDb) : -200.0f;
+
+    auto settings = settingsIn;
+    settings.view = settings.view.sanitised();
 
     // The sines only show in the modes that play them.
-    if (! playsSines (mode))
-        sinesDb = -200.0f;
+    if (! playsSines (settings.mode))
+    {
+        sinesKey = 0;
+        levelDb = 0.0f;
+    }
 
-    if (image.isValid() && image.getWidth() == width && image.getHeight() == height && imagePlanKey == planKey
-        && imageMode == mode && juce::exactlyEqual (imageDepth, depthDb) && juce::exactlyEqual (imageSinesDb, sinesDb)
-        && imageMasks == masks)
+    if (image.isValid() && image.getWidth() == width && image.getHeight() == height && imageSinesKey == sinesKey
+        && juce::exactlyEqual (imageLevelDb, levelDb) && imageSettings == settings && imageScale == scale
+        && imageMasks == masks && ! songDirty && patch == nullptr && ! imagePatched)
         return image;
 
-    imagePlanKey = planKey;
-    imageMode = mode;
-    imageDepth = depthDb;
-    imageSinesDb = sinesDb;
+    imagePatched = patch != nullptr;
+
+    imageSinesKey = sinesKey;
+    imageLevelDb = levelDb;
+    imageSettings = settings;
+    imageScale = scale;
     imageMasks = masks;
 
-    makeTexture (width, height);
-
-    if (! image.isValid() || image.getWidth() != width || image.getHeight() != height)
-        image = juce::Image (juce::Image::RGB, width, height, false);
+    // Worked out at the plan's and the masks' columns at most, and stretched across the width.
+    const auto work = CanvasPlanImage::workWidthFor (width);
+    makeSong (settings, scale, work, height);
 
     // The mask this mode carves with (Carve + Draw's is wider), or none.
     const MaskPlan* mask = nullptr;
 
-    if (masks != nullptr && carvesAudio (mode))
-        mask = mode == EffectMode::carveDraw ? masks->halo.get() : masks->exact.get();
+    if (masks != nullptr && carvesAudio (settings.mode))
+        mask = settings.mode == EffectMode::carveDraw ? masks->halo.get() : masks->exact.get();
 
     if (mask != nullptr && (mask->empty || mask->numColumns <= 0 || mask->numRows <= 0))
         mask = nullptr;
 
-    if (mask != nullptr)
+    // The carve depends on neither the sines nor the colours: kept while only those change.
+    if (! carveValid || mask != carveMask || masks != carveMasks || carveWidth != work || carveHeight != height
+        || carveSongVersion != songVersion
+        || carveScale != scale || carveSettings.mode != settings.mode || ! juce::exactlyEqual (carveSettings.depthDb, settings.depthDb)
+        || carveSettings.view.fftSize != settings.view.fftSize || ! juce::exactlyEqual (carveSettings.sampleRate, settings.sampleRate)
+        || ! juce::exactlyEqual (carveSettings.passSeconds, settings.passSeconds))
     {
-        columnOf.resize (static_cast<size_t> (width));
-        rowOf.resize (static_cast<size_t> (height));
-
-        for (int x = 0; x < width; ++x)
-            columnOf[static_cast<size_t> (x)] = juce::jlimit (0, mask->numColumns - 1, static_cast<int> ((x + 0.5) * mask->numColumns / width));
-
-        // The mask's rows run evenly over the scale from the bottom, as the canvas's do.
-        for (int y = 0; y < height; ++y)
-            rowOf[static_cast<size_t> (y)] = juce::jlimit (0, mask->numRows - 1, static_cast<int> ((1.0 - (y + 0.5) / height) * mask->numRows));
+        makeCarve (mask, settings, scale, work, height);
+        carveValid = true;
+        carveSongVersion = songVersion;
+        carveMask = mask;
+        carveMasks = masks;
+        carveSettings = settings;
+        carveScale = scale;
+        carveWidth = work;
+        carveHeight = height;
     }
 
-    const auto stencil = mode == EffectMode::stencil;
-    const auto perUnit = juce::jlimit (params::minDepthDb, 0.0f, depthDb) * levelsPerDb;   // levels per unit of mask
-    // A plan level of 255 is the loudest sine, sinesDb from the top of the window.
-    const auto sinesOffset = sinesDb * levelsPerDb;
-    const auto withSines = playsSines (mode) && sinesOffset > -255.0f
-                        && planLevels.size() == static_cast<size_t> (width) * static_cast<size_t> (height);
+    // (A picture still held elsewhere, the canvas's last one, is left alone: a new one is made.)
+    if (! image.isValid() || image.getWidth() != width || image.getHeight() != height || image.getReferenceCount() > 1)
+        image = juce::Image (juce::Image::RGB, width, height, false);
+
+    const auto withSines = playsSines (settings.mode) && sinesDb.size() == static_cast<size_t> (work) * static_cast<size_t> (height);
     const auto& table = theme::spectrumTable();
-    const auto& sum = powerSumTable();
+    const auto floorDb = settings.view.floorDb;
+    const auto perDb = 255.0f / (settings.view.ceilingDb - floorDb);
+    CanvasPlanImage::stretchSteps (work, width, stretchBefore, stretchFraction);
 
     juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
     rowPixels.resize (static_cast<size_t> (width));
+    rowLevels.resize (static_cast<size_t> (work));
 
     for (int y = 0; y < height; ++y)
     {
-        const auto offset = static_cast<size_t> (y) * static_cast<size_t> (width);
-        const auto* song = texture.data() + offset;
+        const auto offset = static_cast<size_t> (y) * static_cast<size_t> (work);
 
-        for (int x = 0; x < width; ++x)
+        for (int x = 0; x < work; ++x)
         {
-            auto level = song[x];
-
-            if (mask != nullptr)
-            {
-                const auto m = mask->column (columnOf[static_cast<size_t> (x)])[rowOf[static_cast<size_t> (y)]];
-                level += (stencil ? 1.0f - m : m) * perUnit;
-            }
+            auto level = song[offset + static_cast<size_t> (x)] + carve[offset + static_cast<size_t> (x)];
 
             // The sines added to what is left of the song, as powers (where both are about as
             // loud, the cell is 3 dB brighter than either).
             if (withSines)
-            {
-                if (const auto sine = planLevels[offset + static_cast<size_t> (x)]; sine > 0)
-                {
-                    if (const auto sineLevel = static_cast<float> (sine) + sinesOffset; sineLevel > 0.0f)
-                    {
-                        const auto louder = std::max (level, sineLevel);
-                        const auto apart = juce::jlimit (0, 255, static_cast<int> (std::abs (level - sineLevel) + 0.5f));
-                        level = louder + sum[static_cast<size_t> (apart)];
-                    }
-                }
-            }
+                if (const auto sine = sinesDb[offset + static_cast<size_t> (x)]; sine > silentDb + 1.0f)
+                    level = powerSum (level, sine + levelDb);
 
-            const auto index = juce::jlimit (0, 255, static_cast<int> (level + 0.5f));
-            rowPixels[static_cast<size_t> (x)] = table[static_cast<size_t> (index)];
+            rowLevels[static_cast<size_t> (x)] = level;
+        }
+
+        for (int x = 0; x < width; ++x)
+        {
+            const auto b = static_cast<size_t> (stretchBefore[static_cast<size_t> (x)]);
+            const auto l0 = rowLevels[b];
+            const auto l1 = rowLevels[std::min (static_cast<size_t> (work - 1), b + 1)];
+            auto level = l0 + (l1 - l0) * stretchFraction[static_cast<size_t> (x)];
+
+            if (patch != nullptr)
+                level = patch->blend (level, x, y, height);
+
+            const auto index = (level - floorDb) * perDb + 0.5f;
+            rowPixels[static_cast<size_t> (x)] = table[static_cast<size_t> (index <= 0.0f ? 0 : index >= 255.0f ? 255 : static_cast<int> (index))];
         }
 
         writePixelRow (data, y, rowPixels.data(), width);

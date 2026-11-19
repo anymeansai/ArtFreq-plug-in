@@ -61,9 +61,10 @@ std::vector<TimeMark> timeMarks (int lengthIndex, int numerator, int denominator
 void drawTimeGrid (juce::Graphics&, juce::Rectangle<float> area, const std::vector<TimeMark>&,
                    juce::Colour majorColour, juce::Colour minorColour);
 
-/** The marks' labels and ticks in `axis` (the strip under `area`). */
+/** The marks' labels and ticks in `axis` (the strip under `area`); labels that would reach past
+    `labelsEnd` are left out (the canvas keeps the end of the strip for its preview's status). */
 void drawTimeLabels (juce::Graphics&, juce::Rectangle<float> axis, juce::Rectangle<float> area,
-                     const std::vector<TimeMark>&);
+                     const std::vector<TimeMark>&, float labelsEnd = 1.0e9f);
 
 /** The font of axis labels (DM Mono, small). */
 juce::Font labelFont();

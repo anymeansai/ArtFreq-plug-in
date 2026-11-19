@@ -11,7 +11,9 @@ code is also built as **ArtFreq FX**, an audio effect that carves the drawing in
 1. **The canvas is a picture of the spectrogram.** x is time across the drawing's *length*
    (1 beat to 32 bars, synced to the tempo); y is frequency on the *same scale as the user's
    analyser* (logarithmic by default, like MiniMeters; linear and mel are offered), between
-   20 Hz and 20 kHz by default. What the user sees on the canvas is what the analyser will show.
+   20 Hz and 20 kHz by default. What the user sees on the canvas is what the analyser will show:
+   not an ideal picture of the drawing, but its real sound, rendered and analysed as that
+   analyser does (see [Measured preview](#measured-preview)).
 2. **The document** (`core/Document.h`) is a paint layer plus objects (text, pictures). Objects
    are placed by time (fraction of the length) and by frequency in Hz, so "put this in the
    highs" keeps meaning the highs. The paint layer is tagged with the scale it was painted on
@@ -56,6 +58,10 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
   the set the frame began with until the frame is done (`getFadingPlan`), so it is not freed.
 - **Export** renders on a background thread from a shared (immutable) plan; a change that makes
   the render unwanted stops it (the message thread never waits for it).
+- **The measured preview** renders and analyses one pass on a background thread of the canvas's
+  own (low priority, started the first time a render is wanted, stopped with the editor), from
+  the same shared plans and masks; a newer request stops it within a block. Only its finished
+  picture comes to the message thread (a row-by-row copy into an image).
 
 ## Parameters
 
@@ -76,6 +82,9 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | rangeLow | Analyser low | 10..1000 Hz | 20 Hz | no |
 | rangeHigh | Analyser high | 2000..24000 Hz | 20000 Hz | no |
 | slope | Analyser slope | 0, 3, 4.5, 6 dB/oct | 0 dB/oct | no |
+| analyserFft | Analyser FFT | 4096, 8192, 16384 | 8192 | no |
+| analyserFloor | Analyser floor | -140..-40 dBFS | -100 dBFS | no |
+| analyserCeiling | Analyser top | -60..+12 dBFS | 0 dBFS | no |
 | mode | Mode (ArtFreq FX only) | Carve, Carve + Draw, Stencil, Draw | Carve | yes |
 | depth | Depth (ArtFreq FX only) | -120..0 dB | -80 dB | yes |
 
@@ -90,6 +99,13 @@ had; ArtFreq 0.1's third trigger, "Free loop" (index 2, or its name), loads as T
 Repeat on, the nearest thing left (a plain clamp to the two choices would make it MIDI note).
 Host automation lanes recorded on the old three-choice Trigger cannot be rewritten: there,
 Free loop now reads as MIDI note.
+
+Analyser FFT, floor and top were added after 0.5 (version hint 6): how the user's analyser draws
+(its FFT size, and the levels its darkest and brightest colours stand for), so the canvas and the
+live view draw the sound as it does. They change nothing in the sound, and like the analyser
+match they are settings, not automation targets. A state without them loads the defaults (an
+older project looks as a new one does). The view the canvas uses spans at least 20 dB
+(`AnalyserView::sanitised`: a floor typed above the top keeps the floor).
 
 Lows was added after 0.2 (version hint 3). A saved tree without it was made with the stripes,
 the only look there was, and loads with Stripes rather than the default Smooth, so an old project
@@ -573,26 +589,55 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     glance that the mode has a sound to set. It is the one thing that changes the canvas's
     height, with the mode, which redraws the whole canvas anyway (carved shapes become drawn
     ones); reserving its room in Carve would leave an empty band in the mode most use.
-  - **Canvas** (`ui/EffectPreview.h`): the effect needs a song the canvas does not have, so a
-    stand-in is drawn under the drawing: a texture with a song's shape (falling towards the highs,
-    -22 to -40 dB of the 60 dB colour window, sixteen beats of kick in the lows and hats in the
-    highs, held chords, grain on a fixed grid so resizing does not shimmer; worked out once at
-    768 x 384 and resampled to the canvas's size: worked out pixel by pixel at that size, it cost
-    47 / 99 / 179 ms at a new size on a 2x display at window 100 / 150 / 200 %, the most of a
-    corner drag, now 10 / 17 / 37 ms for the whole canvas), carved by the
-    processor's own masks as deep as Depth: Carve, dark shapes; Stencil, the shapes filled with the
-    stand-in on black; Carve + Draw, the sines' picture (the instrument's canvas, as levels) in a
-    hole carved with the halo masks; Draw, the sines over the stand-in. Nothing drawn: the
-    stand-in as it is, as the effect leaves the song. In the Draw modes the sines are drawn at
-    their own level, Level included (the canvas follows it), and added to the stand-in as powers:
-    the window's top is a full-scale sine in an analyser cell, the stand-in sits where a loud
-    master (-10 dBFS RMS) shows at FFT 4096 (about -32 dB a cell at 1 kHz; pink noise there: -34),
-    and the sines are drawn 10 dB above their plan amplitude (`sinesCalibrationDb`), which gives
-    the contrasts measured through the processor on that master: the default drawing at the
-    default Level +5.3 dB above the song in Draw, +9.4 in Carve + Draw (drawn against undrawn
-    cells, 400 Hz - 2.5 kHz); the canvas, +5.4 / +9.6. Before, the sines were drawn at the top of
-    the window whatever the Level, about 31 dB above the stand-in: Draw looked far stronger than
-    it is on a full song, which is the customer's complaint. At -60 dB the sines are gone.
+  - **Canvas**: the effect's real output on the user's own song: the measured preview (see
+    [Measured preview](#measured-preview)) runs the real carver (the mode's masks, Carve + Draw's
+    halo, Depth) and in the Draw modes the sines at Level over the song, takes the latency out, and
+    analyses the result as the user's analyser will. **The song** is what came in during the last
+    pass that played (`dsp/SongCapture.h`): once the editor has been on screen a moment the
+    processor keeps the input (the channels' mean, before it is carved) while a pass plays, a take
+    from where the pass starts to where it ends, stops or jumps, at most 2^22 samples (87 s at
+    48 kHz; a longer pass uses its first 87 s, repeated); when a take ends, covers enough of the
+    pass (a second at least, and not less than a fuller take already kept) and is not the same
+    audio again (a DAW looping the same bars: a fingerprint of 16 slots' energy below and above
+    250 Hz, within 1.5 dB), two preallocated 16-bit buffers swap (a lock-free hand-over: an atomic
+    word holds which one is published and whether a reader is copying it; the audio thread
+    neither allocates nor waits, and keeps its take if a reader is busy). The preview copies it
+    off the audio thread, plays it at its place in the pass and loops it (a 10 ms crossfaded
+    seam) around that. Before any pass has played, a stand-in (`dsp/StandInSong.h`, below). The
+    line under the canvas says which: "Real output, on your track's last pass" or "Real output,
+    on a stand-in song". Why: the review of the measured preview played ArtFreq FX on songs the
+    stand-in was not tuned to; on a bass track the canvas showed carved words in the mids and
+    highs that the real output did not have at all (56 dB more contrast), on a mix 20 dB quieter
+    20 dB more. Nothing drawn: the song as it is, as the effect leaves it.
+    - **The stand-in** is a loud master's shape on an analyser (-10 dBFS RMS): its noise falls 5 dB
+      an octave in an analyser's cells (-27 dB a cell at 70 Hz, -46 at 1 kHz, -61 at 8 kHz at FFT
+      4096), rolled off below 30 Hz and above 16 kHz, with sixteen beats across the length (a hat
+      in the highs, a kick), held chords, grain, and in the sound a kick (a tone falling from 168
+      to 48 Hz) and a bass line (a note a half beat, six harmonics) over a noise 14 dB quieter in
+      the lows. Before the measured preview it was a texture falling 1.8 dB an octave with a noise kick: against the
+      truth lab's dense test master (`tools/TruthLab.cpp`, a bass-heavy mix like much current
+      music) its mids sat 13 dB and its highs 25 dB too bright, so carves there looked that much
+      deeper against it than against a song, and its lows had none of a mix's bright bass lines,
+      which fill small holes back in (lows carved 8 dB deeper than on the master). Now its medians
+      are within 1 - 4 dB of the master's in every band and its brightest lows (95th percentile)
+      within 1 dB, and a carve stands out against it as against the master (truth lab: excess
+      contrast 0.4 - 2.6 dB in the mids and highs, 1.4 - 5 dB in the lows). It is noise made from
+      its level picture (frames of random phase overlap-added, the same for the same place on the
+      timeline, so a preview does not shimmer from one edit to the next) plus the tones; one song,
+      not every song (the help and the README say so).
+    - **While dragging** the fast preview (`ui/EffectPreview.h`) draws the same: the song as the
+      last measurement analysed it (the stand-in's own level picture before the first), carved as
+      the carver and the analyser carve it: per carver bin (11.7 Hz) the drawing's mean over its
+      band (Stencil: its maximum, the rest taken), widened by the mode's halo bins, Depth to the
+      power of it; in the lows and low mids (below 1.5 kHz, where a row is narrower than two of the
+      analyser's bins) each analyser bin reads the song's power around it through the window's
+      lobe, carved, so a hole narrower than the lobe fills in from the song's own loud lines
+      (before, the carve's power was averaged over a fixed few Hz: low letters came out thin and
+      sharp where the real carve is a blurred blob, r 0.64 against r 0.94 now); higher up a row
+      reads its least carved bin; in time about half of each window, so thin strokes in time come
+      out faint; the sines (the instrument's fast preview) added as powers. Where the drawing did
+      not change near since the last measurement, it shows that measurement (see [Canvas](#canvas)). The old calibration of the sines against the stand-in
+      (`sinesCalibrationDb`, +10 dB) is gone: both are now in the analyser's own dBFS.
   - **Live** shows what comes out (the song, carved): the processor pushes its output (the
     channels' mean) to the analyser.
   - **Bottom bar** (`EffectBottomBar`, 40 px): the three tools in one raised box (not shown in
@@ -649,8 +694,9 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     - With both strips shown (Draw, painting) the drawer still has 292 px, and a text object's
       settings, its tallest content, need 288 (`Inspector::compactMinimumHeight`).
   - **Settings** (672 px, two columns, centred under the top bar): on the left the analyser
-    match and the window size; on the right what the instrument keeps in its footer and is
-    rarely changed, under "Playing": **Trigger** (Transport | MIDI, with the note "MIDI notes
+    match (Scale, Range, Slope, FFT, Levels and a two-line note); the window size in the title
+    row (there is no room for a third section in the small window); on the right what the
+    instrument keeps in its footer and is rarely changed, under "Playing": **Trigger** (Transport | MIDI, with the note "MIDI notes
     reach an effect in Reaper, Bitwig, Cubase, Studio One and FL Studio; not in Ableton Live"),
     **Start** (On play | At bar, and the bar's field while At bar is chosen) and **Tempo** (Host |
     Manual, and the BPM field while Manual is chosen; with Host the row reads "DAW: 120 BPM").
@@ -658,7 +704,7 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     without Repeat); otherwise the row says where passes start ("When a note is played", "On
     the DAW's bars (Repeat is on)"). Then Reset drawing. Across the foot, under a hairline, the
     Licence card as one row (see [Licensing](#licensing)); to make room for it in the small
-    window the rows are 8 px apart (were 10). The panel stays under 372 px tall as it was, and
+    window the rows are 6 px apart (were 10). The panel stays under 372 px tall as it was, and
     in every state of the card (a three-line question, a failure's message) it ends at least
     6 px above the window's edge.
   - **Left out**: Preview and Export. Carving needs the song, which only the DAW has; the help
@@ -682,6 +728,69 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
     snapshot tool still checks, in every state and at 75, 100, 150 and 200 %, that the bars,
     strips and canvas tile the window, that nothing inside a bar, a strip or the drawer
     overlaps or leaves it, and that the bottom bar's line fits.
+
+## Measured preview
+
+The customer, on the screenshots: "Don't want to false advertise", then, after the accuracy
+check (`docs/ACCURACY.md`: the canvas was a perfect analyser's picture of the drawing, right
+above about 250 Hz, far too clean below it, solid where the highs show scan lines, in colours of
+its own): "make the plug-in show correctly what the output will be". So the canvas shows the
+real output as the user's analyser will show it (`ui/MeasuredPreview.h`):
+
+- **What is rendered.** One pass of the real output, with the code that plays it: ArtFreq's
+  `PassRenderer` (the engine, Level, the safety clipper: what Bounce WAV writes); ArtFreq FX's
+  `TunedCarver` with the mode's masks and `ArtFreqProcessor::carveSettingsFor` (the audio
+  thread's settings), the gate open over the pass and closing 5 ms before its end, over the
+  user's song as it came in during the last pass (`dsp/SongCapture.h`; before any pass, the
+  stand-in `dsp/StandInSong.h`; see [ArtFreq FX](#artfreq-fx)), the sines of the Draw
+  modes added, the latency taken out as a host's delay compensation does. Silence (ArtFreq) or
+  the song uncarved (ArtFreq FX) half a window either side, as an analyser sees around a pass.
+- **How it is analysed** (`dsp/SpectrumAnalysis.h`, shared with the live view): Hann, the FFT
+  size from Settings, a full-scale sine reads 0 dBFS; each pixel row reads the spectrum between
+  the bins around its centre, or the loudest bin inside it, plus the analyser's slope; colours:
+  the canvas's colour map over the levels from Settings (-100 to 0 dBFS by default). One analysis
+  per pixel column at most and none closer than a sixteenth of the window (the window blurs time
+  over far more; the columns between are interpolated): a 4-bar pass at 8192 points is 750
+  analyses whatever the window size.
+- **When.** A request (the plan and masks, mode, Depth and Level to the quarter dB, the length to
+  the millisecond, the rate, the scale and slope, FFT and levels, the picture's size, the
+  document's revision) is made on the canvas's timer; a new one stops a render of an older one at
+  once (the render asks once per block); once one has stayed the same for 0.2 s it is rendered on
+  the canvas's own low-priority thread, never before the plan is rebuilt for it, only while the
+  canvas is on screen and has been for 0.5 s (an editor opened and closed at once, as host scans
+  and validators do, starts no thread and renders nothing). A change of levels only recolours the
+  last analysis, at once; a change of the instrument's Level alone moves it by as many dB, at once,
+  where the clipper is out of it (the pass's peak is kept with the analysis). Nothing runs while
+  the editor is closed (the thread belongs to the canvas), nothing on the audio thread, and the
+  message thread only copies the finished picture into an image (a few ms at the largest window).
+  The processor keeps the last measurement (`PreviewMemory`) while no editor is open: a window
+  opened again on the same project shows it at once (before, every opening rendered the
+  unchanged project again: 1.4 - 2.8 s of the fast preview each time).
+- **What is shown**: see [Canvas](#canvas). Cross-fades: 0.3 s to the measured picture, 0.12 s to
+  the fast one (it follows the mouse). The selection, handles, outlines, the hidden layer's tag
+  and the brush cursor are drawn on top as before.
+- **Cost** (`ArtFreqTruthLab --bench`, one core of the Linux build machine, JUCE's own FFT as on
+  Windows without IPP; vDSP on a Mac is several times faster; two runs): the default drawing, 4
+  bars at 120 BPM, Retina at 100 %: 0.12 - 0.15 s (ArtFreq), 0.37 - 0.40 s (ArtFreq FX, the carver
+  and the stand-in); the worst, everything drawn at Density 1024, 32 bars at 20 BPM (a 384 s
+  pass): 2.6 - 3.3 s (ArtFreq, at 8192 and 16384, at 100 and 200 %), 5 - 8 s (ArtFreq FX, Carve
+  and Carve + Draw); meanwhile the canvas shows the fast preview and "Updating…". Memory: the
+  analysis in hundredths of a dB (1.4 MB for the default, at most 12.5 MB at 200 % on Retina)
+  and the picture (5.6 MB at 100 % on Retina, 22.6 MB at 200 %); ArtFreq FX's kept song, 16 MB
+  once an editor has been open. The fast preview is made on a thread of its own
+  (`ui/FastPreview.h`): asking for it costs the message thread nothing (the last picture is
+  shown until the new one is in, a frame or two later; the outlines and handles are drawn on top
+  as the mouse moves). Made, on a dense project (nine words, a picture, a stroke, Density 1024;
+  `ArtFreqTruthLab --drag`): ArtFreq 17 / 22 / 38 ms at 100 % / Retina / 200 % on Retina, ArtFreq
+  FX's Carve + Draw 29 / 54 / 94 ms. (Before, it was made while painting: 19 - 39 ms and 22 - 52
+  ms on the message thread per drag step, half the updates a second of 0.5.)
+- **Verified** by the truth lab against the real processor's output, analysed independently
+  (`ArtFreqTruthLab`, see [docs/ACCURACY.md](ACCURACY.md)): ArtFreq's canvas matches its real
+  output in every band (correlation 0.96 - 1.00, mean difference within 0.2 dB at the same
+  FFT size); ArtFreq FX's, once a pass of the song has played, matches the real output on that
+  song (the dense test master; with `--scenarios` a bass track, a quiet mix and a bass-heavy
+  master too): correlation 0.97 - 1.00, mean within 0.2 dB, the carve's contrast within 1.1 dB.
+  Before a pass, carving the stand-in, against a different song: correlation 0.65 - 0.98.
 
 ## Interface
 
@@ -736,13 +845,37 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 
 ### Canvas
 
-- Shows the current plan as the analyser would: each line drawn at its height with the colour
-  map of its amplitude in dB (relative to the loudest), lines 1-2 px tall so low density shows
-  as visible scan lines and high density looks solid. With Smooth lows the comb's band is drawn
-  filled: each 5 Hz cell of its grid over its whole height, at amplitude / combGain (the
-  brightness an analyser of 8192 points shows; the first line above takes over where the band
-  ends, so there is no seam), and thin strokes as the lines that play them, as Stripes draws
-  them. Background = colour map at silence.
+- Shows the real sound as the user's analyser will (see [Measured preview](#measured-preview)):
+  once the drawing and the settings have stayed the same for 0.2 s, one pass of the real output
+  is rendered and analysed in the background and the canvas cross-fades to it (0.3 s). Until then,
+  and while the drawing or the sound changes (painting, dragging, typing, undo, a load, a mode, a
+  knob, whether from the mouse, the wheel, the keyboard or the host), the fast preview shows the
+  last measurement where the drawing did not change near since (the columns further than the
+  analyser's window, the measurement's spacing and in ArtFreq FX the carver's frame from any
+  change; the plan's loudness as a whole, which a change elsewhere can scale, is followed; a
+  blend over as many columns again), so the picture changes only where the drawing does and the
+  swap to the new measurement is gentle (truth lab, a word moved: correlation with the new
+  measurement 0.93 -> 0.97 in the lows, mean difference 5.6 -> 1.9 dB). Where it changed, and
+  before the first measurement, a model (`ui/CanvasPlanImage.h`): each line drawn as the analyser draws a
+  sine (Hann's main lobe and first side lobes, as many Hz wide at every height: a scan line one
+  pixel tall in the highs at low Density, blurred and thick in the lows), each line's loudness
+  blurred in time by the analyser's window, the comb's band filled at the brightness the analyser
+  shows it (combGain at 8192, 3 dB more or less per halving or doubling), in absolute levels:
+  dBFS at Level with the analyser's slope, coloured over the analyser's range from Settings, as
+  the measured preview and the live view are; the comb's grid with a lobe as wide as its sines
+  glide through in a window, a skirt beyond it (1.4 dB a Hz at 8192), its rising stripes (3.5 dB
+  either way, at the phase the measured pass starts with); under the comb's shapes the haze its
+  gliding sines leave, falling away below the shape as measured (52 dB down a quarter of an
+  octave below, 77 from two octaves) and in streaks (before: an even fill 45 dB down to the
+  bottom, 13 - 33 dB brighter than the real haze). It still leaves out some of what only the sound
+  has (energy spilled where shapes start and stop, lines beating): see docs/ACCURACY.md for its
+  numbers. A change of the picture's size, the colours, the take of the user's song or (where it
+  is one shift) the instrument's Level keeps the measured picture until the new one is in (a
+  moment); any other change goes to the fast preview at once (before, a mode, Density or Depth
+  changed with the mouse up kept the stale measured picture, the mode before's carve, for up to
+  the whole render). Under the canvas's right end, a quiet line: "Preview of the real sound"
+  (ArtFreq FX: "Real output, on your track's last pass" or "Real output, on a stand-in song") or
+  "Updating…", in fewer words where the bar numbers need the room. Background = colour map at the floor.
   Faint frequency grid lines (from `gridFrequencies`) and bar/beat lines.
 - Hz labels on the left axis; bar/beat labels along the bottom (e.g. "1", "2", "3", "4" for
   4 bars; beats for lengths under a bar), in the host's time signature (its beats: three to a
@@ -783,8 +916,12 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 
 ### Live view
 
-A scrolling spectrogram of ArtFreq's own output (`LiveAnalyzer`), right to left, same scale,
-range, slope and colour map as the canvas. It shows one pass of the drawing and a quarter more
+A scrolling spectrogram of ArtFreq's own output (`LiveAnalyzer`), right to left, analysed as the
+canvas's measured preview is (Hann, the FFT size, slope and colour range from Settings, the same
+rows: `dsp/SpectrumAnalysis.h`), so the same sound looks the same in both. A column every
+sixteenth of the window (5 to 21 ms at 48 kHz); its history kept in hundredths of a dB, under
+16 MB at any FFT size. (Until the measured preview it had its own analysis, Blackman-Harris 4096
+points, and its own colours, -89 to -29 dBFS, tuned to look like the canvas's relative ones.) It shows one pass of the drawing and a quarter more
 (whole seconds, 4 to 20 s; it follows the length and the tempo), so the whole drawing is on screen
 for a while each pass; seconds are labelled every 1, 2 or 5 s, as room allows. A small "LIVE" badge
 in accent2.
@@ -973,20 +1110,24 @@ settings. Icons are drawn with juce::Path (no image assets).
 
 ### Settings panel (overlay card, closes with Esc / outside click)
 
-"Match your analyser": Scale (Log | Linear | Mel), Low Hz, High Hz (editable numbers), Slope
-(0 | 3 | 4.5 | 6 dB/oct) with a note "MiniMeters: Log, 20 Hz - 20 kHz; set Slope to match its
-Slope setting". Window size (75 % | 100 % | 125 % | 150 % | 200 %). Reset drawing (asks inline; not
-there while the plug-in is locked). Licence: the Licence card (see [Licensing](#licensing)).
+Two columns, 672 px, as ArtFreq FX's (the analyser match grew two rows, which a single column of
+the old 376 px no longer fitted under the window's height with the licence card). Left, "Match
+your analyser": Scale (Log | Linear | Mel), Range (Low and High Hz, editable numbers), Slope
+(0 | 3 | 4.5 | 6 dB/oct), FFT (4096 | 8192 | 16384) and Levels (the floor and the top, dBFS,
+editable numbers), with a note "As your analyser is set. MiniMeters: Log, 20 Hz – 20 kHz." Right:
+Window size (75 % | 100 % | 125 % | 150 % | 200 %), Reset drawing (asks inline; not there while
+the plug-in is locked). Across the foot, the Licence card (see [Licensing](#licensing)).
 
 ### Help panel (overlay)
 
 Short numbered steps: put ArtFreq on an instrument track; open a spectrogram (MiniMeters) on the
-output; match scale/range in Settings; add text/image/paint; choose a band and density; press
+output; match scale, range, slope, FFT size and levels in Settings; add text/image/paint (a moment
+after each change the canvas shows the real sound, as the analyser will); choose a band and density; press
 play in the DAW (it plays once from wherever you start; Preview plays it with the DAW stopped);
 Trigger modes and Repeat explained (once on play or from a bar, loops with Repeat; stop the DAW
 and it stops); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
 overlapping objects (Alt-click or click again, the right-click menu). Plus tips: highs show the
-sharpest detail; the lowest octaves are coarse in every analyser; Lows (Smooth fills shapes
+sharpest detail; the lows are blurry in every analyser (the canvas shows it); Lows (Smooth fills shapes
 below about 2 kHz, Stripes plays separate lines there); raise Density for solid shapes, lower for
 a scan-line look. Shortcuts, with "Space: plays your DAW (a space while you type)". Across the
 foot, under a hairline, **Activate**: where the key is, that an ArtFreq Pro key activates ArtFreq
@@ -1186,7 +1327,26 @@ play, any other bar as At bar) and its round trip, sound within 10 ms of the DAW
 again after stop and start, a DAW loop and coming out of bypass, a single pass and a held MIDI loop through the processor, a single pass
 through time-signature changes and at a typed tempo, preview following Repeat, process with MIDI,
 panic, bypass fades, time signature, the canvas's song bars, level/clipper bound); WAV export (cancelling it, its
-progress, bounce file names);
+progress, bounce file names); the measured preview (`MeasuredPreviewTests.cpp`: an analyser
+column reading a sine at its level and the slope tilting it, the view sanitised, the stand-in's
+levels as its picture says and the same noise from any start, a band's level on the canvas as
+an analyser reads its loudest line, nothing rendered while the request changes or the canvas is
+not on screen and one render once it stays, a render no longer wanted stopping within a block,
+a change of levels recoloured at once without rendering, ArtFreq FX's carve on time (no latency
+left in), FFT size and levels saved and loaded in both plug-ins and their defaults for older
+states, and the canvas on screen: the fast preview first, the cross-fade to the measured one,
+Level moving the measured picture at once without a render, Density, an edit and a loaded
+project going to the fast preview and back); what a review of it found
+(`PreviewHonestyTests.cpp`: ArtFreq FX keeping the pass that played as it came in, the same audio
+again publishing nothing new, a moment of a pass not replacing a whole one, the loop's seam
+without a click, the canvas carving a bass track that played rather than the stand-in, a mode
+or Depth from the host going to the fast preview at once, a window opened again showing the last
+measurement at once, the fast preview made on its own thread with the message thread asking for
+it in under 5 ms on a dense project at 2x and 4x, and showing the measurement where the drawing
+did not change); the fast preview (the comb's band filled and Stripes' gaps, the comb as
+bright as the lines, thin strokes as Stripes draws them and blurred by the window; ArtFreq FX's
+modes over the stand-in, the halo, the sines' level, the measured stand-in taking the texture's
+place); the live analyser at the FFT size from Settings;
 the editor, driven with synthetic events (bounce files; the export following the drawing:
 after each change a new file that matches a render of the new plan, the chip's "Updating...",
 stopped renders, saving the current file; undo steps of wheel and arrow gestures,

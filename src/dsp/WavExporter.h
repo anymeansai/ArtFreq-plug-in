@@ -9,6 +9,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include <functional>
+#include <memory>
 
 namespace artfreq
 {
@@ -20,6 +21,36 @@ struct ExportSettings
     float gain = 0.5f;           // the user's output level, linear
     int bitDepth = 24;
     int numChannels = 2;         // the same signal on each channel
+};
+
+class ArtEngine;
+
+/** One pass of the drawing as the bounce renders it, a block at a time, in memory: the plan from
+    position 0 to 1 over `seconds` with ArtEngine (gate on from the first sample, so the first 5 ms
+    fade in, and closing 5 ms before the end, so the fade-out ends with the pass), times `gain`,
+    through the plug-in's safety clipper. The WAV export writes it to a file; the canvas's
+    measured preview analyses it (ui/MeasuredPreview.h), so both are exactly the sound of the
+    drawing. Allocates in the constructor only; any thread. */
+class PassRenderer
+{
+public:
+    static constexpr int blockSize = 4096;   // render() never makes more than this at once
+
+    PassRenderer (const ArtPlan& plan, double sampleRate, double seconds, float gain);
+    ~PassRenderer();
+
+    int64_t getTotalSamples() const noexcept { return totalSamples; }
+    int64_t getPosition() const noexcept { return done; }
+
+    /** Renders the next samples of the pass (mono) into `out`: min (maxSamples, blockSize, what is
+        left) of them, which it returns (0 once the pass is over). */
+    int render (float* out, int maxSamples) noexcept;
+
+private:
+    std::unique_ptr<ArtEngine> engine;
+    float gain = 1.0f;
+    int64_t totalSamples = 0, done = 0, gateCloses = 0;
+    double perSample = 0.0;
 };
 
 /** Renders the plan from position 0 to 1 over `seconds` with ArtEngine (gate on from the first
@@ -35,9 +66,10 @@ bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
                       const std::function<bool()>& shouldCancel = nullptr,
                       const std::function<void (double)>& onProgress = nullptr);
 
-/** The plug-in's safety clipper: transparent below 0.89 (-1 dBFS), then a smooth curve that
-    never exceeds 1.0 in magnitude. */
+/** The plug-in's safety clipper: transparent up to softClipThreshold (0.89, -1 dBFS), then a smooth
+    curve that never exceeds 1.0 in magnitude. */
 float softClip (float x) noexcept;
+inline constexpr float softClipThreshold = 0.89f;
 
 //==============================================================================
 // Bounce file names. DAWs know dropped audio by its path and name (Logic, Live and FL Studio

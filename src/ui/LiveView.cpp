@@ -28,13 +28,9 @@ namespace
         return juce::jlimit (shortestSpan, longestSpan, std::ceil (passSeconds * spanPerPass - 0.05));
     }
 
-    // The colour window, in dBFS as the analyser reads them (a full-scale sine is 0 dB). Tuned
-    // so ArtFreq's usual output (Level -6 dB, a few hundred lines) reads like the canvas: its
-    // loudest lines near the top of the colour map, Contrast 40 dB reaching well into it.
-    constexpr float ceilingDb = -29.0f;
-    constexpr float floorDb = -89.0f;
-
-    constexpr float slopePivotHz = 1000.0f;
+    // The colours and the FFT size are the user's analyser's (Settings), as on the canvas: the
+    // same sound looks the same in both.
+    constexpr float silentDb = SpectrumAnalyser::floorDb;
 
     // Some hosts stop calling the plug-in while their transport is stopped. The output is then
     // silent, so after this long without new columns the view scrolls silence instead of freezing.
@@ -58,8 +54,12 @@ struct LiveView::Impl
     {
         scale = processor.getScale();
         slope = slopeOf (processor);
+        view = processor.getAnalyserView();
         span = spanForPass (processor.getLengthSeconds());
     }
+
+    int historyBins() const noexcept { return historyFft / 2 + 1; }
+    int historyHop() const noexcept { return historyFft / LiveAnalyzer::hopsPerWindow; }
 
     juce::Rectangle<float> area() const
     {
@@ -68,20 +68,22 @@ struct LiveView::Impl
 
     // ---- the analysed columns --------------------------------------------------------------
 
-    /** Makes room for `span` seconds of columns at a sample rate. Another rate clears the
-        history; another span keeps the newest columns that still fit. */
-    void prepareHistory (double sampleRate)
+    /** Makes room for `span` seconds of columns at a sample rate, analysed with `fftSize` points.
+        Another rate or size clears the history; another span keeps the newest columns that still
+        fit. Kept in hundredths of a dB: a 20 s history at any FFT size is under 16 MB. */
+    void prepareHistory (double sampleRate, int fftSize)
     {
-        const auto needed = static_cast<int> (std::ceil (span * sampleRate / LiveAnalyzer::hopSize)) + 2;
+        const auto sameAnalysis = juce::exactlyEqual (sampleRate, historyRate) && fftSize == historyFft;
+        const auto needed = static_cast<int> (std::ceil (span * sampleRate / (fftSize / LiveAnalyzer::hopsPerWindow))) + 2;
 
-        if (juce::exactlyEqual (sampleRate, historyRate) && capacity == needed)
+        if (sameAnalysis && capacity == needed)
             return;
 
-        const auto bins = static_cast<size_t> (LiveAnalyzer::numBins);
-        std::vector<float> kept;
+        const auto bins = static_cast<size_t> (fftSize / 2 + 1);
+        std::vector<int16_t> kept;
         auto keptCount = 0;
 
-        if (juce::exactlyEqual (sampleRate, historyRate) && capacity > 0)
+        if (sameAnalysis && capacity > 0)
         {
             keptCount = juce::jmin (filled, needed);
             kept.resize (static_cast<size_t> (keptCount) * bins);
@@ -94,9 +96,10 @@ struct LiveView::Impl
         }
 
         historyRate = sampleRate;
+        historyFft = fftSize;
         capacity = needed;
-        history.assign (static_cast<size_t> (capacity) * bins, -140.0f);
-        peaks.assign (static_cast<size_t> (capacity), -140.0f);
+        history.assign (static_cast<size_t> (capacity) * bins, toCentiDb (silentDb));
+        peaks.assign (static_cast<size_t> (capacity), silentDb);
         std::copy (kept.begin(), kept.end(), history.begin());
         filled = keptCount;
         writeIndex = keptCount % capacity;
@@ -115,15 +118,20 @@ struct LiveView::Impl
         span = newSpan;
 
         if (capacity > 0)
-            prepareHistory (historyRate);
+            prepareHistory (historyRate, historyFft);
 
         imageDirty = true;
         return true;
     }
 
-    float* column (int index) noexcept
+    static int16_t toCentiDb (float db) noexcept
     {
-        return history.data() + static_cast<size_t> (index) * static_cast<size_t> (LiveAnalyzer::numBins);
+        return static_cast<int16_t> (juce::jlimit (-30000, 30000, static_cast<int> (std::lround (db * 100.0f))));
+    }
+
+    int16_t* column (int index) noexcept
+    {
+        return history.data() + static_cast<size_t> (index) * static_cast<size_t> (historyBins());
     }
 
     /** Index of the column `age` columns before the newest (age 0 = newest). */
@@ -134,12 +142,15 @@ struct LiveView::Impl
 
     void addColumn (const float* magnitudesDb, int numBins)
     {
-        const auto count = juce::jmin (numBins, LiveAnalyzer::numBins);
+        const auto count = juce::jmin (numBins, historyBins());
         auto* target = column (writeIndex);
-        std::copy (magnitudesDb, magnitudesDb + count, target);
-        std::fill (target + count, target + LiveAnalyzer::numBins, -140.0f);
 
-        peaks[static_cast<size_t> (writeIndex)] = -140.0f;
+        for (int bin = 0; bin < count; ++bin)
+            target[bin] = toCentiDb (magnitudesDb[bin]);
+
+        std::fill (target + count, target + historyBins(), toCentiDb (silentDb));
+
+        peaks[static_cast<size_t> (writeIndex)] = silentDb;
         writeIndex = (writeIndex + 1) % capacity;
         filled = juce::jmin (filled + 1, capacity);
         newColumns.push_back (columnIndexForAge (0));
@@ -147,41 +158,13 @@ struct LiveView::Impl
 
     // ---- columns to pixels -----------------------------------------------------------------
 
-    /** How each image row reads the spectrum: the loudest bin it covers, or (where rows are finer
-        than bins, in the lows) the spectrum interpolated at the row's centre. */
-    struct RowSource
-    {
-        int first = 0, last = -1;  // bins covered (inclusive); last < first: interpolate
-        float position = 0.0f;     // fractional bin to interpolate at
-        float offsetDb = 0.0f;     // the analyser's slope at this height
-        bool valid = false;        // false above Nyquist
-    };
-
+    /** How each image row reads a column: as the canvas's measured preview does (SpectrumRows:
+        the loudest bin inside the row, or the spectrum between the bins around it, and the
+        analyser's slope). */
     void updateRows (int height)
     {
-        rows.assign (static_cast<size_t> (height), {});
-
-        const auto s = scale.sanitised();
-        const auto binHz = historyRate / LiveAnalyzer::fftSize;
-        const auto nyquist = historyRate * 0.5;
-        const auto h = static_cast<double> (height);
-
-        for (int y = 0; y < height; ++y)
-        {
-            auto& row = rows[static_cast<size_t> (y)];
-            const auto top = s.toHz (1.0 - static_cast<double> (y) / h);
-            const auto bottom = s.toHz (1.0 - static_cast<double> (y + 1) / h);
-            const auto centre = s.toHz (1.0 - (static_cast<double> (y) + 0.5) / h);
-
-            if (! (centre > 0.0) || centre >= nyquist)
-                continue;
-
-            row.valid = true;
-            row.offsetDb = slope * static_cast<float> (std::log2 (centre / slopePivotHz));
-            row.first = juce::jmax (0, static_cast<int> (std::ceil (bottom / binHz)));
-            row.last = juce::jmin (LiveAnalyzer::numBins - 1, static_cast<int> (std::floor (top / binHz)));
-            row.position = static_cast<float> (juce::jlimit (0.0, static_cast<double> (LiveAnalyzer::numBins - 2), centre / binHz));
-        }
+        rowMap.prepare (scale, height, historyRate, historyFft, slope);
+        rowDb.resize (static_cast<size_t> (height));
     }
 
     /** Colour-map levels (0..255) of one column for every image row; also notes its loudest
@@ -189,39 +172,19 @@ struct LiveView::Impl
     void levelsOf (int columnIndex, std::vector<uint8_t>& out)
     {
         const auto* db = column (columnIndex);
-        out.resize (rows.size());
-        auto loudest = -140.0f;
+        binDb.resize (static_cast<size_t> (historyBins()));
 
-        for (size_t y = 0; y < rows.size(); ++y)
+        for (size_t bin = 0; bin < binDb.size(); ++bin)
+            binDb[bin] = 0.01f * db[bin];
+
+        rowMap.apply (binDb.data(), rowDb.data());
+        out.resize (rowDb.size());
+        auto loudest = silentDb;
+
+        for (size_t y = 0; y < rowDb.size(); ++y)
         {
-            const auto& row = rows[y];
-
-            if (! row.valid)
-            {
-                out[y] = 0;
-                continue;
-            }
-
-            float value;
-
-            if (row.last >= row.first)
-            {
-                value = db[row.first];
-
-                for (auto bin = row.first + 1; bin <= row.last; ++bin)
-                    value = std::max (value, db[bin]);
-            }
-            else
-            {
-                const auto i = static_cast<int> (row.position);
-                const auto frac = row.position - static_cast<float> (i);
-                value = db[i] + (db[i + 1] - db[i]) * frac;
-            }
-
-            value += row.offsetDb;
-            loudest = std::max (loudest, value);
-            const auto t = (value - floorDb) / (ceilingDb - floorDb);
-            out[y] = static_cast<uint8_t> (juce::jlimit (0, 255, static_cast<int> (t * 255.0f + 0.5f)));
+            loudest = std::max (loudest, rowDb[y]);
+            out[y] = colourLevelFor (rowDb[y], view.floorDb, view.ceilingDb);
         }
 
         peaks[static_cast<size_t> (columnIndex)] = loudest;
@@ -275,7 +238,7 @@ struct LiveView::Impl
 
     float pixelsPerColumn() const
     {
-        const auto columnsVisible = span * historyRate / LiveAnalyzer::hopSize;
+        const auto columnsVisible = span * historyRate / historyHop();
         return static_cast<float> (image.getWidth() / columnsVisible);
     }
 
@@ -297,7 +260,7 @@ struct LiveView::Impl
         const auto ppc = pixelsPerColumn();
 
         // Oldest first, so sub-pixel columns merge into the right neighbours.
-        const auto count = juce::jmin (filled, static_cast<int> (std::ceil (width / juce::jmax (0.01f, ppc))) + 1);
+        const auto count = juce::jmin (filled, static_cast<int> (std::ceil (static_cast<float> (width) / juce::jmax (0.01f, ppc))) + 1);
 
         for (int age = count - 1; age >= 0; --age)
         {
@@ -362,7 +325,7 @@ struct LiveView::Impl
     bool hasSignal() const
     {
         for (int age = 0; age < filled; ++age)
-            if (peaks[static_cast<size_t> (columnIndexForAge (age))] > floorDb + 6.0f)
+            if (peaks[static_cast<size_t> (columnIndexForAge (age))] > view.floorDb + 6.0f)
                 return true;
 
         return false;
@@ -404,16 +367,28 @@ struct LiveView::Impl
             return;
 
         auto& analyzer = processor.getAnalyzer();
+        const auto newView = processor.getAnalyserView();
+
+        // Another FFT size: the analyser starts afresh with it (what it held is dropped), and so
+        // does the history.
+        if (newView.fftSize != analyzer.getFftSize())
+        {
+            analyzer.setFftSize (newView.fftSize);
+            analyzer.process ([] (const float*, int) {});
+        }
+
         const auto spanChanged = updateSpan();
-        prepareHistory (analyzer.getSampleRate());
+        const auto analysisChanged = analyzer.getFftSize() != historyFft || ! juce::exactlyEqual (analyzer.getSampleRate(), historyRate);
+        prepareHistory (analyzer.getSampleRate(), analyzer.getFftSize());
 
         const auto newScale = processor.getScale();
         const auto newSlope = slopeOf (processor);
 
-        if (spanChanged || newScale != scale || ! juce::exactlyEqual (newSlope, slope))
+        if (spanChanged || analysisChanged || newScale != scale || ! juce::exactlyEqual (newSlope, slope) || newView != view)
         {
             scale = newScale;
             slope = newSlope;
+            view = newView;
             imageDirty = true;
             owner.repaint();
         }
@@ -428,14 +403,14 @@ struct LiveView::Impl
         }
         else if (historyRate > 0.0 && now - lastColumnTime > stallSeconds)
         {
-            const auto secondsPerColumn = LiveAnalyzer::hopSize / historyRate;
+            const auto secondsPerColumn = historyHop() / historyRate;
             const auto columns = juce::jmin (capacity, static_cast<int> ((now - lastColumnTime) / secondsPerColumn));
 
-            if (silence.size() != static_cast<size_t> (LiveAnalyzer::numBins))
-                silence.assign (static_cast<size_t> (LiveAnalyzer::numBins), -140.0f);
+            if (silence.size() != static_cast<size_t> (historyBins()))
+                silence.assign (static_cast<size_t> (historyBins()), silentDb);
 
             for (int i = 0; i < columns; ++i)
-                addColumn (silence.data(), LiveAnalyzer::numBins);
+                addColumn (silence.data(), historyBins());
 
             lastColumnTime = columns >= capacity ? now : lastColumnTime + columns * secondsPerColumn;
             added = columns;
@@ -469,7 +444,7 @@ struct LiveView::Impl
             if (capacity == 0)
             {
                 updateSpan();
-                prepareHistory (processor.getAnalyzer().getSampleRate());
+                prepareHistory (processor.getAnalyzer().getSampleRate(), view.fftSize);
             }
 
             rebuildImage (width, height);
@@ -585,12 +560,14 @@ struct LiveView::Impl
         engine->prepare (sampleRate, blockSize);
         engine->setPlan (plan.get());
 
+        view = processor.getAnalyserView();
         auto analyzer = std::make_unique<LiveAnalyzer>();
+        analyzer->setFftSize (view.fftSize);
         analyzer->prepare (sampleRate);
         analyzer->setActive (true);
 
         updateSpan();
-        prepareHistory (sampleRate);
+        prepareHistory (sampleRate, view.fftSize);
 
         // One pass of the drawing at its real speed, ending exactly at "now", after silence if
         // the time is longer than the pass: what the view shows once the DAW has played it.
@@ -651,12 +628,14 @@ struct LiveView::Impl
         if (audio.empty() || ! (sampleRate > 0.0))
             return;
 
+        view = processor.getAnalyserView();
         auto analyzer = std::make_unique<LiveAnalyzer>();
+        analyzer->setFftSize (view.fftSize);
         analyzer->prepare (sampleRate);
         analyzer->setActive (true);
 
         updateSpan();
-        prepareHistory (sampleRate);
+        prepareHistory (sampleRate, view.fftSize);
 
         constexpr int blockSize = 512;
 
@@ -678,14 +657,16 @@ struct LiveView::Impl
     ArtFreqProcessor& processor;
     FrequencyScale scale;
     float slope = 0.0f;
+    AnalyserView view;             // the user's analyser: its FFT size and colours
     double span = shortestSpan;    // seconds across the view (spanForPass)
     bool active = false;
     bool signalShown = false;
 
-    // Analysed columns (dB per bin), a ring of `capacity`
-    std::vector<float> history;
+    // Analysed columns (hundredths of a dB per bin), a ring of `capacity`
+    std::vector<int16_t> history;
     std::vector<float> peaks;  // the loudest row of each column as last drawn
     double historyRate = 0.0;
+    int historyFft = LiveAnalyzer::defaultFftSize;
     int capacity = 0, filled = 0, writeIndex = 0;
     std::vector<int> newColumns;
     double lastColumnTime = 0.0;   // when the last column arrived (seconds, hi-res counter)
@@ -695,7 +676,8 @@ struct LiveView::Impl
     juce::Image image;
     bool imageDirty = true;
     float advance = 0.0f;  // sub-pixel scroll carried to the next column
-    std::vector<RowSource> rows;
+    SpectrumRows rowMap;
+    std::vector<float> binDb, rowDb;
     std::vector<uint8_t> scratchLevels, rowLevelCache;
 };
 

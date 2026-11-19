@@ -1,34 +1,33 @@
 #pragma once
 
-// ArtFreq FX's canvas: what an analyser will show of the effect's output in each mode.
+// ArtFreq FX's fast preview: what an analyser will show of the effect's output in each mode,
+// worked out without rendering sound, quickly enough to follow a drag (the measured preview,
+// MeasuredPreview.h, renders the real carver and takes over once the drawing stays still).
 //
-// The effect works on a song the canvas does not have, so a stand-in is drawn under the drawing:
-// a texture with a song's shape (louder lows, a beat, a few held notes, grain), carved by the
-// same masks the audio thread carves with, as deep as Depth:
+// The effect works on a song the canvas does not have, so a stand-in is drawn under the drawing
+// (dsp/StandInSong.h): once the measured preview has analysed it, its real analysis; until then,
+// the level the stand-in is made with (once the user's song has played, the measured preview
+// analyses that instead). It is carved by the same masks the audio thread carves with, as deep as
+// Depth, as the carver and the analyser carve it (makeCarve): per carver bin the drawing's mean
+// over its band and the mode's halo bins, the analyser's lobe reading the song around each bin
+// in the lows (so small holes there fill in from the song's own loud lines), and in time about
+// half of each one's window (so thin strokes in time come out faint):
 //
 //  - Carve: the stand-in with the drawing as dark shapes;
 //  - Stencil: the drawing filled with the stand-in, the rest dark;
 //  - Carve + Draw: the stand-in with a dark hole a little larger than the drawing (the halo
-//    masks) and the drawing's sines bright in it;
+//    masks) and the drawing's sines in it;
 //  - Draw: the stand-in with the drawing's sines on top.
 //
-// Levels use the canvas's colour window (CanvasPlanImage::windowDb): a carve of 60 dB or more is
-// black. Nothing drawn (or everything hidden) carves nothing, as in the effect.
-//
-// The sines are drawn at their own level against the stand-in, Level included, and added to it as
-// powers (as in an analyser's cell), so the canvas shows how far they stand out of a song: the
-// window's top is a full-scale sine in one analyser cell, and the stand-in sits about where a
-// loud master (-10 dBFS RMS) shows on an analyser of 4096 points (about -32 dB a cell at 1 kHz;
-// pink noise at -10 dBFS RMS: -34). The sines are drawn sinesCalibrationDb above their plan
-// amplitude, which makes the canvas show what the analyser shows: measured through the
-// processor, the default drawing at the default Level on pink noise at -10 dBFS RMS stands
-// +5.3 dB above the song in Draw and +9.4 dB in Carve + Draw (drawn cells against the others,
-// 400 Hz - 2.5 kHz, FFT 4096), and the canvas the same (+5.4 / +9.6). (A sine's energy spreads
-// over neighbouring cells, where the drawing's lines add up, and an analyser's noise reads below
-// its mean power, which the stand-in's smooth texture does not.) At -60 dB the sines are gone.
+// The sines are the instrument's fast preview (CanvasPlanImage: dBFS at Level, as the analyser
+// shows them), added to the stand-in as powers, as in an analyser's cell. Colours: the analyser's
+// range from Settings, as everywhere. Nothing drawn (or everything hidden) carves nothing.
 
+#include "CanvasPlanImage.h"
+#include "MeasuredPreview.h"
 #include "Parameters.h"
 #include "core/MaskPlan.h"
+#include "dsp/SpectrumAnalysis.h"
 
 #include <juce_graphics/juce_graphics.h>
 
@@ -42,39 +41,82 @@ namespace artfreq::ui
 class EffectPreviewImage
 {
 public:
-    /** The picture for `mode`, `width` x `height` pixels. `planLevels` is the sine plan's picture
-        as colour-map levels, row by row (CanvasPlanImage::getPixelLevels), and `planKey`
-        changes whenever it does; its top level (255) stands for sines at `sinesDb` (dB against
-        a full-scale sine: the plan's loudest amplitude with the output Level), so 0 draws them at
-        the top of the window. Rebuilt only when something changed; otherwise the cached image is
-        returned. */
-    juce::Image get (const std::vector<uint8_t>& planLevels, uint64_t planKey, EffectMode mode, float depthDb,
-                     float sinesDb, const std::shared_ptr<const MaskPlanSet>& masks, int width, int height);
+    /** What the picture depends on besides the drawing. */
+    struct Settings
+    {
+        EffectMode mode = EffectMode::carve;
+        float depthDb = params::defaultDepthDb;
+        AnalyserView view;
+        double sampleRate = 48000.0;
+        double passSeconds = 8.0;
 
-    /** sinesDb for a plan's loudest amplitude (CanvasPlanImage::getLoudestAmplitude) played at an
-        output gain (linear), as an analyser shows it against the stand-in. */
-    static float sinesDbFor (float loudestAmplitude, float outputGain) noexcept;
+        bool operator== (const Settings& other) const noexcept
+        {
+            return mode == other.mode && juce::exactlyEqual (depthDb, other.depthDb) && view == other.view
+                && juce::exactlyEqual (sampleRate, other.sampleRate) && juce::exactlyEqual (passSeconds, other.passSeconds);
+        }
 
-    /** How much brighter than its plan amplitude a sine shows against the stand-in (see above). */
-    static constexpr float sinesCalibrationDb = 10.0f;
+        bool operator!= (const Settings& other) const noexcept { return ! operator== (other); }
+    };
 
-    /** The stand-in song's level at a place on the canvas, in dB below its loudest moment (x 0..1
-        along the length, y 0..1 from the bottom of the scale to the top). */
-    static float songDb (double x, double y) noexcept;
+    /** The picture, `width` x `height` pixels. `sinesDb` is the sines' level, row by row, before
+        Level, CanvasPlanImage::workWidthFor (width) columns across, and `levelDb` Level
+        (CanvasPlanImage::getPixelDbBeforeLevel and getLevelDb; ignored in the modes that do not
+        play them); `sinesKey` changes whenever `sinesDb` does. Worked out at that many columns and
+        stretched across the width. Rebuilt only when something changed; otherwise the cached image
+        is returned. */
+    juce::Image get (const std::vector<float>& sinesDb, float levelDb, uint64_t sinesKey, const Settings& settings,
+                     const std::shared_ptr<const MaskPlanSet>& masks, const FrequencyScale& scale, int width, int height,
+                     const MeasuredPatch* patch = nullptr);
+
+    /** The stand-in as the measured preview analysed it (its `input`), to draw instead of its
+        texture; null to go back to the texture. The caller passes only an analysis made with the
+        scale, the FFT, the rate and the length of the pictures to come. */
+    void setMeasuredSong (std::shared_ptr<const MeasuredSpectrogram> song);
+    bool hasMeasuredSong() const noexcept { return measuredSong != nullptr; }
+
+    /** The stand-in song's level in dB of an analyser cell at FFT 4096 (x 0..1 along the length,
+        at `hz`): dsp/StandInSong.h. */
+    static float songDb (double x, double hz) noexcept;
 
 private:
-    void makeTexture (int width, int height);
+    void makeSong (const Settings& settings, const FrequencyScale& scale, int width, int height);
+    void makeCarve (const MaskPlan* mask, const Settings& settings, const FrequencyScale& scale, int width, int height);
 
     juce::Image image;
-    uint64_t imagePlanKey = 0;
-    EffectMode imageMode = EffectMode::carve;
-    float imageDepth = 1.0f;
-    float imageSinesDb = 1.0f;
+    uint64_t imageSinesKey = 0;
+    float imageLevelDb = 0.0f;
+    Settings imageSettings;
+    FrequencyScale imageScale;
     std::shared_ptr<const MaskPlanSet> imageMasks;
+    bool imagePatched = false;
 
-    std::vector<float> texture;   // the stand-in, as colour-map levels (0..255, not rounded)
-    int textureWidth = 0, textureHeight = 0;
-    std::vector<int> columnOf, rowOf;
+    // The stand-in at the picture's size, dB
+    std::vector<float> song;
+    int songWidth = 0, songHeight = 0, songFft = 0;
+    FrequencyScale songScale;
+    bool songMeasured = false;
+    std::shared_ptr<const MeasuredSpectrogram> measuredSong;
+    bool songDirty = true;
+    uint64_t songVersion = 0;      // counts the songs made (the carve reads the song)
+
+    // What carving leaves of the song, as dB to add, at the picture's size
+    std::vector<float> carve;
+    const MaskPlan* carveMask = nullptr;
+    std::shared_ptr<const MaskPlanSet> carveMasks;
+    Settings carveSettings;
+    FrequencyScale carveScale;
+    int carveWidth = 0, carveHeight = 0;
+    bool carveValid = false;
+    uint64_t carveSongVersion = 0;
+
+    std::vector<double> runningSums, binEdgeRows;
+    std::vector<float> songBinPower;   // the song's power at the analyser's bins in the lows, [column * bins + bin]
+    uint64_t songBinVersion = 0;
+    int songBinWidth = 0, songBinHeight = 0, songBinCount = 0;
+    std::vector<float> carveScratch, rowLevels;
+    std::vector<int> stretchBefore;
+    std::vector<float> stretchFraction;
     std::vector<juce::PixelARGB> rowPixels;
 };
 

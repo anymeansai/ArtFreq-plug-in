@@ -12,11 +12,69 @@ namespace artfreq
 
 namespace
 {
-    constexpr float clipThreshold = 0.89f;
+    constexpr float clipThreshold = softClipThreshold;
     constexpr float clipHeadroom = 1.0f - clipThreshold;
     constexpr float largestBelowOne = 0.99999994f;   // the float just under 1
-    constexpr int exportBlockSize = 4096;
     constexpr double longestExportSeconds = 60.0 * 60.0;
+}
+
+PassRenderer::PassRenderer (const ArtPlan& plan, double sampleRate, double seconds, float gainToUse)
+    : engine (std::make_unique<ArtEngine>()),
+      gain (gainToUse)
+{
+    totalSamples = std::max (static_cast<int64_t> (0), static_cast<int64_t> (std::llround (seconds * sampleRate)));
+    const auto fadeSamples = static_cast<int64_t> (std::llround (ArtEngine::gateFadeSeconds * sampleRate));
+    gateCloses = std::max (static_cast<int64_t> (0), totalSamples - fadeSamples);
+    perSample = totalSamples > 0 ? 1.0 / static_cast<double> (totalSamples) : 0.0;
+
+    engine->prepare (sampleRate, blockSize);
+    engine->setPlan (&plan);
+}
+
+PassRenderer::~PassRenderer() = default;
+
+int PassRenderer::render (float* out, int maxSamples) noexcept
+{
+    const auto blockLength = static_cast<int> (std::min ({ static_cast<int64_t> (maxSamples), static_cast<int64_t> (blockSize),
+                                                          totalSamples - done }));
+
+    if (blockLength <= 0)
+        return 0;
+
+    PlaySegment segments[2];
+    int numSegments = 0;
+
+    // Playing up to the moment the gate closes, so the 5 ms fade-out ends with the pass.
+    if (done < gateCloses)
+    {
+        auto& playing = segments[numSegments++];
+        playing.start = 0;
+        playing.length = static_cast<int> (std::min (static_cast<int64_t> (blockLength), gateCloses - done));
+        playing.playing = true;
+        playing.fraction = static_cast<double> (done) * perSample;
+        playing.fractionPerSample = perSample;
+        playing.jump = done == 0;
+    }
+
+    const auto playedHere = numSegments > 0 ? segments[0].length : 0;
+
+    if (playedHere < blockLength)
+    {
+        auto& stopped = segments[numSegments++];
+        stopped.start = playedHere;
+        stopped.length = blockLength - playedHere;
+        stopped.playing = false;
+        stopped.fraction = static_cast<double> (done + playedHere) * perSample;
+        stopped.fractionPerSample = perSample;
+    }
+
+    engine->render (out, blockLength, segments, numSegments);
+
+    for (int i = 0; i < blockLength; ++i)
+        out[i] = softClip (out[i] * gain);
+
+    done += blockLength;
+    return blockLength;
 }
 
 float softClip (float x) noexcept
@@ -111,16 +169,10 @@ bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
         return false;
     }
 
-    const auto totalSamples = static_cast<int64_t> (std::llround (settings.seconds * settings.sampleRate));
-    const auto fadeSamples = static_cast<int64_t> (std::llround (ArtEngine::gateFadeSeconds * settings.sampleRate));
-    const auto gateCloses = std::max (static_cast<int64_t> (0), totalSamples - fadeSamples);
-    const auto perSample = 1.0 / (settings.seconds * settings.sampleRate);
+    PassRenderer pass (plan, settings.sampleRate, settings.seconds, settings.gain);
+    const auto totalSamples = pass.getTotalSamples();
 
-    auto engine = std::make_unique<ArtEngine>();
-    engine->prepare (settings.sampleRate, exportBlockSize);
-    engine->setPlan (&plan);
-
-    std::vector<float> mono (static_cast<size_t> (exportBlockSize));
+    std::vector<float> mono (static_cast<size_t> (PassRenderer::blockSize));
     std::vector<const float*> channels (static_cast<size_t> (settings.numChannels), mono.data());
 
     for (int64_t done = 0; done < totalSamples;)
@@ -132,38 +184,10 @@ bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
             return false;
         }
 
-        const auto blockLength = static_cast<int> (std::min (static_cast<int64_t> (exportBlockSize), totalSamples - done));
-        PlaySegment segments[2];
-        int numSegments = 0;
+        const auto blockLength = pass.render (mono.data(), PassRenderer::blockSize);
 
-        // Playing up to the moment the gate closes, so the 5 ms fade-out ends with the file.
-        if (done < gateCloses)
-        {
-            auto& playing = segments[numSegments++];
-            playing.start = 0;
-            playing.length = static_cast<int> (std::min (static_cast<int64_t> (blockLength), gateCloses - done));
-            playing.playing = true;
-            playing.fraction = static_cast<double> (done) * perSample;
-            playing.fractionPerSample = perSample;
-            playing.jump = done == 0;
-        }
-
-        const auto playedHere = numSegments > 0 ? segments[0].length : 0;
-
-        if (playedHere < blockLength)
-        {
-            auto& stopped = segments[numSegments++];
-            stopped.start = playedHere;
-            stopped.length = blockLength - playedHere;
-            stopped.playing = false;
-            stopped.fraction = static_cast<double> (done + playedHere) * perSample;
-            stopped.fractionPerSample = perSample;
-        }
-
-        engine->render (mono.data(), blockLength, segments, numSegments);
-
-        for (int i = 0; i < blockLength; ++i)
-            mono[static_cast<size_t> (i)] = softClip (mono[static_cast<size_t> (i)] * settings.gain);
+        if (blockLength <= 0)
+            break;
 
         if (! writer->writeFromFloatArrays (channels.data(), settings.numChannels, blockLength))
         {

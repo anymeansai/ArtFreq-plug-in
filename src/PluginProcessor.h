@@ -20,6 +20,8 @@
 #include "dsp/LiveAnalyzer.h"
 #include "dsp/PlanExchange.h"
 #include "dsp/PlayheadTracker.h"
+#include "dsp/SongCapture.h"
+#include "dsp/SpectrumAnalysis.h"
 #include "dsp/TunedCarver.h"
 #include "license/LicenseManager.h"
 
@@ -32,6 +34,11 @@
 
 namespace artfreq
 {
+
+namespace ui
+{
+    struct PreviewMemory;   // ui/MeasuredPreview.h
+}
 
 class ArtFreqProcessor final : public juce::AudioProcessor,
                                public juce::ChangeBroadcaster,
@@ -96,6 +103,10 @@ public:
     FrequencyScale getScale() const;
     PlanSettings getPlanSettings() const;
 
+    /** How the user's analyser draws (Settings): its FFT size and the levels its colours span.
+        Not heard: the canvas and the live view draw the sound with it. */
+    AnalyserView getAnalyserView() const noexcept;
+
     // ---- the drawing (message thread only) -----------------------------------------------
     // Every change to the document goes through editDocument, so undo, the plan and the
     // editor stay in step. The processor sends a change message (ChangeBroadcaster) after
@@ -103,6 +114,10 @@ public:
     // (not loads) also tell the host the project has unsaved changes.
 
     const ArtDocument& getDocument() const noexcept { return document; }
+
+    /** Counts the changes to the document (edits, undo, redo, loads): equal numbers, the same
+        drawing. Message thread. */
+    uint64_t getDocumentRevision() const noexcept { return documentRevision; }
 
     /** Applies `edit` to the document. An undo step is recorded first unless `coalesceKey` is
         non-empty and equal to the key of the previous edit (so a whole brush stroke, or typing
@@ -201,6 +216,22 @@ public:
     /** ... and it carves this many FFT bins wider still (Carve itself widens by one). */
     static constexpr int carveDrawHaloBins = 3;
 
+    /** How the carver carves in a mode at a depth (`carving` false: it changes nothing, as in
+        Draw and in bypass): what the audio thread uses, and the canvas's measured preview. */
+    static CarveSettings carveSettingsFor (EffectMode mode, float depthDb, bool carving) noexcept;
+
+    /** ArtFreq FX: from now on, keep the song coming in during the passes that play (see
+        dsp/SongCapture.h), for the canvas to carve instead of a stand-in. Message thread; the
+        editor calls it once it has been on screen a moment (so host scans make none). */
+    void enableSongCapture();
+
+    /** ... and what it keeps (null until enabled; the instrument never has one). Message thread. */
+    std::shared_ptr<SongCapture> getSongCapture() const noexcept { return songCapture; }
+
+    /** What the editor's canvas keeps between its windows: its last measured preview (see
+        ui/MeasuredPreview.h). Message thread. */
+    std::shared_ptr<ui::PreviewMemory>& getPreviewMemory() noexcept { return previewMemory; }
+
     /** The output level as a linear gain (for the WAV export). */
     float getOutputGain() const noexcept;
 
@@ -248,6 +279,7 @@ private:
     Canvas canvas;
     PlanSettings lastBuiltSettings;
     bool documentDirty = true;
+    uint64_t documentRevision = 0;
     std::atomic<bool> parametersDirty { true };
     std::atomic<int> editorWidth { 0 }, editorHeight { 0 };  // 0 = default size
     int builtHaloColumns = -1;   // the effect's masks were built with this halo (-1: none yet)
@@ -293,6 +325,13 @@ private:
     juce::MidiBuffer chunkMidi;  // for hosts that send blocks larger than announced
     std::atomic<double> currentSampleRate { 48000.0 };
 
+    // The song coming in (the effect, once an editor has asked for it): made on the message
+    // thread, written by the audio thread through the atomic pointer, freed with the processor.
+    std::shared_ptr<SongCapture> songCapture;
+    std::atomic<SongCapture*> songCaptureForAudio { nullptr };
+
+    std::shared_ptr<ui::PreviewMemory> previewMemory;   // message thread
+
     // audio thread, the effect only
     TunedCarver carver;
     const MaskPlanSet* currentMasks = nullptr;
@@ -320,6 +359,9 @@ private:
     std::atomic<float>* rangeLowParam = nullptr;
     std::atomic<float>* rangeHighParam = nullptr;
     std::atomic<float>* slopeParam = nullptr;
+    std::atomic<float>* analyserFftParam = nullptr;
+    std::atomic<float>* analyserFloorParam = nullptr;
+    std::atomic<float>* analyserCeilingParam = nullptr;
     std::atomic<float>* modeParam = nullptr;       // the effect only
     std::atomic<float>* depthParam = nullptr;      // the effect only
 

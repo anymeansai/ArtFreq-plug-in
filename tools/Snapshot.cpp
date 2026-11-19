@@ -153,16 +153,19 @@
 #include "ui/ShellExport.h"
 #include "ui/ShellFooter.h"
 #include "ui/ShellToolbar.h"
+#include "ui/Theme.h"
 #include "ui/Widgets.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 
 namespace
 {
@@ -255,6 +258,39 @@ void saveStateBeside (const juce::File& png, artfreq::ArtFreqProcessor& processo
     }
 
     png.withFileExtension ("json").replaceWithText (juce::JSON::toString (juce::var (object)));
+}
+
+/** The canvas shows the measured preview (the real sound, as an analyser with the plug-in's
+    Settings shows it) once the drawing has stayed still for a moment: the screenshots show that,
+    as a user sees it, except those caught in the middle of a drag or a brush stroke, which show
+    the fast preview and "Updating...". Checks that the canvas then says which it shows. */
+void settleCanvas (juce::Component& editor, float scale, const juce::String& name)
+{
+    auto* canvas = dynamic_cast<artfreq::ui::CanvasView*> (findComponentWithId (editor, "canvas"));
+
+    if (canvas == nullptr || ! canvas->isVisible())
+        return;
+
+    // The picture taken shows the fast preview of what is drawn now (in the plug-in it is made
+    // on its own thread and comes in a frame later).
+    canvas->setFastPreviewMadeWhilePainting (true);
+
+    if (name.contains ("dragging") || name.contains ("painting"))
+    {
+        check (! canvas->getPreviewStatus().current && canvas->getPreviewStatus().text.startsWith ("Updating"),
+               name + ": mid-drag the canvas shows the fast preview and says it is updating");
+        return;
+    }
+
+    canvas->settleMeasuredPreview (scale);
+    const auto status = canvas->getPreviewStatus();
+    check (status.measuredShown && status.current && ! status.fading, name + ": the canvas shows the measured preview");
+    const auto* processor = dynamic_cast<artfreq::ArtFreqProcessor*> (dynamic_cast<juce::AudioProcessorEditor&> (editor).getAudioProcessor());
+    const auto effect = processor != nullptr && processor->isEffect();
+    // ArtFreq FX carves the song that played once a pass has (else a stand-in), and says which.
+    const auto usersSong = effect && processor->getSongCapture() != nullptr && processor->getSongCapture()->getSerial() != 0;
+    check (status.text == (! effect ? "Preview of the real sound" : usersSong ? "Real output, on your track's last pass" : "Real output, on a stand-in song"),
+           name + ": the canvas says it shows the real sound (" + status.text + ")");
 }
 
 /** A stand-in for an imported picture: a shaded disc and a frame on a white background, the
@@ -1232,6 +1268,46 @@ void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     check (sameDrawing (processor.getDocument(), start), "after the layer checks the drawing is back where it began");
 }
 
+/** The colour-map level (0..255) of every pixel, by the nearest colour of the map. */
+std::vector<int> colourLevels (const juce::Image& image)
+{
+    const auto& table = artfreq::ui::theme::spectrumTable();
+    std::map<uint32_t, int> cache;
+    std::vector<int> levels;
+    levels.reserve (static_cast<size_t> (image.getWidth()) * static_cast<size_t> (image.getHeight()));
+
+    for (int y = 0; y < image.getHeight(); ++y)
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto c = image.getPixelAt (x, y);
+            const auto key = c.getARGB() & 0xffffffu;
+            auto found = cache.find (key);
+
+            if (found == cache.end())
+            {
+                auto best = 0, bestDistance = std::numeric_limits<int>::max();
+
+                for (int i = 0; i < 256; ++i)
+                {
+                    const auto t = juce::Colour (table[static_cast<size_t> (i)].getUnpremultiplied());
+                    const auto dr = t.getRed() - c.getRed(), dg = t.getGreen() - c.getGreen(), db = t.getBlue() - c.getBlue();
+
+                    if (dr * dr + dg * dg + db * db < bestDistance)
+                    {
+                        bestDistance = dr * dr + dg * dg + db * db;
+                        best = i;
+                    }
+                }
+
+                found = cache.emplace (key, best).first;
+            }
+
+            levels.push_back (found->second);
+        }
+
+    return levels;
+}
+
 int countDifferentPixels (const juce::Image& a, const juce::Image& b)
 {
     if (a.getBounds() != b.getBounds())
@@ -1308,13 +1384,16 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     content.keyPressed (juce::KeyPress ('v', juce::ModifierKeys(), 'v'));
     pump (30);
 
-    // Stripes: lines, which the canvas shows as scan lines in the lows.
+    // Stripes: lines, which the canvas shows as scan lines in the lows (once the measured preview
+    // of the new sound is in: settled here rather than waited for).
+    canvas->settleMeasuredPreview (1.0f);
     const auto smoothCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
     clickOn (*lows, at (0.75f));
     pump (60);
     check (juce::exactlyEqual (value(), 1.0f) && lows->getSelectedIndex() == 1 && ! planHasComb(),
            "clicking Stripes plays the lows as separate lines");
     pump (60);
+    canvas->settleMeasuredPreview (1.0f);
     const auto stripesCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
     check (countDifferentPixels (smoothCanvas, stripesCanvas) > 2000, "... and the canvas shows them as stripes");
     save ("lows-stripes", true);
@@ -1332,6 +1411,7 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     pump (60);
     check (lows->getSelectedIndex() == 0 && planHasComb(), "Lows follows the parameter back to Smooth");
     pump (60);
+    canvas->settleMeasuredPreview (1.0f);
     check (countDifferentPixels (smoothCanvas, canvas->createComponentSnapshot (canvas->getLocalBounds())) == 0,
            "... and the canvas shows the filled band again");
 }
@@ -1624,7 +1704,10 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         processor.rebuildPlanIfNeeded();
 
         if (settle)
+        {
             pump (60);
+            settleCanvas (*editor, scale, name);
+        }
 
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
         const auto file = outputDir.getChildFile ("artfreq-fx-" + name + ".png");
@@ -1791,9 +1874,11 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     check (processor.getEffectMode() == EffectMode::carve, "clicking Carve chooses it");
 
     {
+        canvas->settleMeasuredPreview (1.0f);
         const auto carved = canvas->createComponentSnapshot (canvas->getLocalBounds());
         setParameter (processor, params::id::mode, 2.0f);
         pump (80);
+        canvas->settleMeasuredPreview (1.0f);
         const auto stencilled = canvas->createComponentSnapshot (canvas->getLocalBounds());
         check (countDifferentPixels (carved, stencilled) > 20000, "the canvas shows Carve and Stencil differently");
         setParameter (processor, params::id::mode, 0.0f);
@@ -2263,6 +2348,112 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
                "an ArtFreq FX saved at 0.4's 1120 x 720 opens at 720 x 440");
     }
 
+    processor.releaseResources();
+}
+
+/** ArtFreq FX once a pass of the user's song has played: the canvas carves that song (here a
+    bass track: a kick, a bass line and a little low-mid body, nothing high), not the stand-in, so
+    the carve shows where the song has something to carve and nowhere else, and says so. */
+void checkEffectOnTheUsersSong (const juce::File& outputDir, float pixelScale)
+{
+    using namespace artfreq;
+
+    ArtFreqProcessor processor (ArtFreqProcessor::Variant::effect);
+    processor.setPlayConfigDetails (2, 2, 48000.0, 512);
+    processor.prepareToPlay (48000.0, 512);
+    juce::Uuid textId, imageId;
+    makeRichDrawing (processor, textId, imageId);
+    processor.rebuildPlanIfNeeded();
+
+    const std::unique_ptr<ArtFreqEditor> editor (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
+
+    if (editor == nullptr)
+    {
+        check (false, "ArtFreq FX makes an ArtFreqEditor");
+        return;
+    }
+
+    editor->setVisible (true);
+    pump (150);
+
+    auto* canvas = dynamic_cast<ui::CanvasView*> (findComponentWithId (*editor, "canvas"));
+
+    if (canvas == nullptr)
+    {
+        check (false, "ArtFreq FX has a canvas");
+        return;
+    }
+
+    const auto standIn = [&]
+    {
+        canvas->settleMeasuredPreview (pixelScale);
+        return canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+    }();
+
+    // One pass of the bass track, as a DAW plays it into the effect (the editor has been open,
+    // so the effect keeps what comes in).
+    processor.enableSongCapture();
+
+    struct PlayHead final : public juce::AudioPlayHead
+    {
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+        PositionInfo info;
+    } head;
+
+    processor.setPlayHead (&head);
+    juce::AudioBuffer<float> buffer (2, 512);
+    juce::MidiBuffer midi;
+    const auto passSamples = static_cast<int64_t> (std::llround (processor.getLengthSeconds() * 48000.0));
+    double kick = 0.0, bass = 0.0, body = 0.0;
+
+    for (int64_t done = 0; done < passSamples + 24000; done += 512)
+    {
+        const auto t = static_cast<double> (done) / 48000.0;
+        head.info = {};
+        head.info.setIsPlaying (true);
+        head.info.setBpm (120.0);
+        head.info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
+        head.info.setPpqPosition (t * 2.0);
+        head.info.setTimeInSeconds (t);
+
+        for (int i = 0; i < 512; ++i)
+        {
+            const auto n = done + i;
+            const auto sinceBeat = std::fmod (static_cast<double> (n), 24000.0) / 48000.0;
+            kick += juce::MathConstants<double>::twoPi * (50.0 + 90.0 * std::exp (-sinceBeat * 30.0)) / 48000.0;
+            bass += juce::MathConstants<double>::twoPi * ((n / 48000) % 2 == 0 ? 55.0 : 41.2) / 48000.0;
+            body += juce::MathConstants<double>::twoPi * 330.0 / 48000.0;
+            const auto x = 0.5 * std::exp (-sinceBeat * 10.0) * std::sin (kick) + 0.2 * std::sin (bass) + 0.01 * std::sin (body);
+            buffer.setSample (0, i, static_cast<float> (x));
+            buffer.setSample (1, i, static_cast<float> (x));
+        }
+
+        midi.clear();
+        processor.processBlock (buffer, midi);
+    }
+
+    head.info.setIsPlaying (false);
+    buffer.clear();
+    processor.processBlock (buffer, midi);
+    processor.setPlayHead (nullptr);
+
+    check (processor.getSongCapture() != nullptr && processor.getSongCapture()->getSerial() != 0,
+           "ArtFreq FX keeps the song that played");
+
+    pump (60);
+    settleCanvas (*editor, pixelScale, "fx-carve-your-track");
+    const auto ownSong = canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+    check (countDifferentPixels (standIn, ownSong) > 20000, "the canvas carves the song that played, not the stand-in");
+
+    const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, pixelScale);
+    const auto file = outputDir.getChildFile ("artfreq-fx-carve-your-track.png");
+
+    if (writePng (image, file))
+        std::cout << file.getFullPathName() << std::endl;
+    else
+        check (false, "write " + file.getFullPathName());
+
+    saveStateBeside (file, processor, *editor, pixelScale);
     processor.releaseResources();
 }
 
@@ -3541,7 +3732,10 @@ int main (int argc, char* argv[])
             processor.rebuildPlanIfNeeded();
 
             if (settle)
+            {
                 pump (60);
+                settleCanvas (*editor, scale, name);
+            }
 
             const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
             const auto file = outputDir.getChildFile ("artfreq-" + name + ".png");
@@ -3719,12 +3913,49 @@ int main (int argc, char* argv[])
         }
 
         // ---- live view --------------------------------------------------------------------------
+        // The canvas's measured picture of the drawing, for the live view's to agree with.
+        juce::Image canvasPicture;
+
+        if (auto* canvasView = find<ui::CanvasView> (*editor, "canvas"))
+        {
+            canvasView->settleMeasuredPreview (1.0f);
+            canvasPicture = canvasView->createComponentSnapshot (canvasView->getDrawingArea().toNearestInt());
+        }
+
         editor->showLiveView (true);
 
         if (auto* live = find<ui::LiveView> (*editor, "live-view"))
         {
             check (live->isVisible(), "the live view is shown");
             live->fillFromPlanForSnapshot (live->getVisibleSeconds());
+
+            // The same sound looks the same in both: the same analysis and colours, so the brightest
+            // and the typical drawn levels agree (to 4 dB; the views differ in time span and in
+            // where their columns fall).
+            const auto livePlot = ui::axes::plotArea (live->getLocalBounds(), ui::CanvasView::axisWidth, ui::CanvasView::axisHeight);
+            const auto livePicture = live->createComponentSnapshot (livePlot);
+            const auto canvasLevels = colourLevels (canvasPicture), liveLevels = colourLevels (livePicture);
+            const auto top = [] (const std::vector<int>& levels, double p)
+            {
+                std::vector<int> lit;
+
+                for (const auto level : levels)
+                    if (level > 40)
+                        lit.push_back (level);
+
+                if (lit.empty())
+                    return 0;
+
+                std::sort (lit.begin(), lit.end());
+                return lit[static_cast<size_t> (p * static_cast<double> (lit.size() - 1))];
+            };
+
+            std::cout << "  canvas / live view colour levels: 99th percentile " << top (canvasLevels, 0.99) << " / "
+                      << top (liveLevels, 0.99) << ", median of the lit " << top (canvasLevels, 0.5) << " / " << top (liveLevels, 0.5)
+                      << std::endl;
+            check (std::abs (top (canvasLevels, 0.99) - top (liveLevels, 0.99)) <= 10
+                       && std::abs (top (canvasLevels, 0.5) - top (liveLevels, 0.5)) <= 10,
+                   "the live view shows the drawing's sound in the canvas's colours");
         }
 
         save ("live", pixelScale);
@@ -3876,6 +4107,7 @@ int main (int argc, char* argv[])
 
     // ---- ArtFreq FX: the same editor on the effect ----------------------------------------------
     checkEffect (outputDir, pixelScale);
+    checkEffectOnTheUsersSong (outputDir, pixelScale);
     pump (50);
 
     // ---- the DAW's play key, in both plug-ins --------------------------------------------------------

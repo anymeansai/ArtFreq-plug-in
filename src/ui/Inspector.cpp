@@ -1,7 +1,6 @@
 #include "Inspector.h"
 
 #include "Actions.h"
-#include "CanvasPlanImage.h"
 #include "KeyFocus.h"
 #include "LayerList.h"
 #include "Parameters.h"
@@ -679,8 +678,9 @@ struct Inspector::Impl
             thumbnailContrast = -1.0f;  // forces the colours below
         }
 
-        // The colours, as the canvas shows them: a value becomes decibels through the Contrast,
-        // seen through the canvas's colour window. So the thumbnail and the canvas agree.
+        // The colours: a value becomes decibels through the Contrast, the loudest at the top of
+        // a 60 dB window (the canvas shows levels as the analyser reads them, which depend on
+        // the rest of the drawing and on Level; the thumbnail shows the picture's own shades).
         const auto contrast = processor.getPlanSettings().contrastDb;
 
         if (juce::exactlyEqual (contrast, thumbnailContrast))
@@ -695,7 +695,8 @@ struct Inspector::Impl
             thumbnail = juce::Image (juce::Image::ARGB, processed.width, processed.height, false);
             juce::Image::BitmapData data (thumbnail, juce::Image::BitmapData::writeOnly);
             const auto& table = theme::spectrumTable();
-            const auto dbPerUnit = contrast / CanvasPlanImage::windowDb;
+            constexpr float thumbnailWindowDb = 60.0f;
+            const auto dbPerUnit = contrast / thumbnailWindowDb;
 
             for (int y = 0; y < processed.height; ++y)
             {
