@@ -244,7 +244,7 @@ xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 "$HOME
 
 For Windows 10 or 11, 64-bit. Close your DAW, download `ArtFreq-<version>-Windows.exe` and run it. It installs both plug-ins, `ArtFreq.vst3` (the instrument) and `ArtFreq FX.vst3` (the effect), into `C:\Program Files\Common Files\VST3`, the folder VST3 hosts look in (its plug-ins page can leave one out), and replaces any earlier copies there, the `FreqArt` ones from before 0.4 included. Then open your DAW and rescan plug-ins: ArtFreq is listed under instruments, ArtFreq FX under audio effects.
 
-The installer is not code-signed, so the first time Windows SmartScreen stops it with **Windows protected your PC**: click **More info**, then **Run anyway**. Windows then asks whether to let it make changes (it installs for every account on the computer): click **Yes**.
+The installer is not code-signed. Your browser may first warn that it is not commonly downloaded: keep it (Microsoft Edge: point at the download, click **...** > **Keep**, then **Show more** > **Keep anyway**). The first time you run it, Windows SmartScreen stops it with **Windows protected your PC**: click **More info**, then **Run anyway**. Windows then asks whether to let it make changes (it installs for every account on the computer): click **Yes**.
 
 **Ableton Live** finds the plug-ins only with **Use VST3 Plug-In System Folders** on: **Preferences** (**Settings** in Live 12) > **Plug-ins** > **Use VST3 Plug-In System Folders: On**, then **Rescan**.
 

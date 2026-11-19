@@ -1316,8 +1316,9 @@ kind people expect there, and the zip stays for installing by hand.
   - **A DAW that has the plug-in loaded** holds its DLL, which is named `.vst3`: so
     `CloseApplicationsFilter` adds `*.vst3` to the files Setup checks, Setup finds the DAW and
     offers to close it, and does not start it again afterwards.
-  - **Not code-signed**, so SmartScreen says "Windows protected your PC" until **More info**,
-    **Run anyway**; the README and the release notes say so.
+  - **Not code-signed**, so a browser may warn that the file is not commonly downloaded (Edge:
+    Keep, then Keep anyway) and SmartScreen says "Windows protected your PC" until **More
+    info**, **Run anyway**; the README and the release notes say so.
   - **Pictures** (`installer/windows/images`, made by `make-images.py` from
     `docs/artfreq-emblem.png`): the tall wizard picture (the AF letters with "ArtFreq" and "by
     AnyMeans" on the emblem's ink) at 164x314 to 534x1022 and the small one (the emblem on white)
