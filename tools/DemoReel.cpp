@@ -1,4 +1,5 @@
-// The demo reel: short clips of ArtFreq and ArtFreq FX at work, for the website.
+// The demo reel: short clips of ArtFreq and ArtFreq FX at work, for the website
+// (docs/marketing/README.md).
 //
 //   ArtFreqDemoReel <output-dir> [--work <dir>] [--clips artfreq,fx,fx-carve-draw] [--ffmpeg <path>]
 //
@@ -7,35 +8,45 @@
 //
 //   - The host is this tool: it calls processBlock in blocks of 400 samples at 48 kHz, four per
 //     video frame (30 fps: 1600 samples a frame), with a transport that is stopped and then
-//     plays from bar 1 at 120 BPM in 4/4 (the trigger is Transport, the start On play: the
-//     plug-ins' defaults). ArtFreq FX gets a song as its input (a synthetic one made here:
-//     drums, bass, chords, a pluck and hats, see makeSong); the instrument gets nothing.
-//   - Per frame, after the frame's audio, the live view takes the analysis of what came out,
-//     exactly as its own 60 Hz timer does in a host (its timer callback is called directly, so
-//     every frame takes every column there is: none dropped, none twice, whatever the time a
-//     frame takes to render), and the window is drawn (createComponentSnapshot at 2x, scaled down
-//     by ffmpeg with Lanczos).
+//     plays from bar 1 at 120 BPM in 4/4 (Trigger Transport, start On play: the plug-ins'
+//     defaults). ArtFreq FX gets a song as its input (a synthetic one made here: drums, bass,
+//     chords, a pluck and hats, see makeSong); the instrument gets nothing.
+//   - Per frame, after the frame's audio, the live view takes the analysis of what came out, as
+//     its own 60 Hz timer does in a host: its timer callback is called directly, once per frame,
+//     so every frame takes every column there is, none dropped and none twice, however long a
+//     frame takes to draw. Then the window is drawn (createComponentSnapshot at 2x), and ffmpeg
+//     scales it down (Lanczos) to 1280 px.
 //   - The sound of the clip is the processor's own output for those same blocks.
 //
-// Each clip opens on the canvas with the DAW stopped (about a second), the DAW starts, and the
-// window switches to the live view when the output first sounds (the view shows nothing before
-// that either way: switched earlier it would show "Nothing is playing" over the silence until
-// then). The tool finds that moment by playing the clip once without the editor first (the
-// processors are deterministic), and checks that the filmed run's output is the same, sample
-// for sample, so the editor changes nothing in the sound.
+// Each clip opens on the canvas with the DAW stopped (a second), the DAW starts, and the window
+// switches to the live view at the start of the frame in which the output first sounds (switched
+// earlier, it would show "Nothing is playing" over the silence until then). The DAW starts at
+// whichever of the frame's four blocks brings that sound to the start of a frame, so the view's
+// first frame already shows it. The tool finds all this by playing the clip without the editor
+// first (the processors are deterministic) and checks that the filmed run's output is the same,
+// sample for sample: the editor changes nothing in the sound.
 //
-// Clips (each: <name>.mp4 with its sound, <name>.gif, silent and looping, <name>-poster.png):
+// It checks that the picture is the sound: the live view's newest column ("now") in every
+// frame, and every column of the whole live picture in the last frame, against an analysis of
+// the clip's sound made here separately (as the live view analyses: 4096 points, Blackman-
+// Harris, a column every 512 samples, the same rows and colours). A frame early or late, or a
+// column dropped or doubled, would not match. And, with ffprobe, the encoded files: frames,
+// durations, the sound.
 //
-//   artfreq-demo          ArtFreq: "ArtFreq" in the high band over a picture made here (a
-//                         striped sun over mountains, 70 Hz - 2.8 kHz), 2 bars at 120 BPM
-//   artfreq-fx-demo       ArtFreq FX in Carve: "AnyMeans" carved into the song, 2 bars
-//   artfreq-fx-carve-draw-demo   (with --clips fx-carve-draw) the same in Carve + Draw
+// Clips (each: <name>.mp4, H.264 with the sound as AAC, <name>.gif, silent and looping, every
+// other frame, and <name>-poster.png, the last frame):
 //
-// The work folder (default: <output-dir>/../demo-reel-work) keeps every frame as a PNG at the
-// clip's width (frames-<name>/), the clip's sound as a WAV (<name>.wav) and the song going in
-// (<name>-input.wav), for checking. Needs ffmpeg with libx264 (on the PATH or --ffmpeg). Every
-// plug-in instance is activated against a fake licence server (tests/LicenseTestSupport.h), so
-// no licence screen shows and nothing reaches the real server.
+//   artfreq-demo                 ArtFreq: "ArtFreq" in the high band over a picture made here (a
+//                                striped sun going down behind mountains, 70 Hz - 2.8 kHz)
+//   artfreq-fx-demo              ArtFreq FX in Carve: "AnyMeans" carved into the song
+//   artfreq-fx-carve-draw-demo   ArtFreq FX in Carve + Draw: the same, played into the hole
+//
+// all with Length 2 bars (4 s at 120 BPM: the live view then shows 5 s). The work folder
+// (default: ArtFreqDemoReel in the system's temporary folder) keeps every frame as a PNG at 1280 px
+// (frames-<name>/), the clip's sound as a WAV (<name>.wav) and, for ArtFreq FX, the song going in
+// (<name>-input.wav). Needs ffmpeg with libx264, and ffprobe (on the PATH, or --ffmpeg with
+// ffprobe beside it). Every plug-in instance is activated against a fake licence server
+// (tests/LicenseTestSupport.h), so no licence screen shows and nothing reaches the real server.
 //
 // On Linux run it under a virtual display large enough for the window (the live view runs only
 // while its window is on screen):
@@ -58,11 +69,15 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <array>
-#include <map>
 #include <cmath>
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <map>
 #include <vector>
 
 namespace
@@ -433,8 +448,8 @@ Stereo makeSong (double seconds)
         }
     }
 
-    // Mastering, of a kind: a broad lift of the highs (a shelf of about +4 dB at 1 kHz, +9 dB from
-    // 5 kHz up), as a mastered song is brighter than its parts.
+    // Mastering, of a kind: a broad lift of the highs (about +3 dB at 1 kHz, +8 dB at 5 kHz and
+    // +10 dB at 15 kHz), as a mastered song is brighter than its parts.
     for (auto& channel : dry)
     {
         OnePole presence (2000.0), air (7000.0);
@@ -541,7 +556,7 @@ struct ClipSpec
     double playSeconds = 4.8;   // from pressing play to the end
 };
 
-/** The drawing and settings of a clip, as a buyer would have made them. */
+/** The drawing of a clip, as a buyer would have made it. */
 ArtDocument makeDrawing (const ClipSpec& clip)
 {
     ArtDocument document;
@@ -711,6 +726,62 @@ int run (const juce::String& command)
 {
     std::cout << "  $ " << command << std::endl;
     return std::system (command.toRawUTF8());
+}
+
+/** Runs a command and returns what it printed. */
+juce::String capture (const juce::String& command)
+{
+    juce::String result;
+
+    if (auto* pipe = popen (command.toRawUTF8(), "r"))
+    {
+        char buffer[512];
+
+        while (std::fgets (buffer, sizeof (buffer), pipe) != nullptr)
+            result += juce::String::fromUTF8 (buffer);
+
+        pclose (pipe);
+    }
+
+    return result;
+}
+
+/** ffprobe's value of one entry for one stream ("v:0", "a:0") or the container (empty stream). */
+juce::String probe (const juce::String& ffprobe, const juce::File& file, const juce::String& stream, const juce::String& entry,
+                    bool countFrames = false)
+{
+    const auto entries = stream.isEmpty() ? "format=" + entry : "stream=" + entry;
+    return capture (quoted (ffprobe) + " -v error" + (countFrames ? " -count_frames" : "")
+                    + (stream.isNotEmpty() ? " -select_streams " + stream : juce::String())
+                    + " -show_entries " + entries + " -of default=noprint_wrappers=1:nokey=1 "
+                    + quoted (file.getFullPathName())).trim();
+}
+
+/** The encoded files: their frames, durations and sound, as made. */
+void checkFiles (const ClipSpec& clip, const juce::String& ffprobe, const juce::File& mp4, const juce::File& gif, int totalFrames)
+{
+    const auto seconds = totalFrames / static_cast<double> (framesPerSecond);
+    const auto gifFrames = (totalFrames + 1) / 2;
+
+    const auto videoFrames = probe (ffprobe, mp4, "v:0", "nb_frames").getIntValue();
+    const auto videoSeconds = probe (ffprobe, mp4, "v:0", "duration").getDoubleValue();
+    const auto audioSeconds = probe (ffprobe, mp4, "a:0", "duration").getDoubleValue();
+    const auto size = probe (ffprobe, mp4, "v:0", "width") + "x" + probe (ffprobe, mp4, "v:0", "height");
+    const auto codecs = probe (ffprobe, mp4, "v:0", "codec_name") + " " + probe (ffprobe, mp4, "v:0", "pix_fmt") + ", "
+                      + probe (ffprobe, mp4, "a:0", "codec_name") + " " + probe (ffprobe, mp4, "a:0", "sample_rate") + " Hz";
+    const auto loopedFrames = probe (ffprobe, gif, "v:0", "nb_read_frames", true).getIntValue();
+    const auto gifSize = probe (ffprobe, gif, "v:0", "width") + "x" + probe (ffprobe, gif, "v:0", "height");
+
+    std::cout << "  " << mp4.getFileName() << ": " << size << ", " << codecs << ", " << videoFrames << " frames, video "
+              << videoSeconds << " s, sound " << audioSeconds << " s, " << mp4.getSize() << " bytes" << std::endl;
+    std::cout << "  " << gif.getFileName() << ": " << gifSize << ", " << loopedFrames << " frames, " << gif.getSize() << " bytes" << std::endl;
+
+    check (videoFrames == totalFrames, clip.name + ".mp4 has every frame");
+    check (std::abs (videoSeconds - seconds) < 0.001 && std::abs (audioSeconds - seconds) < 0.03,
+           clip.name + ".mp4: the picture and the sound last the clip");
+    check (codecs.startsWith ("h264 yuv420p, aac 48000"), clip.name + ".mp4: H.264 in yuv420p, AAC at 48 kHz");
+    check (loopedFrames == gifFrames, clip.name + ".gif has every other frame");
+    check (gif.getSize() < 6 * 1024 * 1024, clip.name + ".gif is under 6 MB");
 }
 
 // ---- the picture against the sound ------------------------------------------------------------
@@ -981,7 +1052,8 @@ double checkWholePicture (const ClipSpec& clip, const juce::Image& frame, juce::
 }
 
 /** Films one clip and encodes it. */
-bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::File& workDir, const juce::String& ffmpeg)
+bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::File& workDir, const juce::String& ffmpeg,
+               const juce::String& ffprobe)
 {
     std::cout << "== " << clip.name << std::endl;
 
@@ -1146,6 +1218,7 @@ bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::Fi
 
         const auto started = juce::Time::getMillisecondCounterHiRes();
         playFrame (*processor, transport, frame, playSample, song, output);
+        const auto taken = juce::Time::getMillisecondCounterHiRes();
 
         if (frame >= liveFrame)
         {
@@ -1156,10 +1229,11 @@ bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::Fi
         }
 
         // The rest of the window follows the processor on its own timers (30 Hz): the bars, the
-        // canvas's playhead. The live view's timer may run here too: it finds nothing new.
+        // canvas's playhead. The live view's timer may run here too and finds nothing new; it
+        // would scroll in silence only after 0.3 s without new columns (a host that has stopped).
         pump (45);
-        check (juce::Time::getMillisecondCounterHiRes() - started < 250.0,
-               clip.name + ": frame " + juce::String (frame) + " took its audio and timers within 0.25 s");
+        check (juce::Time::getMillisecondCounterHiRes() - taken < 290.0,
+               clip.name + ": frame " + juce::String (frame) + ": the window's timers ran within 0.29 s of the live view's last columns");
 
         // The live view redraws its picture from the analysed columns, at the snapshot's scale
         // (the window on the virtual screen draws it at 1x in between).
@@ -1195,7 +1269,11 @@ bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::Fi
                 out[3] = 255;
             }
 
-            std::fwrite (row.data(), 1, row.size(), pipe);
+            if (std::fwrite (row.data(), 1, row.size(), pipe) != row.size())
+            {
+                check (false, clip.name + ": ffmpeg took the frames");
+                break;
+            }
         }
 
         longestFrameMs = std::max (longestFrameMs, juce::Time::getMillisecondCounterHiRes() - started);
@@ -1274,6 +1352,8 @@ bool makeClip (const ClipSpec& clip, const juce::File& outputDir, const juce::Fi
     const auto last = framesDir.getChildFile (juce::String::formatted ("frame-%04d.png", totalFrames));
     check (last.existsAsFile() && last.copyFileTo (poster), "the poster " + poster.getFullPathName());
 
+    checkFiles (clip, ffprobe, mp4, gif, totalFrames);
+
     return ! failed;
 }
 
@@ -1289,6 +1369,10 @@ int main (int argc, char* argv[])
 
     const juce::ScopedJuceInitialiser_GUI gui;
 
+    // If ffmpeg stops reading the frames, writing them fails (and is reported) rather than ending
+    // the tool.
+    std::signal (SIGPIPE, SIG_IGN);
+
     if (argc < 2)
     {
         std::cerr << "usage: ArtFreqDemoReel <output-dir> [--work <dir>] [--clips artfreq,fx,fx-carve-draw] [--ffmpeg <path>]" << std::endl;
@@ -1297,8 +1381,8 @@ int main (int argc, char* argv[])
 
     const auto cwd = juce::File::getCurrentWorkingDirectory();
     const auto outputDir = cwd.getChildFile (argv[1]);
-    auto workDir = outputDir.getParentDirectory().getChildFile ("demo-reel-work");
-    juce::StringArray wanted { "artfreq", "fx" };
+    auto workDir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("ArtFreqDemoReel");
+    juce::StringArray wanted { "artfreq", "fx", "fx-carve-draw" };
     juce::String ffmpeg = "ffmpeg";
 
     for (int i = 2; i + 1 < argc; i += 2)
@@ -1317,6 +1401,9 @@ int main (int argc, char* argv[])
             return 2;
         }
     }
+
+    // ffprobe beside the ffmpeg given (or on the PATH, as ffmpeg).
+    const auto ffprobe = ffmpeg.containsChar ('/') ? juce::File (ffmpeg).getSiblingFile ("ffprobe").getFullPathName() : juce::String ("ffprobe");
 
     if (! outputDir.createDirectory() || ! workDir.createDirectory())
     {
@@ -1338,8 +1425,14 @@ int main (int argc, char* argv[])
     if (wanted.contains ("fx-carve-draw"))
         clips.push_back ({ "artfreq-fx-carve-draw-demo", true, EffectMode::carveDraw, 1.0, 4.8 });
 
+    if (clips.empty())
+    {
+        std::cerr << "no clips: --clips takes artfreq, fx and fx-carve-draw" << std::endl;
+        return 2;
+    }
+
     for (const auto& clip : clips)
-        makeClip (clip, outputDir, workDir, ffmpeg);
+        makeClip (clip, outputDir, workDir, ffmpeg, ffprobe);
 
     pump (50);
     licensetest::removeRunnerLicensing();
