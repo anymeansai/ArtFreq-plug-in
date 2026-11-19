@@ -31,12 +31,16 @@
 //      display compares with the canvas the screenshot shows (see BandResult);
 //   4. writes <output-dir>/truth-<name>.png: the screenshot's canvas, cut out of the PNG, beside
 //      the real display at 8192 points, the same size and frequency axis; under them a strip with
-//      4096 and 16384 points (and, for ArtFreq FX, the song going in); and the numbers. Also
+//      4096 and 16384 points, the same sound in the canvas's own colours (the instrument's loudest
+//      at white over 60 dB; ArtFreq FX's -60 to 0 dB at 4096 points), and for ArtFreq FX the song
+//      going in; and the numbers. Also
 //      truth-<name>-fft<N>.png (each real display alone), metrics.txt and metrics.json, and with
 //      --wav the rendered output, truth-<name>.wav.
 //
 // --marketing renders a few drawings for the website (the instrument and the effect), each as a
-// real measurement of the plug-in's output, at 2x, captioned as such.
+// real measurement of the plug-in's output (FFT 8192), at 2x (2400 x 1280), captioned as such:
+// ArtFreq's default drawing, HELLO over WORLD at Density 1024, and ArtFreq FX carving its default
+// drawing into the test song from bar 2 (so the song plays either side of the pass).
 //
 // On Linux run it under a virtual display (it renders text):  xvfb-run -a ArtFreqTruthLab ...
 
@@ -59,6 +63,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <limits>
 #include <map>
@@ -390,10 +395,13 @@ struct Rendered
     int latency = 0;
 };
 
-Rendered play (ArtFreqProcessor& processor, const Stereo* song)
+/** `passOffsetSeconds`: where the state puts the pass after the transport starts (0 for On play;
+    (bar - 1) bars for At bar). */
+Rendered play (ArtFreqProcessor& processor, const Stereo* song, double passOffsetSeconds = 0.0)
 {
     Rendered r;
-    r.passStart = stoppedBlocks * blockSize;
+    const auto transportStart = stoppedBlocks * blockSize;
+    r.passStart = transportStart + static_cast<int> (std::lround (passOffsetSeconds * sampleRate));
     r.passSamples = static_cast<int> (std::lround (processor.getLengthSeconds() * sampleRate));
     r.latency = processor.getLatencySamples();
 
@@ -416,8 +424,8 @@ Rendered play (ArtFreqProcessor& processor, const Stereo* song)
     for (int done = 0; done < total; done += blockSize)
     {
         const auto n = std::min (blockSize, total - done);
-        const auto playing = done >= r.passStart;
-        const auto seconds = (done - r.passStart) / sampleRate;
+        const auto playing = done >= transportStart;
+        const auto seconds = (done - transportStart) / sampleRate;
         const auto ppq = seconds * bpm / 60.0;
 
         head.info = {};
@@ -427,7 +435,7 @@ Rendered play (ArtFreqProcessor& processor, const Stereo* song)
         head.info.setPpqPosition (playing ? ppq : 0.0);
         head.info.setPpqPositionOfLastBarStart (playing ? 4.0 * std::floor (ppq / 4.0) : 0.0);
         head.info.setTimeInSeconds (playing ? seconds : 0.0);
-        head.info.setTimeInSamples (playing ? static_cast<int64_t> (done - r.passStart) : 0);
+        head.info.setTimeInSamples (playing ? static_cast<int64_t> (done - transportStart) : 0);
 
         buffer.setSize (2, n, false, false, true);
         buffer.clear();
@@ -438,7 +446,7 @@ Rendered play (ArtFreqProcessor& processor, const Stereo* song)
             for (int ch = 0; ch < 2; ++ch)
                 for (int i = 0; i < n; ++i)
                 {
-                    const auto at = done + i - r.passStart;
+                    const auto at = done + i - transportStart;
 
                     if (at >= 0 && at < static_cast<int> ((*song)[idx (ch)].size()))
                         buffer.setSample (ch, i, (*song)[idx (ch)][idx (at)]);
@@ -687,6 +695,10 @@ struct BandResult
     double aroundDb = nan;       // ... of the cells around
     double contrastDb = nan;     // inside - around (instrument: how far shapes stand out; FX Carve: negative)
     double canvasContrastDb = nan;  // the same on the canvas (capped by its 60 dB window)
+    double canvasAroundDb = nan;    // the canvas's level around the drawing (ArtFreq FX: its stand-in song,
+                                    // in dB of a cell at FFT 4096, against aroundDb: the real song there)
+    double songMedianDb = nan;      // FX: the song going in over the band, median and 95th percentile
+    double songP95Db = nan;
     double kept = nan;           // instrument: share of drawn cells no more than 12 dB darker than the canvas
                                  // shows (each relative to its own top); FX: see below
     double stray = nan;          // share of "around" cells the real display shows within 30 dB of its top
@@ -795,7 +807,7 @@ Comparison compare (const Display& real, const Display* song, const std::vector<
     for (size_t b = 0; b < bands.size(); ++b)
     {
         auto& result = c.band[b];
-        std::vector<double> realValues, canvasValues, inside, around, canvasInside, canvasAround, attenuation, shapeX, shapeY;
+        std::vector<double> realValues, canvasValues, inside, around, canvasInside, canvasAround, attenuation, shapeX, shapeY, songCells;
         int kept = 0, dark = 0, songKept = 0;
 
         for (int y = 0; y < h; ++y)
@@ -820,6 +832,7 @@ Comparison compare (const Display& real, const Display* song, const std::vector<
                 }
                 else if (song != nullptr)
                 {
+                    songCells.push_back (static_cast<double> (song->at (x, y)));
                     const auto change = static_cast<double> (song->at (x, y)) - realDb;
                     const auto value = static_cast<double> (drawing[idx (y) * idx (w) + idx (x)]);
 
@@ -865,6 +878,9 @@ Comparison compare (const Display& real, const Display* song, const std::vector<
         result.aroundDb = median (around);
         result.contrastDb = result.insideDb - result.aroundDb;
         result.canvasContrastDb = median (canvasInside) - median (canvasAround);
+        result.canvasAroundDb = median (canvasAround);
+        result.songMedianDb = median (songCells);
+        result.songP95Db = percentile (songCells, 0.95);
 
         if (! effect)
         {
@@ -1309,7 +1325,8 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
          << "kept: drawn cells no more than 12 dB darker than the canvas shows (each relative to its top);\n"
          << "stray: undrawn cells around the drawing shown within 30 dB of the top (bright where the canvas is dark);\n"
          << "FX: carved by = median (song - output) over drawn cells; dark = share carved 30 dB or more; stencil kept =\n"
-         << "share of drawn cells within 6 dB of the song.\n\n";
+         << "share of drawn cells within 6 dB of the song; song median / p95: the song going in over the band; stand-in\n"
+         << "around: the canvas's stand-in song around the drawing (dB of a cell at FFT 4096, as the real 'around').\n\n";
 
     for (const auto& r : results)
     {
@@ -1337,7 +1354,8 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
 
                 if (r.effect)
                     text << "  carved " << num (m.attenuationDb, 1).paddedLeft (' ', 6) << "  dark " << pct (m.darkShare).paddedLeft (' ', 5)
-                         << "  stencilKept " << pct (m.songKept).paddedLeft (' ', 5);
+                         << "  stencilKept " << pct (m.songKept).paddedLeft (' ', 5) << "  song median/p95 "
+                         << num (m.songMedianDb, 1) << " / " << num (m.songP95Db, 1) << "  stand-in around " << num (m.canvasAroundDb, 1);
                 else
                     text << "  kept " << pct (m.kept).paddedLeft (' ', 5) << "  stray " << pct (m.stray).paddedLeft (' ', 5);
 
@@ -1385,6 +1403,9 @@ juce::var toJson (const std::vector<StateResult>& results)
                 o->setProperty ("attenuationDb", toVar (m.attenuationDb));
                 o->setProperty ("darkShare", toVar (m.darkShare));
                 o->setProperty ("stencilKept", toVar (m.songKept));
+                o->setProperty ("canvasAroundDb", toVar (m.canvasAroundDb));
+                o->setProperty ("songMedianDb", toVar (m.songMedianDb));
+                o->setProperty ("songP95Db", toVar (m.songP95Db));
                 perBand->setProperty (bands[b].name, juce::var (o));
             }
 
@@ -1408,6 +1429,7 @@ struct MarketingShot
     juce::String file, title, caption;
     bool effect;
     std::function<void (ArtFreqProcessor&)> setUp;
+    double passOffsetSeconds = 0.0;   // where setUp puts the pass after the transport starts
 };
 
 void setParameter (ArtFreqProcessor& p, const char* id, float value)
@@ -1426,7 +1448,7 @@ bool renderMarketingShot (const MarketingShot& shot, const Options& options, con
     shot.setUp (p);
     p.rebuildPlanIfNeeded();
 
-    const auto rendered = play (p, shot.effect ? &song : nullptr);
+    const auto rendered = play (p, shot.effect ? &song : nullptr, shot.passOffsetSeconds);
     const auto scale = p.getScale();
 
     constexpr float s = 2.0f;                        // 2x
@@ -1476,9 +1498,10 @@ std::vector<MarketingShot> marketingShots()
                        "ArtFreq's output for its default drawing (the word ArtFreq, 300 Hz - 3 kHz), one 8 s pass at 120 BPM.", false,
                        [] (ArtFreqProcessor&) {} });
 
-    // 2. Text in the highs and the mids, where an analyser shows the most detail.
+    // 2. Text in the highs and the mids, where an analyser shows the most detail; Density at its
+    //    top, 1024, so the highs are solid rather than fine scan lines.
     shots.push_back ({ "artfreq-real-output-hello.png", "ArtFreq: text in the highs and mids",
-                       "ArtFreq's output for HELLO (3.5 - 16 kHz) over WORLD (300 Hz - 3 kHz), density 384, one 8 s pass.", false,
+                       "ArtFreq's output for HELLO (3.5 - 16 kHz) over WORLD (300 Hz - 3 kHz), Density 1024, one 8 s pass.", false,
                        [] (ArtFreqProcessor& p)
                        {
                            const auto scale = p.getScale();
@@ -1491,13 +1514,19 @@ std::vector<MarketingShot> marketingShots()
                            document.objects.push_back (hello);
                            document.objects.push_back (world);
                            p.setDocument (document);
-                           setParameter (p, params::id::density, 384.0f);
+                           setParameter (p, params::id::density, 1024.0f);
                        } });
 
-    // 3. ArtFreq FX: its default drawing carved into a dense master.
+    // 3. ArtFreq FX: its default drawing carved into a dense master, from bar 2 (At bar), so the
+    //    song plays before and after the pass.
     shots.push_back ({ "artfreq-fx-real-output.png", "ArtFreq FX: carved into a full mix",
-                       "ArtFreq FX (Carve, -80 dB) on a dense synthetic master at -10 dBFS RMS: its default drawing, one 8 s pass.", true,
-                       [] (ArtFreqProcessor&) {} });
+                       "ArtFreq FX (Carve, Depth -80 dB) on a dense synthetic master at -10 dBFS RMS: its default drawing, one 8 s pass.", true,
+                       [] (ArtFreqProcessor& p)
+                       {
+                           setParameter (p, params::id::startAt, 1.0f);   // At bar
+                           setParameter (p, params::id::startBar, 2.0f);
+                       },
+                       2.0 });
 
     return shots;
 }

@@ -1261,6 +1261,22 @@ on: it renders four drawings through the real plan and engine, analyses them lik
 30 Hz - 2 kHz, fidelity, fill, gap depth, flicker, regular pulsing and leakage, with PNG sheets
 and a comparison against an earlier run (`--baseline`).
 
+`ArtFreqTruthLab <snapshot-dir> <out>` (tools/TruthLab.cpp) checks the screenshots against the
+sound. The snapshot tool, run with `ARTFREQ_SNAPSHOT_STATES=1`, saves each state beside its PNG
+(the processor's state and where the canvas lies in the picture); the lab loads each into a fresh
+processor of its kind, activated against the test licensing environment, plays one pass with a
+transport that starts after 0.77 s stopped (ArtFreq FX on a dense synthetic master at -10 dBFS RMS,
+its output moved back by the latency), analyses the output as MiniMeters does (Hann, 4096 / 8192 /
+16384 points, one analysis per canvas column, the state's scale, rows interpolated between bins
+or the loudest bin inside them, the canvas's colour map over -100 to 0 dBFS) and writes the
+screenshot's canvas beside the real display with numbers per band (lows < 250 Hz, low mids, highs
+> 2 kHz): correlation, levels inside and around the drawing, contrast against the canvas's, and
+the share of the drawing within 12 dB of the canvas (the instrument) or carved 30 dB under the
+song (ArtFreq FX). `--marketing` renders real-output images for the website. The findings are in
+[ACCURACY.md](ACCURACY.md): accurate from about 250 Hz up; blurred, thicker and hazy below
+(analyser resolution, which the canvas does not draw); scan lines in the highs at Density
+256 - 384 where the canvas draws solid; colours depending on the analyser's dB range.
+
 ## Builds and releases (CI)
 
 GitHub Actions (`.github/workflows/build.yml`) builds macOS and Windows; Linux is the
