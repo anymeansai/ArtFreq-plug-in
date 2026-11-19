@@ -1,1 +1,2 @@
 installer/windows/*.txt text eol=crlf
+installer/windows/images/* binary

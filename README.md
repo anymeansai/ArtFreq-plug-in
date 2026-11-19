@@ -217,7 +217,7 @@ ArtFreq FX had ArtFreq's large window until 0.4. A project saved with it opens A
 
 ## Install
 
-Downloads are on the repository's **Releases** page, under **Assets**. Every successful build replaces the release for the current version. Both plug-ins are VST3 only, for 64-bit DAWs.
+Downloads are on the repository's **Releases** page, under **Assets**: an installer and a zip for each system. Every successful build replaces the release for the current version. Both plug-ins are VST3 only, for 64-bit DAWs.
 
 ### macOS: installer
 
@@ -240,15 +240,27 @@ A manually copied plug-in keeps the download quarantine flag. If the DAW refuses
 xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 "$HOME/Library/Audio/Plug-Ins/VST3/ArtFreq FX.vst3"
 ```
 
-### Install on Windows
+### Windows: installer
 
-For Windows 10 or 11, 64-bit. There is no installer yet: download `ArtFreq-VST3-Windows.zip`, then
+For Windows 10 or 11, 64-bit. Close your DAW, download `ArtFreq-<version>-Windows.exe` and run it. It installs both plug-ins, `ArtFreq.vst3` (the instrument) and `ArtFreq FX.vst3` (the effect), into `C:\Program Files\Common Files\VST3`, the folder VST3 hosts look in (its plug-ins page can leave one out), and replaces any earlier copies there, the `FreqArt` ones from before 0.4 included. Then open your DAW and rescan plug-ins: ArtFreq is listed under instruments, ArtFreq FX under audio effects.
+
+The installer is not code-signed. Your browser may first warn that it is not commonly downloaded: keep it (Microsoft Edge: point at the download, click **...** > **Keep**, then **Show more** > **Keep anyway**). The first time you run it, Windows SmartScreen stops it with **Windows protected your PC**: click **More info**, then **Run anyway**. Windows then asks whether to let it make changes (it installs for every account on the computer): click **Yes**.
+
+**Ableton Live** finds the plug-ins only with **Use VST3 Plug-In System Folders** on: **Preferences** (**Settings** in Live 12) > **Plug-ins** > **Use VST3 Plug-In System Folders: On**, then **Rescan**.
+
+To remove ArtFreq: **Settings > Apps** (**Installed apps**, or **Apps & features** on Windows 10) > **ArtFreq** > **Uninstall**. That removes both plug-ins and the uninstaller's own folder (`C:\Program Files\AnyMeans\ArtFreq`), and nothing else: the activation (`%ProgramData%\AnyMeans\Licenses.json`, shared by all AnyMeans plug-ins) stays, so a reinstall is still activated. To move to another computer, deactivate first (see [Activate](#activate)).
+
+For administrators: `ArtFreq-<version>-Windows.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` installs silently (both plug-ins the first time; an upgrade keeps the earlier choice), and `"C:\Program Files\AnyMeans\ArtFreq\unins000.exe"` takes the same switches.
+
+### Windows: by hand
+
+Download `ArtFreq-VST3-Windows.zip`, then
 
 1. Close your DAW.
-2. Unzip the zip and copy the folders `ArtFreq.vst3` and `ArtFreq FX.vst3`, whole, into `C:\Program Files\Common Files\VST3`. Windows asks for permission to copy there.
-3. Open your DAW and rescan plug-ins. ArtFreq is listed under instruments, ArtFreq FX under audio effects.
+2. Extract the zip first: right-click it, **Extract All...** (double-clicking a zip only shows what is inside it). Copy the folders `ArtFreq.vst3` and `ArtFreq FX.vst3`, whole, into `C:\Program Files\Common Files\VST3`, after deleting any older copies of them there (or of `FreqArt.vst3` and `FreqArt FX.vst3`). Windows asks for permission to copy there.
+3. Open your DAW and rescan plug-ins (Ableton Live: with **Use VST3 Plug-In System Folders** on, as above). ArtFreq is listed under instruments, ArtFreq FX under audio effects.
 
-`How to install.txt` in the zip says the same. To remove ArtFreq, delete the two folders again.
+`How to install.txt` in the zip says the same. To remove them, delete the two folders again.
 
 ### Windows and macOS differences
 
@@ -302,6 +314,14 @@ installer/macos/build-pkg.sh build out        # writes out/ArtFreq-<version>-mac
 
 The version comes from `project(ArtFreq VERSION ...)` in `CMakeLists.txt` unless given as a third argument. It needs a Release build of both targets (`ArtFreq` and `ArtFreqFX`). JUCE signs a plug-in before it writes `moduleinfo.json` into it, which breaks the signature's seal; the script signs its copies again (ad hoc) when needed.
 
+To build the Windows installer from a build folder (Windows, with [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 or later):
+
+```bat
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=<version> installer\windows\ArtFreq.iss
+```
+
+It writes `out\ArtFreq-<version>-Windows.exe`, with both plug-ins from `build\` (another build folder: `/DBuildDir=<folder>`; another output folder: `/O<folder>`). The version must be given (CI takes it from `CMakeLists.txt`). It needs a Release build of both targets.
+
 On Linux, install the JUCE dependencies first:
 
 ```sh
@@ -334,7 +354,7 @@ The canvas is a preview. `ArtFreqTruthLab <snapshot-folder> <out>` plays each sc
 Every push builds both platforms on GitHub Actions (`.github/workflows/build.yml`). Nothing there reaches the licence server or activates anything: the tests and snapshots use a fake server, and pluginval validates the plug-ins as they are on a computer that is not activated (the instrument silent, ArtFreq FX passing audio through):
 
 - **macOS:** both universal plug-ins; the tests, natively and again on the Intel half under Rosetta; the interface snapshots of both (artifact **ArtFreq-Snapshots**); pluginval at strictness 10; the installer, test-installed.
-- **Windows** (64-bit, Visual Studio 2022): both plug-ins, checked to need no Visual C++ redistributable; the tests; pluginval at strictness 10; the zip with `How to install.txt`, unzipped again and its copies validated.
+- **Windows** (64-bit, Visual Studio 2022): both plug-ins, checked to need no Visual C++ redistributable; the tests; pluginval at strictness 10; the zip with `How to install.txt`, unzipped again and its copies validated; the installer (artifact **ArtFreq-Installer-Windows**), installed silently over stand-ins for older copies, its copies compared with the built ones and validated, then uninstalled.
 
 When every build succeeds, all the downloads are published as the release `v<version>`. To build one platform only (macOS minutes cost ten times as much), run the workflow by hand (**Actions > Build > Run workflow**) and choose **platform** macOS or Windows: that run publishes no release, and its downloads stay on the run's page. A manual run of **all** builds both and publishes, like a push.
 
@@ -353,7 +373,7 @@ When every build succeeds, all the downloads are published as the release `v<ver
 | `tools/` | The interface snapshot tool, the lows lab (`ArtFreqLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage), the carving lab (`ArtFreqCarveLab`: plays songs through a carving engine with test drawings and measures what an analyser shows), the accuracy check (`ArtFreqTruthLab`: the screenshots' states played through the real plug-in and compared with their canvas) and the demo reel (`ArtFreqDemoReel`: the clips in `docs/marketing/`). |
 | `assets/fonts/` | The embedded fonts and their licences. |
 | `installer/macos/` | The macOS installer (both plug-ins): `build-pkg.sh`, its distribution file, pages and postinstall script. |
-| `installer/windows/` | `How to install.txt`, which goes into the Windows zip (there is no Windows installer yet). |
+| `installer/windows/` | The Windows installer (both plug-ins): `ArtFreq.iss` (Inno Setup), its pictures in `images/` and `make-images.py`, which makes them from the AF emblem; and `How to install.txt`, which goes into the Windows zip. |
 | `docs/DESIGN.md` | The design. |
 
 ## Licences

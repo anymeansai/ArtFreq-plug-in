@@ -1,26 +1,41 @@
 ArtFreq and ArtFreq FX for Windows
 by AnyMeans
 
-Two VST3 plug-ins for 64-bit DAWs on Windows 10 and 11. There is no installer:
-you copy two folders by hand.
+Two VST3 plug-ins for 64-bit DAWs on Windows 10 and 11.
+
+The easy way is the installer, ArtFreq-<version>-Windows.exe, from the same
+download page as this zip: run it and it puts both plug-ins in place (and
+replaces older copies). The installer is not code-signed, so Windows may say
+"Windows protected your PC": click More info, then Run anyway.
+
+This zip is the manual way: you copy two folders by hand.
 
 1. Close your DAW.
 
-2. Unzip this zip (right-click it, Extract All...), then copy the two folders
-   ArtFreq.vst3 and ArtFreq FX.vst3 into
+2. Extract the zip first: right-click it, choose Extract All..., then click
+   Extract. (Double-clicking a zip only shows what is inside it; nothing can
+   be installed from there.)
+
+3. Copy the two extracted folders ArtFreq.vst3 and ArtFreq FX.vst3 into
 
        C:\Program Files\Common Files\VST3
 
-   Windows asks for permission to copy there: click Continue.
-   Copy each .vst3 folder whole; do not open it or move what is inside.
+   (delete any older ArtFreq.vst3, ArtFreq FX.vst3, FreqArt.vst3 or
+   FreqArt FX.vst3 there first). Windows asks for permission to copy there:
+   click Continue. Copy each .vst3 folder whole; do not open it or move what
+   is inside.
 
-3. Open your DAW and rescan plug-ins (in its plug-in settings).
+4. Open your DAW and rescan plug-ins (in its plug-in settings).
+   Ableton Live: Preferences > Plug-ins > Use VST3 Plug-In System Folders: On,
+   then Rescan (in Live 12, Preferences is called Settings).
    ArtFreq is listed under instruments: put it on an instrument (MIDI) track.
    ArtFreq FX is listed under audio effects: put it on an audio track, a bus
    or the master.
 
-4. Open the plug-in's window and activate it with the key from your purchase
+5. Open the plug-in's window and activate it with the key from your purchase
    email: paste it and click Activate. This is needed once per computer (a
    key works on two); an ArtFreq Pro key activates both plug-ins.
+
+To remove them, delete the two folders from the VST3 folder again.
 
 Support: support@anymeansaudio.com

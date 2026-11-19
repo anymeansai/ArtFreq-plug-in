@@ -517,9 +517,10 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
 - **The rename (0.4).** FreqArt became ArtFreq. The plug-in codes (Anym, FqAr, FqFx), and so the
   VST3 class IDs, and the parameter IDs are unchanged, so old projects open the renamed
   plug-ins. The state is written as `ArtFreqState` / `ArtFreqParameters` / `ArtFreqDocument`;
-  the `FreqArt*` tags of earlier versions are read too. The installer removes old `FreqArt.vst3`
-  and `FreqArt FX.vst3` bundles from the system VST3 folder once their replacements are in, so a
-  DAW does not list each plug-in twice.
+  the `FreqArt*` tags of earlier versions are read too. The installers remove old `FreqArt.vst3`
+  and `FreqArt FX.vst3` bundles from the system VST3 folder (the macOS one once their
+  replacements are in, the Windows one just before it copies them), so a DAW does not list each
+  plug-in twice.
 - **The editor** is a small window of its own (`ui/EffectShell.h`, and the compact layout of
   `Content` in `ui/Editor.cpp`). Until 0.4 it was the instrument's 1120 x 720 window with Mode
   and Depth added and whatever did not apply greyed. The customer: "ArtFreq FX looks just like
@@ -1106,8 +1107,9 @@ shared `Licenses.json` and its watch, and every message. The plug-ins only wire 
   and comes back once activated (`SettingsPanel::setDrawingResettable`, from the editor's
   `updateLicensing`).
 - **Help, README, installers**: an Activate note across the foot of both help panels (see "Help
-  panel"), an Activate section in the README, and the step on the macOS installer's last page and
-  in the Windows zip's `How to install.txt`.
+  panel"), an Activate section in the README, and the step on both installers' last pages and in
+  the Windows zip's `How to install.txt`. The Windows uninstaller leaves `Licenses.json` alone (see
+  "Installers"), so a reinstall is still activated.
 
 **Tests.** Every test and snapshot runs against the fake server of `tests/LicenseTestSupport.h`,
 never the real one. The test runner (`tests/Main.cpp`) and the snapshot tool make the default
@@ -1278,6 +1280,53 @@ song (ArtFreq FX). `--marketing` renders real-output images for the website. The
 (analyser resolution, which the canvas does not draw); scan lines in the highs at Density
 256 - 384 where the canvas draws solid; colours depending on the analyser's dB range.
 
+## Installers
+
+A Windows tester, given the zip: "tried extracting to install the plug in nothing would
+happen... No pop up like normal to install the program". So each system has an installer of the
+kind people expect there, and the zip stays for installing by hand.
+
+- **macOS** (`installer/macos/build-pkg.sh`): a product archive (pkgbuild, productbuild) with a
+  welcome page, the licence, one choice per plug-in (both on) and a last page with the first
+  steps. The bundles are non-relocatable and not version-checked, so they always land in
+  `/Library/Audio/Plug-Ins/VST3`; a postinstall script removes the FreqArt bundles and offers to
+  move the installer to the Trash. Not notarised.
+- **Windows** (`installer/windows/ArtFreq.iss`, Inno Setup 6.3 or later; ISCC gets the version
+  as `/DAppVersion`, which CI reads from CMakeLists.txt): 64-bit only (`x64compatible`: x64
+  Windows, and Windows 11 on Arm, whose x64 hosts load x64 plug-ins), Windows 10 or later, run
+  as administrator. Its pages: welcome (in the macOS welcome's words), the licence (LICENSE, its
+  100-column lines joined into paragraphs when the page opens, so the page wraps them), the
+  plug-ins (two components, both in the default type; at least one must stay chosen; an upgrade
+  starts from the previous choice), Ready (it says where the plug-ins go, since the only folder
+  Setup itself knows is the uninstaller's) and the last page (rescan, where each plug-in is
+  listed, Ableton Live's Use VST3 Plug-In System Folders, activating). No folder page: the VST3
+  standard fixes `C:\Program Files\Common Files\VST3` (`{commoncf64}\VST3`).
+  - **Upgrades.** Before anything is copied, `[InstallDelete]` removes each chosen plug-in's
+    bundle folder whole, and the FreqArt bundle it replaces, so no file of an older version
+    stays inside a bundle. Files are copied without version checks. The AppId (a GUID in the
+    script) must never change: by it Windows and Setup find the earlier install, so there stays
+    one entry under Installed apps and one uninstaller, whose log is appended to.
+  - **Uninstalling.** The uninstaller (`unins000.exe`) lives in `C:\Program Files\AnyMeans\ArtFreq`,
+    outside the VST3 folder. It removes the files it installed, then the two bundle folders
+    whole (`[UninstallDelete]`, in case anything was added inside them), its own folder and its
+    entry under Installed apps. It does not touch `%ProgramData%\AnyMeans\Licenses.json`: the
+    activation belongs to the computer and to every AnyMeans plug-in, not to this installer, and
+    keeping it means a reinstall is still activated (to free the computer's place, deactivate
+    first).
+  - **A DAW that has the plug-in loaded** holds its DLL, which is named `.vst3`: so
+    `CloseApplicationsFilter` adds `*.vst3` to the files Setup checks, Setup finds the DAW and
+    offers to close it, and does not start it again afterwards.
+  - **Not code-signed**, so a browser may warn that the file is not commonly downloaded (Edge:
+    Keep, then Keep anyway) and SmartScreen says "Windows protected your PC" until **More
+    info**, **Run anyway**; the README and the release notes say so.
+  - **Pictures** (`installer/windows/images`, made by `make-images.py` from
+    `docs/artfreq-emblem.png`): the tall wizard picture (the AF letters with "ArtFreq" and "by
+    AnyMeans" on the emblem's ink) at 164x314 to 534x1022 and the small one (the emblem on white)
+    at 58 to 159 px, the sizes Inno Setup 6.0 to 6.7 choose from, as 24-bit BMPs; the icon, 16
+    to 256 px.
+  - **Silent**: `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=<file>` for the installer and the
+    uninstaller alike, as CI runs them.
+
 ## Builds and releases (CI)
 
 GitHub Actions (`.github/workflows/build.yml`) builds macOS and Windows; Linux is the
@@ -1298,14 +1347,26 @@ development box only (its matrix entry is gone, its steps are kept).
   with the C runtime linked statically (`CMAKE_MSVC_RUNTIME_LIBRARY`, set before any target)
   and `/utf-8`; ctest (stopped after 15 minutes); a check of the bundle layout
   (`<name>.vst3/Contents/x86_64-win/<name>.vst3`, moduleinfo.json) and of the DLLs' imports
-  (x64, no VCRUNTIME / MSVCP / api-ms-win-crt, with dumpbin); pluginval at strictness 10. No installer yet: `ArtFreq-VST3-Windows.zip` holds both bundles and
-  `How to install.txt` (installer/windows, CRLF). The zip is unzipped into a stand-in for
-  `C:\Program Files\Common Files\VST3` (then into the real one when the runner may write there),
-  its layout and text checked, its DLLs compared with the validated ones and validated again at
-  strictness 5.
-- **Release.** Needs every build; checks that every platform's files are present (its clean-up
-  takes off the release whatever this build did not make), uploads them under temporary names,
-  then swaps each in, and updates `v<version>` and its notes.
+  (x64, no VCRUNTIME / MSVCP / api-ms-win-crt, with dumpbin); pluginval at strictness 10.
+  `ArtFreq-VST3-Windows.zip` holds both bundles and `How to install.txt` (installer/windows,
+  CRLF). The zip is unzipped into a stand-in for `C:\Program Files\Common Files\VST3` (then
+  into the real one when the runner may write there), its layout and text checked, its DLLs
+  compared with the validated ones and validated again at strictness 5. Then the installer: ISCC
+  (on the image; Chocolatey installs Inno Setup only if it is missing) builds
+  `ArtFreq-<version>-Windows.exe`, uploaded at once (artifact ArtFreq-Installer-Windows).
+  Stand-ins for `FreqArt.vst3`, `FreqArt FX.vst3` and a stale file inside `ArtFreq.vst3` go
+  into the real VST3 folder; the silent install must exit with 0, remove all three, and leave
+  the bundles identical to the built ones (`diff -r`: every file, nothing more), which pass
+  pluginval at strictness 5 there, and an entry under Installed apps (name, version, publisher)
+  naming `C:\Program Files\AnyMeans\ArtFreq\unins000.exe`. The silent uninstall must exit with
+  0 and leave none of the bundles, no uninstaller folder (waited for up to a minute: the
+  uninstaller's copy in TEMP deletes it after the original returns) and no entry, and a
+  stand-in `Licenses.json` unchanged. The installer's and uninstaller's logs are printed when a
+  step fails.
+- **Release.** Needs every build; checks that every platform's files are present (the macOS
+  pkg, the Windows exe and both zips: its clean-up takes off the release whatever this build did
+  not make), uploads them under temporary names, then swaps each in, and updates `v<version>`
+  and its notes.
 - **Platform differences in the code.** Pictures: macOS decodes HEIC, WebP, TIFF and BMP too
   (`ARTFREQ_READS_PICTURES_WITH_MACOS` in Actions.cpp sets the chooser's and the drop's
   filters); Windows and Linux read PNG, JPEG and GIF. Shortcuts read Cmd / Option on a Mac, Ctrl /
