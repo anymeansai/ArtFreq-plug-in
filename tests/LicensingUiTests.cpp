@@ -462,7 +462,7 @@ ARTFREQ_TEST (uiLicensingTheLicenceCardAndDeactivating)
         instance.button ("deactivate").onClick();
         instance.button ("deactivate-confirm").onClick();
         CHECK (instance.settle ([&] { return ! instance.processor->isLicensed(); }));
-        CHECK (instance.screenShown() && ! isShown (editor, "settings-panel"));
+        CHECK (instance.settle ([&] { return instance.screenShown() && ! isShown (editor, "settings-panel"); }));
         CHECK (instance.message().startsWith ("Deactivated. Your key can now be activated on another computer."));
         CHECK (anymeans::license::LicenseStore (licensing.folder.folder).read().activations.empty());
 
@@ -595,8 +595,10 @@ ARTFREQ_TEST (uiLicensingTwoKeysDeactivatingTheNewerKeepsTheOlder)
     CHECK (instrument.processor->getLicense().getDeactivationWarning().contains ("ArtFreq will be locked"));
     instrument.button ("deactivate-confirm").onClick();
     CHECK (instrument.settle ([&] { return ! instrument.processor->isLicensed(); }));
-    CHECK (instrument.screenShown() && ! isShown (editor, "settings-panel"));
-    CHECK (instrument.message().endsWith ("ArtFreq is now locked on this computer."));
+    // The editor follows the lock on its own timer: on a slow machine (the macOS runner's Intel
+    // half, under Rosetta) that comes a moment after the processor's flag, so wait for it.
+    CHECK (instrument.settle ([&] { return instrument.screenShown() && ! isShown (editor, "settings-panel"); }));
+    CHECK (instrument.settle ([&] { return instrument.message().endsWith ("ArtFreq is now locked on this computer."); }));
 }
 
 ARTFREQ_TEST (uiLicensingAProjectClosedDuringADeactivation)
