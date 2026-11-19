@@ -57,14 +57,29 @@ public:
         something changed; a change of Level or of the colours' range only recolours it. */
     juce::Image get (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
 
+    /** Works out what get() would, without making the picture: the levels alone
+        (getPixelDbBeforeLevel), for ArtFreq FX, which makes its own picture from them. */
+    void prepareLevels (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
+
     /** Forgets the cached picture (the next get() rebuilds it). */
     void invalidate() noexcept { image = {}; geometryValid = false; }
 
-    /** The level in dBFS of every pixel of the picture last returned, row by row, before Level
-        (the slope included; -200 for silence), and Level in dB: what ArtFreq FX's fast preview
-        adds to its stand-in for the song. */
+    /** The level in dBFS of the picture last returned, row by row, before Level (the slope
+        included; -200 for silence), getWorkWidth() columns across (workWidthFor its width), and
+        Level in dB: what ArtFreq FX's fast preview adds to its stand-in for the song. */
     const std::vector<float>& getPixelDbBeforeLevel() const noexcept { return geometryDb; }
+    int getWorkWidth() const noexcept { return geometryWorkWidth; }
     float getLevelDb() const noexcept { return levelDb; }
+
+    /** The previews work out a picture `width` pixels wide at this many columns and stretch them
+        across it: the plan (and the masks) have Canvas::width columns, and pixels between them
+        are what the columns either side make them (Retina windows at 150 and 200 % are 2300 to
+        3100 pixels wide: a third of the work at the largest). */
+    static int workWidthFor (int width) noexcept { return juce::jlimit (1, Canvas::width, width); }
+
+    /** For each of `width` pixels, the work column before its centre and how far on to the next
+        (as for the analyses: centres where they are). */
+    static void stretchSteps (int workWidth, int width, std::vector<int>& before, std::vector<float>& fraction);
 
     /** Counts the pictures rendered: it changes whenever the picture last returned does. */
     uint64_t getRenderCount() const noexcept { return renderCount; }
@@ -82,6 +97,7 @@ private:
     void updateAmplitudes (const ArtPlan& plan, const AnalyserModel& model);
     void renderGeometry (const ArtPlan* plan, const AnalyserModel& model, int width, int height);
     void colour (const AnalyserModel& model, int width, int height);
+    bool updateGeometry (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
 
     juce::Image image;
 
@@ -94,7 +110,8 @@ private:
 
     // ... and the picture's colours
     AnalyserModel imageModel;
-    std::vector<float> geometryDb; // width x height, without Level (silence: -200)
+    std::vector<float> geometryDb; // geometryWorkWidth x height, without Level (silence: -200)
+    int geometryWorkWidth = 1;
     float levelDb = 0.0f;
     uint64_t renderCount = 0;
 
@@ -118,6 +135,8 @@ private:
     std::vector<int> columnOf, nextColumnOf;
     std::vector<float> columnFraction;
     std::vector<float> accumulator, scratch;
+    std::vector<int> stretchBefore;
+    std::vector<float> stretchFraction, rowIndex;
     std::vector<juce::PixelARGB> rowPixels;
 };
 

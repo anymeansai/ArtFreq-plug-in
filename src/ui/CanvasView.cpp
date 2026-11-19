@@ -39,6 +39,9 @@ namespace
     constexpr double fadeToMeasuredSeconds = 0.3;
     constexpr double fadeToFastSeconds = 0.12;
 
+    // The first measured preview waits until the canvas has been on screen this long.
+    constexpr double openingQuietSeconds = 0.5;
+
     double nowSeconds() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
 
 
@@ -615,22 +618,22 @@ struct CanvasView::Impl
     /** The fast preview at a size (image pixels). */
     juce::Image fastPicture (int width, int height)
     {
-        auto picture = planImage.get (plan, analyserModel(), width, height);
+        if (! processor.isEffect())
+            return planImage.get (plan, analyserModel(), width, height);
 
-        // ArtFreq FX: over the stand-in song, as the mode will show it.
-        if (processor.isEffect())
-        {
-            EffectPreviewImage::Settings settings;
-            settings.mode = effectMode;
-            settings.depthDb = depthDb;
-            settings.view = view;
-            settings.sampleRate = sampleRate;
-            settings.passSeconds = passSeconds;
-            picture = effectPreview.get (planImage.getPixelDbBeforeLevel(), planImage.getLevelDb(), planImage.getRenderCount(),
-                                         settings, processor.getCurrentMasks(), scale, width, height);
-        }
+        // ArtFreq FX: over the stand-in song, as the mode will show it (the sines' levels only in
+        // the modes that play them).
+        if (playsSines (effectMode))
+            planImage.prepareLevels (plan, analyserModel(), width, height);
 
-        return picture;
+        EffectPreviewImage::Settings settings;
+        settings.mode = effectMode;
+        settings.depthDb = depthDb;
+        settings.view = view;
+        settings.sampleRate = sampleRate;
+        settings.passSeconds = passSeconds;
+        return effectPreview.get (planImage.getPixelDbBeforeLevel(), planImage.getLevelDb(), planImage.getRenderCount(),
+                                  settings, processor.getCurrentMasks(), scale, width, height);
     }
 
     MeasureRequest makeRequest (int width, int height) const
@@ -729,9 +732,19 @@ struct CanvasView::Impl
         const auto request = makeRequest (pictureWidth, pictureHeight);
         lastRequest = request;
 
-        // Not before the plan is rebuilt (the request would name the new drawing with the old
-        // plan), and only while the canvas can be seen.
-        measured.update (request, owner.isShowing() && ! processor.isPlanPending());
+        // Only while the canvas can be seen, and has been for a moment (an editor opened and
+        // closed at once, as host scans and validators do, renders nothing); not before the plan
+        // is rebuilt (the request would name the new drawing with the old plan).
+        const auto now = nowSeconds();
+        const auto showing = owner.isShowing();
+
+        if (! showing)
+            shownSince = -1.0;
+        else if (shownSince < 0.0)
+            shownSince = now;
+
+        const auto settled = showing && now - shownSince >= openingQuietSeconds;
+        measured.update (request, settled && ! processor.isPlanPending());
 
         if (auto result = measured.takeResult())
             installMeasurement (std::move (result), true);
@@ -809,24 +822,67 @@ struct CanvasView::Impl
         return { a.getRight() - width, a.getBottom() + 3.0f, width, static_cast<float> (axisHeight) - 5.0f };
     }
 
-    void paintStatus (juce::Graphics& g)
+    /** The status line as it fits after the time labels: in full where there is room, else in
+        fewer words ("Real sound"; "Real output, stand-in song", "Stand-in song"), so it never
+        hides a bar number. */
+    juce::String displayedStatus() const
     {
         if (shownStatus.isEmpty())
-            return;
+            return {};
 
-        const auto r = statusArea();
-        g.setFont (fonts::ui (11.0f));
-        g.setColour (measurementIsCurrent() ? theme::textFaint : theme::textDim);
-        g.drawText (shownStatus, r, juce::Justification::centredRight, true);
+        const auto a = area();
+        const auto font = fonts::ui (11.0f);
+        auto labelsEnd = a.getX();
+
+        for (const auto& mark : axes::timeMarks (lengthIndex, timeSignature.numerator, timeSignature.denominator, a.getWidth(), firstBar))
+        {
+            if (mark.label.isEmpty())
+                continue;
+
+            const auto end = std::floor (a.getX() + static_cast<float> (mark.fraction) * a.getWidth()) + 4.0f
+                           + juce::GlyphArrangement::getStringWidth (axes::labelFont(), mark.label);
+
+            if (end <= a.getRight())
+                labelsEnd = std::max (labelsEnd, end);
+        }
+
+        const auto room = a.getRight() - labelsEnd - 12.0f;
+
+        if (shownStatus.startsWith ("Updating"))
+            return shownStatus;
+
+        const auto candidates = processor.isEffect() ? juce::StringArray { shownStatus, "Real output, stand-in song", "Stand-in song" }
+                                                     : juce::StringArray { shownStatus, "Real sound" };
+
+        for (const auto& text : candidates)
+            if (juce::GlyphArrangement::getStringWidth (font, text) <= room)
+                return text;
+
+        return candidates[candidates.size() - 1];
     }
 
-    /** Where the time labels must stop, so they never run into the status line. */
+    void paintStatus (juce::Graphics& g)
+    {
+        const auto text = displayedStatus();
+
+        if (text.isEmpty())
+            return;
+
+        g.setFont (fonts::ui (11.0f));
+        g.setColour (measurementIsCurrent() ? theme::textFaint : theme::textDim);
+        g.drawText (text, statusArea(), juce::Justification::centredRight, true);
+    }
+
+    /** Where the time labels must stop, so they never run into the status line (when even its
+        fewest words do not fit after them). */
     float statusStart() const
     {
-        if (shownStatus.isEmpty())
+        const auto text = displayedStatus();
+
+        if (text.isEmpty())
             return 1.0e9f;
 
-        return statusArea().getRight() - juce::GlyphArrangement::getStringWidth (fonts::ui (11.0f), shownStatus) - 10.0f;
+        return statusArea().getRight() - juce::GlyphArrangement::getStringWidth (fonts::ui (11.0f), text) - 10.0f;
     }
 
     void paintPicture (juce::Graphics& g, juce::Rectangle<float> a, int width, int height)
@@ -1186,6 +1242,7 @@ struct CanvasView::Impl
     juce::Image fadeFromImage;
     double fadeStart = 0.0, fadeSeconds = fadeToMeasuredSeconds;
     juce::String shownStatus;
+    double shownSince = -1.0;   // when the canvas came on screen (seconds), -1 while it is not
     int lengthIndex = params::defaultLengthIndex;
     juce::AudioPlayHead::TimeSignature timeSignature;  // the host's, for the bar and beat grid
     int firstBar = 0;   // the song's bar the drawing plays at (a single Transport pass), else 0

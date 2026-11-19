@@ -70,6 +70,20 @@ void writePixelRow (juce::Image::BitmapData& data, int y, const juce::PixelARGB*
         reinterpret_cast<juce::PixelRGB*> (line + x * data.pixelStride)->set (source[x]);
 }
 
+void CanvasPlanImage::stretchSteps (int workWidth, int width, std::vector<int>& before, std::vector<float>& fraction)
+{
+    before.resize (static_cast<size_t> (std::max (0, width)));
+    fraction.resize (static_cast<size_t> (std::max (0, width)));
+
+    for (int x = 0; x < width; ++x)
+    {
+        const auto at = (x + 0.5) * workWidth / width - 0.5;
+        const auto b = juce::jlimit (0, std::max (0, workWidth - 2), static_cast<int> (std::floor (at)));
+        before[static_cast<size_t> (x)] = b;
+        fraction[static_cast<size_t> (x)] = workWidth > 1 ? static_cast<float> (juce::jlimit (0.0, 1.0, at - b)) : 0.0f;
+    }
+}
+
 float CanvasPlanImage::lobe (float bins) noexcept
 {
     const auto d = std::abs (bins);
@@ -98,16 +112,8 @@ float CanvasPlanImage::combBrightness (int fftSize) noexcept
     return std::sqrt (8192.0f / static_cast<float> (std::max (256, fftSize))) / combGain;
 }
 
-juce::Image CanvasPlanImage::get (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& modelIn,
-                                  int width, int height)
+bool CanvasPlanImage::updateGeometry (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height)
 {
-    width = juce::jmax (1, width);
-    height = juce::jmax (1, height);
-
-    auto model = modelIn;
-    model.scale = model.scale.sanitised();
-    model.view = model.view.sanitised();
-
     const auto* planPointer = plan.get();
     const auto version = plan != nullptr ? plan->version : 0;
 
@@ -122,37 +128,60 @@ juce::Image CanvasPlanImage::get (const std::shared_ptr<const ArtPlan>& plan, co
                            && juce::exactlyEqual (geometryModel.sampleRate, model.sampleRate)
                            && juce::exactlyEqual (geometryModel.passSeconds, model.passSeconds);
 
-    if (sameGeometry && image.isValid() && image.getWidth() == width && image.getHeight() == height && imageModel == model)
-        return image;
+    if (sameGeometry)
+        return false;
 
-    if (! sameGeometry)
+    if (plan != nullptr && (amplitudesPlan != plan || amplitudesVersion != version
+                            || ! juce::exactlyEqual (amplitudesPassSeconds, model.passSeconds)
+                            || ! juce::exactlyEqual (amplitudesSampleRate, model.sampleRate)
+                            || amplitudesFft != model.view.fftSize))
     {
-        if (plan != nullptr && (amplitudesPlan != plan || amplitudesVersion != version
-                                || ! juce::exactlyEqual (amplitudesPassSeconds, model.passSeconds)
-                                || ! juce::exactlyEqual (amplitudesSampleRate, model.sampleRate)
-                                || amplitudesFft != model.view.fftSize))
-        {
-            amplitudesPlan = plan;
-            amplitudesVersion = version;
-            amplitudesPassSeconds = model.passSeconds;
-            amplitudesSampleRate = model.sampleRate;
-            amplitudesFft = model.view.fftSize;
-            updateAmplitudes (*plan, model);
-        }
-        else if (plan == nullptr)
-        {
-            amplitudesPlan.reset();
-        }
-
-        renderGeometry (planPointer, model, width, height);
-
-        geometryValid = true;
-        geometryPlan = planPointer;
-        geometryVersion = version;
-        geometryModel = model;
-        geometryWidth = width;
-        geometryHeight = height;
+        amplitudesPlan = plan;
+        amplitudesVersion = version;
+        amplitudesPassSeconds = model.passSeconds;
+        amplitudesSampleRate = model.sampleRate;
+        amplitudesFft = model.view.fftSize;
+        updateAmplitudes (*plan, model);
     }
+    else if (plan == nullptr)
+    {
+        amplitudesPlan.reset();
+    }
+
+    renderGeometry (planPointer, model, width, height);
+
+    geometryValid = true;
+    geometryPlan = planPointer;
+    geometryVersion = version;
+    geometryModel = model;
+    geometryWidth = width;
+    geometryHeight = height;
+    return true;
+}
+
+void CanvasPlanImage::prepareLevels (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& modelIn, int width, int height)
+{
+    auto model = modelIn;
+    model.scale = model.scale.sanitised();
+    model.view = model.view.sanitised();
+    updateGeometry (plan, model, juce::jmax (1, width), juce::jmax (1, height));
+    levelDb = model.outputGain > 0.0f ? 20.0f * std::log10 (model.outputGain) : silentDb;
+}
+
+juce::Image CanvasPlanImage::get (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& modelIn,
+                                  int width, int height)
+{
+    width = juce::jmax (1, width);
+    height = juce::jmax (1, height);
+
+    auto model = modelIn;
+    model.scale = model.scale.sanitised();
+    model.view = model.view.sanitised();
+
+    const auto rebuilt = updateGeometry (plan, model, width, height);
+
+    if (! rebuilt && image.isValid() && image.getWidth() == width && image.getHeight() == height && imageModel == model)
+        return image;
 
     colour (model, width, height);
     imageModel = model;
@@ -208,8 +237,10 @@ void CanvasPlanImage::updateAmplitudes (const ArtPlan& plan, const AnalyserModel
     }
 }
 
-void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& model, int width, int height)
+void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& model, int pictureWidth, int height)
 {
+    const auto width = workWidthFor (pictureWidth);
+    geometryWorkWidth = width;
     const auto pixels = static_cast<size_t> (width) * static_cast<size_t> (height);
     geometryDb.assign (pixels, silentDb);
     ++renderCount;
@@ -314,6 +345,7 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
     // Pixels: each row shows the loudest of what reaches it (an analyser's row shows the loudest
     // bin inside it).
     accumulator.resize (static_cast<size_t> (width));
+    const auto oneToOne = width == numColumns;
     const auto* columns = columnOf.data();
     const auto* nextColumns = nextColumnOf.data();
     const auto* fractions = columnFraction.data();
@@ -335,11 +367,21 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
             const auto* lineAmplitudes = amplitudes.data() + static_cast<size_t> (c.line) * static_cast<size_t> (numColumns);
             const auto w = c.weight;
 
-            for (int x = 0; x < width; ++x)
+            if (oneToOne)
             {
-                const auto a = lineAmplitudes[columns[x]];
-                const auto b = lineAmplitudes[nextColumns[x]];
-                acc[x] = std::max (acc[x], w * (a + (b - a) * fractions[x]));
+                // A pixel column per plan column (the work width is the plan's): no interpolation,
+                // a loop the compiler vectorises.
+                for (int x = 0; x < width; ++x)
+                    acc[x] = std::max (acc[x], w * lineAmplitudes[x]);
+            }
+            else
+            {
+                for (int x = 0; x < width; ++x)
+                {
+                    const auto a = lineAmplitudes[columns[x]];
+                    const auto b = lineAmplitudes[nextColumns[x]];
+                    acc[x] = std::max (acc[x], w * (a + (b - a) * fractions[x]));
+                }
             }
         }
 
@@ -360,19 +402,32 @@ void CanvasPlanImage::colour (const AnalyserModel& model, int width, int height)
     const auto gainDb = model.outputGain > 0.0f ? 20.0f * std::log10 (model.outputGain) : silentDb;
     const auto& table = theme::spectrumTable();
     const auto floorDb = model.view.floorDb, ceilingDb = model.view.ceilingDb;
+    const auto work = geometryWorkWidth;
+    stretchSteps (work, width, stretchBefore, stretchFraction);
 
     levelDb = gainDb;
     rowPixels.resize (static_cast<size_t> (width));
+    rowIndex.resize (static_cast<size_t> (work));
     juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
+
+    // Colour-map index = (dB - floor) * perDb, worked out per column, stretched per pixel.
+    const auto perDb = 255.0f / (ceilingDb - floorDb);
+    const auto from = (gainDb - floorDb) * perDb + 0.5f;
 
     for (int y = 0; y < height; ++y)
     {
-        const auto offset = static_cast<size_t> (y) * static_cast<size_t> (width);
+        const auto* row = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (work);
+
+        for (int x = 0; x < work; ++x)
+            rowIndex[static_cast<size_t> (x)] = row[x] * perDb + from;
 
         for (int x = 0; x < width; ++x)
         {
-            const auto db = geometryDb[offset + static_cast<size_t> (x)] + gainDb;
-            rowPixels[static_cast<size_t> (x)] = table[colourLevelFor (db, floorDb, ceilingDb)];
+            const auto b = static_cast<size_t> (stretchBefore[static_cast<size_t> (x)]);
+            const auto i0 = rowIndex[b];
+            const auto i1 = rowIndex[std::min (static_cast<size_t> (work - 1), b + 1)];
+            const auto index = i0 + (i1 - i0) * stretchFraction[static_cast<size_t> (x)];
+            rowPixels[static_cast<size_t> (x)] = table[static_cast<size_t> (index <= 0.0f ? 0 : index >= 255.0f ? 255 : static_cast<int> (index))];
         }
 
         writePixelRow (data, y, rowPixels.data(), width);

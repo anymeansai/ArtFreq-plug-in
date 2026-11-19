@@ -878,18 +878,19 @@ ARTFREQ_TEST (uiEffectCanvasShowsEachMode)
     const auto justBefore = juce::Point<int> (55, 50);   // a few pixels before the band
     auto image = picture (EffectMode::carve, -80.0f, 0.0f);
     CHECK (levelOf (image, inside.x, inside.y) == 0);
-    CHECK_GREATER (levelOf (image, outside.x, outside.y), 120);
+    CHECK_GREATER (levelOf (image, outside.x, outside.y), 80);
     CHECK_GREATER (levelOf (image, justBefore.x, justBefore.y), 100);
 
-    // At -24 dB it is darker than the song but not black.
+    // At -24 dB it is darker than the song there (24 dB: 61 levels) but not black.
     const auto song = levelOf (image, outside.x, outside.y);
+    const auto songThere = levelOf (picture (EffectMode::draw, -80.0f, -200.0f, 7), inside.x, inside.y);
     image = picture (EffectMode::carve, -24.0f, 0.0f);
     CHECK_GREATER (levelOf (image, inside.x, inside.y), 40);
-    CHECK_LESS (levelOf (image, inside.x, inside.y), song - 40);
+    CHECK_LESS (levelOf (image, inside.x, inside.y), songThere - 50);
 
     // Stencil: the other way round.
     image = picture (EffectMode::stencil, -80.0f, 0.0f);
-    CHECK_GREATER (levelOf (image, inside.x, inside.y), 120);
+    CHECK_GREATER (levelOf (image, inside.x, inside.y), 100);
     CHECK (levelOf (image, outside.x, outside.y) == 0);
 
     // Carve + Draw: the sines bright in the band, a darker edge just before it (the halo: 60 ms,

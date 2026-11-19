@@ -273,8 +273,14 @@ void EffectPreviewImage::makeCarve (const MaskPlan* mask, const Settings& settin
     boxRows (carve.data(), width, height, boxWidth, 1.0f, runningSums);
     boxRows (carve.data(), width, height, boxWidth, 1.0f, runningSums);
 
+    // To dB (a fast log: this runs on every drag step).
     for (auto& value : carve)
-        value = 10.0f * std::log10 (std::max (1.0e-13f, value));
+    {
+        // value = m 2^(bits - 1) with m in [1, 2); the polynomial is log2 (m) + 1 to within 0.005.
+        auto bits = 0;
+        const auto m = 2.0f * std::frexp (std::max (1.0e-13f, value), &bits);
+        value = 3.0103f * (static_cast<float> (bits - 2) + (-0.34484843f * m + 2.02466578f) * m - 0.67487759f);
+    }
 }
 
 juce::Image EffectPreviewImage::get (const std::vector<float>& sinesDb, float levelDb, uint64_t sinesKey, const Settings& settingsIn,
@@ -304,7 +310,9 @@ juce::Image EffectPreviewImage::get (const std::vector<float>& sinesDb, float le
     imageScale = scale;
     imageMasks = masks;
 
-    makeSong (settings, scale, width, height);
+    // Worked out at the plan's and the masks' columns at most, and stretched across the width.
+    const auto work = CanvasPlanImage::workWidthFor (width);
+    makeSong (settings, scale, work, height);
 
     // The mask this mode carves with (Carve + Draw's is wider), or none.
     const MaskPlan* mask = nullptr;
@@ -316,36 +324,39 @@ juce::Image EffectPreviewImage::get (const std::vector<float>& sinesDb, float le
         mask = nullptr;
 
     // The carve depends on neither the sines nor the colours: kept while only those change.
-    if (! carveValid || mask != carveMask || masks != carveMasks || carveWidth != width || carveHeight != height
+    if (! carveValid || mask != carveMask || masks != carveMasks || carveWidth != work || carveHeight != height
         || carveScale != scale || carveSettings.mode != settings.mode || ! juce::exactlyEqual (carveSettings.depthDb, settings.depthDb)
         || carveSettings.view.fftSize != settings.view.fftSize || ! juce::exactlyEqual (carveSettings.sampleRate, settings.sampleRate)
         || ! juce::exactlyEqual (carveSettings.passSeconds, settings.passSeconds))
     {
-        makeCarve (mask, settings, scale, width, height);
+        makeCarve (mask, settings, scale, work, height);
         carveValid = true;
         carveMask = mask;
         carveMasks = masks;
         carveSettings = settings;
         carveScale = scale;
-        carveWidth = width;
+        carveWidth = work;
         carveHeight = height;
     }
 
     if (! image.isValid() || image.getWidth() != width || image.getHeight() != height)
         image = juce::Image (juce::Image::RGB, width, height, false);
 
-    const auto withSines = playsSines (settings.mode) && sinesDb.size() == static_cast<size_t> (width) * static_cast<size_t> (height);
+    const auto withSines = playsSines (settings.mode) && sinesDb.size() == static_cast<size_t> (work) * static_cast<size_t> (height);
     const auto& table = theme::spectrumTable();
-    const auto floorDb = settings.view.floorDb, ceilingDb = settings.view.ceilingDb;
+    const auto floorDb = settings.view.floorDb;
+    const auto perDb = 255.0f / (settings.view.ceilingDb - floorDb);
+    CanvasPlanImage::stretchSteps (work, width, stretchBefore, stretchFraction);
 
     juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
     rowPixels.resize (static_cast<size_t> (width));
+    rowLevels.resize (static_cast<size_t> (work));
 
     for (int y = 0; y < height; ++y)
     {
-        const auto offset = static_cast<size_t> (y) * static_cast<size_t> (width);
+        const auto offset = static_cast<size_t> (y) * static_cast<size_t> (work);
 
-        for (int x = 0; x < width; ++x)
+        for (int x = 0; x < work; ++x)
         {
             auto level = song[offset + static_cast<size_t> (x)] + carve[offset + static_cast<size_t> (x)];
 
@@ -355,7 +366,16 @@ juce::Image EffectPreviewImage::get (const std::vector<float>& sinesDb, float le
                 if (const auto sine = sinesDb[offset + static_cast<size_t> (x)]; sine > silentDb + 1.0f)
                     level = powerSum (level, sine + levelDb);
 
-            rowPixels[static_cast<size_t> (x)] = table[colourLevelFor (level, floorDb, ceilingDb)];
+            rowLevels[static_cast<size_t> (x)] = level;
+        }
+
+        for (int x = 0; x < width; ++x)
+        {
+            const auto b = static_cast<size_t> (stretchBefore[static_cast<size_t> (x)]);
+            const auto l0 = rowLevels[b];
+            const auto l1 = rowLevels[std::min (static_cast<size_t> (work - 1), b + 1)];
+            const auto index = (l0 + (l1 - l0) * stretchFraction[static_cast<size_t> (x)] - floorDb) * perDb + 0.5f;
+            rowPixels[static_cast<size_t> (x)] = table[static_cast<size_t> (index <= 0.0f ? 0 : index >= 255.0f ? 255 : static_cast<int> (index))];
         }
 
         writePixelRow (data, y, rowPixels.data(), width);

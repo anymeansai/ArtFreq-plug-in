@@ -635,10 +635,10 @@ namespace
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
             { "1", { "Put ArtFreq on an instrument track.", "It makes the sound itself; MIDI notes can trigger it." } },
             { "2", { "Open a spectrogram on its output.", "MiniMeters, or any analyser with a scrolling spectrogram." } },
-            { "3", { "Match your analyser.", "In Settings (the gear), choose the same scale, range and slope as your "
-                                             "analyser. MiniMeters: Log, 20 Hz to 20 kHz." } },
-            { "4", { "Draw.", "Add text, drop in a picture, or paint with the brush. The canvas shows what your "
-                              "analyser will show." } },
+            { "3", { "Match your analyser.", "In Settings (the gear), choose the scale, range, slope, FFT size and "
+                                             "levels your analyser uses. MiniMeters: Log, 20 Hz to 20 kHz." } },
+            { "4", { "Draw.", "Add text, drop in a picture, or paint. A moment after each change the canvas shows "
+                              "the real sound, as your analyser will." } },
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
                                                        "in the panel on the right. Density sets how many lines draw it." } },
             { "6", { "Press play in your DAW.", "The drawing plays once from wherever you start. A DAW's export or "
@@ -673,7 +673,7 @@ namespace
             { "Carve + Draw", "plays it in a hole it carves." },
             { "Stencil", "lets only the drawing through." },
             { "Draw", "plays it on top of the song." },
-            { "Sound", "(the Draw modes) sets the drawing's level, density, contrast and lows." },
+            { "Sound", "(Draw modes): the sines' level, density, contrast, lows." },
         };
         return modes;
     }
@@ -698,7 +698,8 @@ namespace
     const std::vector<Paragraph>& effectNotes()
     {
         static const std::vector<Paragraph> list {
-            { "Settings", "has the trigger (transport or MIDI notes), where a pass starts, and the tempo." },
+            { "The canvas:", "the real output, on a stand-in song." },
+            { "Settings:", "the trigger, where a pass starts, the tempo." },
             { "Latency:", "85 ms; your DAW makes up for it." },
             { "Keys:", "Space plays your DAW. V, B and E pick a tool." },
         };
@@ -745,7 +746,8 @@ namespace
     {
         static const std::vector<Paragraph> list {
             { "The highs show the sharpest detail.", "Small text reads best in the High band." },
-            { "The lowest octaves are coarse in every analyser.", "Keep shapes there big and bold." },
+            { "The lows are blurry in every analyser.", "Below about 250 Hz shapes thicken (the canvas shows it): "
+                                                        "keep them big." },
             { "Lows", "(at the foot of the Layers list): Smooth keeps shapes below about 2 kHz filled at "
                       "every FFT size; Stripes plays separate lines there, which long FFTs show as stripes." },
             { "Density shapes the look.", "Raise it for solid shapes; lower it for a scan-line look." },
@@ -824,7 +826,7 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
         b.marker = text;
         b.area = { x, y, w, 12.0f };
         result.push_back (std::move (b));
-        y += 12.0f + 14.0f;
+        y += 12.0f + (effect ? 12.0f : 14.0f);
     };
 
     const auto paragraph = [&] (Block::Kind kind, const juce::String& marker, const juce::AttributedString& text,
@@ -841,7 +843,7 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
 
     if (effect)
     {
-        // Short, and its own: six steps on the left; the modes and three notes on the right.
+        // Short, and its own: six steps on the left; the modes and four notes on the right.
         if (column == 0)
         {
             heading ("Getting started");
@@ -854,13 +856,13 @@ std::vector<HelpPanel::Block> HelpPanel::layoutColumn (int column, int columnWid
             heading ("Modes");
 
             for (const auto& p : effectModes())
-                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 5.0f);
+                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 4.0f);
 
-            y += 7.0f;
+            y += 2.0f;
             heading ("Good to know");
 
             for (const auto& p : effectNotes())
-                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 5.0f);
+                paragraph (Block::Kind::bullet, {}, leadText (p), 16.0f, 4.0f);
         }
 
         return result;

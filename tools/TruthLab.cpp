@@ -961,6 +961,7 @@ struct Options
     float lowDb = -100.0f, highDb = 0.0f;
     bool wav = false;
     bool marketing = false;
+    bool bench = false;
 };
 
 const char* modeName (EffectMode mode)
@@ -1189,10 +1190,15 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
             model.passSeconds = request.passSeconds;
             model.outputGain = ui::previewGain (p.getOutputGain());
             ui::CanvasPlanImage planImage;
-            auto picture = planImage.get (p.getCurrentPlan(), model, w, h);
+            juce::Image picture;
 
-            if (effect)
+            if (! effect)
             {
+                picture = planImage.get (p.getCurrentPlan(), model, w, h);
+            }
+            else
+            {
+                planImage.prepareLevels (p.getCurrentPlan(), model, w, h);
                 ui::EffectPreviewImage preview;
                 ui::EffectPreviewImage::Settings settings;
                 settings.mode = request.mode;
@@ -1626,6 +1632,134 @@ std::vector<MarketingShot> marketingShots()
 
 // ================================================================================================
 
+
+// ================================================================================================
+// The budget: how long the previews take in the worst cases
+// ================================================================================================
+
+/** A canvas drawn everywhere (the worst case for the plan, the masks and the previews). */
+void drawEverything (ArtFreqProcessor& p)
+{
+    ArtDocument document;
+    const auto scale = p.getScale();
+    auto block = ArtDocument::makeTextObject ("ARTFREQ ARTFREQ", static_cast<float> (scale.minHz), static_cast<float> (scale.maxHz));
+    block.startTime = 0.0f;
+    block.endTime = 1.0f;
+    document.objects.push_back (block);
+    p.setDocument (document);
+
+    // And paint over all of it, at full strength.
+    p.editDocument ([scale] (ArtDocument& d)
+    {
+        d.paint.assign (static_cast<size_t> (ArtDocument::paintWidth) * static_cast<size_t> (ArtDocument::paintHeight), 255);
+        d.paintScale = scale;
+    });
+}
+
+int runBench()
+{
+    struct Case
+    {
+        const char* name;
+        bool effect;
+        EffectMode mode;
+        int lengthIndex;   // 7: 32 bars
+        float bpm;
+        bool everything;
+        int width, height;
+        int fft;
+    };
+
+    const Case cases[] {
+        { "ArtFreq, default drawing, 4 bars at 120, 2x at 100 % (1528 x 924)", false, EffectMode::carve, 4, 120.0f, false, 1528, 924, 8192 },
+        { "ArtFreq, worst: drawn everywhere, density 1024, 32 bars at 20 BPM (384 s), 2x at 100 %", false, EffectMode::carve, 7, 20.0f, true, 1528, 924, 8192 },
+        { "... the same at FFT 16384", false, EffectMode::carve, 7, 20.0f, true, 1528, 924, 16384 },
+        { "... the same, 2x at 200 % (3056 x 1848)", false, EffectMode::carve, 7, 20.0f, true, 3056, 1848, 8192 },
+        { "ArtFreq FX, Carve, default drawing, 4 bars at 120, 2x at 100 % (1304 x 600)", true, EffectMode::carve, 4, 120.0f, false, 1304, 600, 8192 },
+        { "ArtFreq FX, Carve, worst: drawn everywhere, 32 bars at 20 BPM, 2x at 100 %", true, EffectMode::carve, 7, 20.0f, true, 1304, 600, 8192 },
+        { "ArtFreq FX, Carve + Draw, worst, density 1024, 32 bars at 20 BPM, 2x at 100 %", true, EffectMode::carveDraw, 7, 20.0f, true, 1304, 600, 8192 },
+        { "... the same, 2x at 200 % (2608 x 1200)", true, EffectMode::carveDraw, 7, 20.0f, true, 2608, 1200, 8192 },
+    };
+
+    std::cout << "The previews' cost on this machine (one core; JUCE's own FFT, as on Windows without IPP)\n\n";
+
+    for (const auto& c : cases)
+    {
+        auto processor = makeProcessor (c.effect, {});
+        auto& p = *processor;
+        setParameter (p, params::id::length, static_cast<float> (c.lengthIndex));
+        setParameter (p, params::id::tempoSource, 1.0f);
+        setParameter (p, params::id::bpm, c.bpm);
+        setParameter (p, params::id::analyserFft, static_cast<float> (c.fft == 4096 ? 0 : c.fft == 8192 ? 1 : 2));
+
+        if (c.effect)
+            setParameter (p, params::id::mode, static_cast<float> (static_cast<int> (c.mode)));
+
+        if (c.everything)
+        {
+            setParameter (p, params::id::density, 1024.0f);
+            drawEverything (p);
+        }
+
+        p.rebuildPlanIfNeeded();
+
+        const auto request = ui::MeasureRequest::forProcessor (p, c.width, c.height);
+        const auto started = juce::Time::getMillisecondCounterHiRes();
+        const auto result = ui::MeasuredPreview::renderNow (request);
+        const auto measuredMs = juce::Time::getMillisecondCounterHiRes() - started;
+
+        // The fast preview, on the message thread while dragging: the first picture, and one after
+        // the drawing changes (a drag step: a new plan, and in ArtFreq FX new masks).
+        ui::CanvasPlanImage planImage;
+        ui::EffectPreviewImage effectImage;
+        ui::AnalyserModel model;
+        model.scale = request.scale;
+        model.view = request.view;
+        model.sampleRate = request.sampleRate;
+        model.passSeconds = request.passSeconds;
+        model.outputGain = ui::previewGain (p.getOutputGain());
+        ui::EffectPreviewImage::Settings settings;
+        settings.mode = request.mode;
+        settings.depthDb = request.depthDb;
+        settings.view = request.view;
+        settings.sampleRate = request.sampleRate;
+        settings.passSeconds = request.passSeconds;
+
+        double planMs = 0.0;
+        const auto fast = [&] (uint64_t key)
+        {
+            const auto planStarted = juce::Time::getMillisecondCounterHiRes();
+
+            if (! c.effect)
+                planImage.get (p.getCurrentPlan(), model, c.width, c.height);
+            else if (playsSines (c.mode))
+                planImage.prepareLevels (p.getCurrentPlan(), model, c.width, c.height);
+
+            planMs = juce::Time::getMillisecondCounterHiRes() - planStarted;
+
+            if (c.effect)
+                effectImage.get (planImage.getPixelDbBeforeLevel(), planImage.getLevelDb(), key, settings, p.getCurrentMasks(),
+                                 request.scale, c.width, c.height);
+        };
+
+        fast (1);
+        p.editDocument ([] (ArtDocument& d) { if (! d.objects.empty()) d.objects.front().startTime += 0.001f; });
+        p.rebuildPlanIfNeeded();
+        const auto fastStarted = juce::Time::getMillisecondCounterHiRes();
+        fast (2);
+        const auto fastMs = juce::Time::getMillisecondCounterHiRes() - fastStarted;
+
+        const auto analysisBytes = result != nullptr ? (result->analysis->output.size() + result->analysis->input.size()) * sizeof (int16_t) : 0;
+        std::cout << c.name << "\n   pass " << num (request.passSeconds, 0) << " s, FFT " << request.view.fftSize << ": measured preview "
+                  << num (measuredMs, 0) << " ms (background), " << (result != nullptr ? result->analysis->frames : 0) << " analyses, "
+                  << num (static_cast<double> (analysisBytes) / 1.0e6, 1) << " MB analysis + "
+                  << num (static_cast<double> (c.width) * c.height * 4.0 / 1.0e6, 1) << " MB picture; fast preview after a change "
+                  << num (fastMs, 0) << " ms (message thread; the plan's part " << num (planMs, 0) << " ms)\n";
+    }
+
+    return 0;
+}
+
 bool parseOptions (int argc, char* argv[], Options& options, juce::String& error)
 {
     juce::StringArray args;
@@ -1660,11 +1794,15 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
         }
         else if (a == "--wav") options.wav = true;
         else if (a == "--marketing") options.marketing = true;
+        else if (a == "--bench") options.bench = true;
         else if (a.startsWith ("-")) { error = "unknown option " + a; return false; }
         else positional.add (a);
     }
 
     const auto cwd = juce::File::getCurrentWorkingDirectory();
+
+    if (options.bench)
+        return error.isEmpty();
 
     if (options.marketing && positional.size() == 1)
         options.outputDir = cwd.getChildFile (positional[0]);
@@ -1705,6 +1843,14 @@ int main (int argc, char* argv[])
     {
         std::cerr << error << std::endl;
         return 1;
+    }
+
+    if (options.bench)
+    {
+        licensetest::installRunnerLicensing();
+        const auto result = runBench();
+        licensetest::removeRunnerLicensing();
+        return result;
     }
 
     options.outputDir.createDirectory();

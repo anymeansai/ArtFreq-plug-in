@@ -56,10 +56,12 @@ public:
         bool operator!= (const Settings& other) const noexcept { return ! operator== (other); }
     };
 
-    /** The picture, `width` x `height` pixels. `sinesDb` is the sines' level per pixel, row by row,
-        before Level, and `levelDb` Level (CanvasPlanImage::getPixelDbBeforeLevel and getLevelDb;
-        ignored in the modes that do not play them); `sinesKey` changes whenever `sinesDb` does.
-        Rebuilt only when something changed; otherwise the cached image is returned. */
+    /** The picture, `width` x `height` pixels. `sinesDb` is the sines' level, row by row, before
+        Level, CanvasPlanImage::workWidthFor (width) columns across, and `levelDb` Level
+        (CanvasPlanImage::getPixelDbBeforeLevel and getLevelDb; ignored in the modes that do not
+        play them); `sinesKey` changes whenever `sinesDb` does. Worked out at that many columns and
+        stretched across the width. Rebuilt only when something changed; otherwise the cached image
+        is returned. */
     juce::Image get (const std::vector<float>& sinesDb, float levelDb, uint64_t sinesKey, const Settings& settings,
                      const std::shared_ptr<const MaskPlanSet>& masks, const FrequencyScale& scale, int width, int height);
 
@@ -102,7 +104,9 @@ private:
     bool carveValid = false;
 
     std::vector<double> runningSums;
-    std::vector<float> carveScratch;
+    std::vector<float> carveScratch, rowLevels;
+    std::vector<int> stretchBefore;
+    std::vector<float> stretchFraction;
     std::vector<juce::PixelARGB> rowPixels;
 };
 
