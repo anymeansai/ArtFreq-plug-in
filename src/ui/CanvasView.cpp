@@ -4,6 +4,7 @@
 #include "CanvasAxes.h"
 #include "CanvasPlanImage.h"
 #include "EffectPreview.h"
+#include "FastPreview.h"
 #include "KeyFocus.h"
 #include "MeasuredPreview.h"
 #include "Theme.h"
@@ -593,15 +594,18 @@ struct CanvasView::Impl
     // and analysed in the background a moment after the last change. The canvas shows:
     //
     //  - the measured preview when it is of what is drawn and set now;
-    //  - the last measured preview while an update is on its way, as long as the drawing has not
-    //    moved (another Level, Depth, mode, length, Density, Contrast, analyser setting or window
-    //    size: the shapes are where they were, only their look is about to change), unless the
-    //    mouse is down changing it (a knob being turned should be seen turning);
-    //  - otherwise the fast preview: before the first measurement, and while the drawing changes
-    //    (painting, dragging, typing, undo), until the new measurement is in.
+    //  - the last measured preview while an update is on its way that changes only the picture's
+    //    size, the colours, the take of the user's song (ArtFreq FX) or the instrument's Level
+    //    where that only moves the analysis by as many dB (measuredStillShows): it is then still
+    //    the right picture, and the update takes a moment;
+    //  - otherwise the fast preview, which follows any change within a frame: before the first
+    //    measurement, and from any change to the drawing or to what is heard or how it is
+    //    analysed (painting, dragging, typing, undo, a mode, a knob turned by the mouse, the
+    //    wheel, the keyboard or the host) until the new measurement is in.
     //
-    // Between them it cross-fades. The selection, the handles, the outlines and the brush cursor
-    // are drawn on top as always.
+    // A new editor window starts with what the last one measured, when it is still of the drawing
+    // (the processor keeps it: PreviewMemory). Between the pictures the canvas cross-fades. The
+    // selection, the handles, the outlines and the brush cursor are drawn on top as always.
 
     AnalyserModel analyserModel() const
     {
@@ -615,25 +619,39 @@ struct CanvasView::Impl
         return model;
     }
 
-    /** The fast preview at a size (image pixels). */
+    /** What the fast preview is to show at a size (image pixels). */
+    FastRequest makeFastRequest (int width, int height) const
+    {
+        FastRequest request;
+        request.effect = processor.isEffect();
+        request.plan = plan;
+        request.model = analyserModel();
+        request.width = width;
+        request.height = height;
+
+        if (request.effect)
+        {
+            // ArtFreq FX: over the song, as the mode will show it.
+            request.settings.mode = effectMode;
+            request.settings.depthDb = depthDb;
+            request.settings.view = view;
+            request.settings.sampleRate = sampleRate;
+            request.settings.passSeconds = passSeconds;
+            request.masks = processor.getCurrentMasks();
+            request.song = fastSong;
+        }
+
+        // The last measurement's lows, where the drawing's lows are as they were.
+        request.measured = fastLows;
+        request.measuredPlan = fastLows != nullptr ? measuredRequest.plan : nullptr;
+        request.measuredGain = measuredRequest.outputGain;
+        return request;
+    }
+
+    /** The fast preview at a size (image pixels): made on its own thread, the newest there is. */
     juce::Image fastPicture (int width, int height)
     {
-        if (! processor.isEffect())
-            return planImage.get (plan, analyserModel(), width, height);
-
-        // ArtFreq FX: over the stand-in song, as the mode will show it (the sines' levels only in
-        // the modes that play them).
-        if (playsSines (effectMode))
-            planImage.prepareLevels (plan, analyserModel(), width, height);
-
-        EffectPreviewImage::Settings settings;
-        settings.mode = effectMode;
-        settings.depthDb = depthDb;
-        settings.view = view;
-        settings.sampleRate = sampleRate;
-        settings.passSeconds = passSeconds;
-        return effectPreview.get (planImage.getPixelDbBeforeLevel(), planImage.getLevelDb(), planImage.getRenderCount(),
-                                  settings, processor.getCurrentMasks(), scale, width, height);
+        return fast.get (makeFastRequest (width, height), fastAtOnce);
     }
 
     MeasureRequest makeRequest (int width, int height) const
@@ -656,6 +674,15 @@ struct CanvasView::Impl
         }
         request.passSeconds = passSeconds;
         request.sampleRate = sampleRate;
+
+        // ArtFreq FX: the user's own song, once a pass of it has played.
+        if (request.effect)
+            if (auto capture = processor.getSongCapture(); capture != nullptr && capture->getSerial() != 0)
+            {
+                request.songSerial = capture->getSerial();
+                request.song = std::move (capture);
+            }
+
         request.scale = scale;
         request.slopeDbPerOctave = slope;
         request.view = view;
@@ -691,20 +718,79 @@ struct CanvasView::Impl
         hasMeasured = true;
         lastMeasureMilliseconds = result->milliseconds;
         updateMeasuredSong();
+
+        // Kept by the processor for the next editor window.
+        auto memory = std::make_shared<PreviewMemory>();
+        memory->request = r;
+        memory->analysis = measuredAnalysis;
+        memory->image = measuredImage;
+        processor.getPreviewMemory() = std::move (memory);
+
         owner.repaint (area().getSmallestIntegerContainer());
     }
 
-    /** ArtFreq FX's fast preview draws the stand-in as the last measurement analysed it, when it
-        was made for the same scale, FFT, rate and length. */
-    void updateMeasuredSong()
+    /** A new canvas takes over what the last editor window measured (the processor keeps it):
+        shown at once if it is still of the drawing and settings (at another size, stretched,
+        until the new size is in), and the background render starts from it. */
+    void recallMeasurement (const MeasureRequest& request)
     {
-        if (! processor.isEffect())
+        const auto memory = processor.getPreviewMemory();
+
+        if (memory == nullptr || memory->analysis == nullptr || ! memory->image.isValid())
             return;
 
+        measured.adopt (memory->request, memory->analysis);
+
+        if (! memory->request.sameExcept (request, MeasureRequest::colours | MeasureRequest::size | MeasureRequest::songTake))
+            return;
+
+        measuredImage = memory->image;
+        measuredRequest = memory->request;
+        measuredAnalysis = memory->analysis;
+        hasMeasured = true;
+        shown = Shown::measured;
+        fading = false;
+        fadeFromImage = {};
+        updateMeasuredSong();
+        owner.repaint (area().getSmallestIntegerContainer());
+    }
+
+    /** Whether the measured picture on screen still shows the sound asked for now, though not
+        exactly: only the picture's size, the colours, the take of the user's song (the same song,
+        another pass of it) or, where the new analysis is the old one moved by as many dB, the
+        instrument's Level differ. It then stays until the new one is in (a moment). Any other
+        change (the drawing, mode, Depth, Density, Contrast, Lows, Length, tempo, the analyser's
+        FFT, Level where the clipper or the song is involved) goes to the fast preview at once:
+        it is current within a frame, whether the change came from the mouse, the wheel, the
+        keyboard or the host. */
+    bool measuredStillShows (const MeasureRequest& request) const
+    {
+        if (! hasMeasured)
+            return false;
+
+        if (measuredRequest.sameExcept (request, MeasureRequest::colours | MeasureRequest::size | MeasureRequest::songTake))
+            return true;
+
+        auto sameSize = request;
+        sameSize.width = measuredRequest.width;
+        sameSize.height = measuredRequest.height;
+        return measuredAnalysis != nullptr && canRelevel (*measuredAnalysis, measuredRequest, sameSize);
+    }
+
+    /** The fast preview borrows from the last measurement made with the scale, slope, FFT, rate,
+        length and height it draws now: ArtFreq FX the song as analysed (instead of the stand-in's
+        texture), ArtFreq the lows (where the drawing's lows are as they were). */
+    void updateMeasuredSong()
+    {
         const auto& r = measuredRequest;
-        const auto compatible = hasMeasured && r.scale == scale && r.view.fftSize == view.fftSize
-                             && juce::exactlyEqual (r.sampleRate, sampleRate) && juce::exactlyEqual (r.passSeconds, passSeconds);
-        effectPreview.setMeasuredSong (compatible ? measuredAnalysis : nullptr);
+        const auto compatible = hasMeasured && measuredAnalysis != nullptr && r.scale == scale && r.view.fftSize == view.fftSize
+                             && juce::exactlyEqual (r.sampleRate, sampleRate) && juce::exactlyEqual (r.passSeconds, passSeconds)
+                             && juce::exactlyEqual (r.slopeDbPerOctave, slope);
+
+        if (processor.isEffect())
+            fastSong = compatible ? measuredAnalysis : nullptr;
+        else
+            fastLows = compatible ? measuredAnalysis : nullptr;
     }
 
     void startFade (Shown target, bool fromFast, juce::Image fromImage, double seconds)
@@ -744,6 +830,17 @@ struct CanvasView::Impl
             shownSince = now;
 
         const auto settled = showing && now - shownSince >= openingQuietSeconds;
+
+        if (! recalled)
+        {
+            recalled = true;
+            recallMeasurement (request);
+        }
+
+        // ArtFreq FX keeps the song coming in from now on, for the next measurement to carve.
+        if (settled)
+            processor.enableSongCapture();
+
         measured.update (request, settled && ! processor.isPlanPending());
 
         if (auto result = measured.takeResult())
@@ -754,22 +851,14 @@ struct CanvasView::Impl
         auto target = shown;
 
         if (hasMeasured && measuredRequest == request)
-        {
             target = Shown::measured;
-        }
-        else if (shown == Shown::measured)
-        {
-            const auto shapesMoved = ! hasMeasured || measuredRequest.documentRevision != request.documentRevision
-                                  || measuredRequest.scale != request.scale;
-            auto sameSize = request;
-            sameSize.width = measuredRequest.width;
-            sameSize.height = measuredRequest.height;
-            const auto soundChanged = ! measuredRequest.sameAnalysis (sameSize);
-            const auto mouseDown = juce::ModifierKeys::currentModifiers.isAnyMouseButtonDown();
+        else if (shown == Shown::measured && ! measuredStillShows (request))
+            target = Shown::fast;
 
-            if (shapesMoved || (mouseDown && soundChanged))
-                target = Shown::fast;
-        }
+        // The fast preview is asked for here too, not only when painted: its thread starts on a
+        // change at once, and the picture is in by the time the canvas next paints.
+        if (target == Shown::fast || fading)
+            fast.get (makeFastRequest (pictureWidth, pictureHeight), fastAtOnce);
 
         if (target != shown)
         {
@@ -809,10 +898,21 @@ struct CanvasView::Impl
         return hasMeasured && shown == Shown::measured && measuredRequest == lastRequest;
     }
 
+    /** ArtFreq FX: the picture shown carves the user's own song (else the stand-in). */
+    bool showsUsersSong() const
+    {
+        return hasMeasured && measuredAnalysis != nullptr && measuredAnalysis->songSerial != 0;
+    }
+
     juce::String statusText() const
     {
         if (measurementIsCurrent())
-            return processor.isEffect() ? "Real output, on a stand-in song" : "Preview of the real sound";
+        {
+            if (! processor.isEffect())
+                return "Preview of the real sound";
+
+            return showsUsersSong() ? "Real output, on your track's last pass" : "Real output, on a stand-in song";
+        }
 
         return "Updating" + juce::String::fromUTF8 ("\xe2\x80\xa6");
     }
@@ -854,8 +954,9 @@ struct CanvasView::Impl
         if (shownStatus.startsWith ("Updating"))
             return shownStatus;
 
-        const auto candidates = processor.isEffect() ? juce::StringArray { shownStatus, "Real output, stand-in song", "Stand-in song" }
-                                                     : juce::StringArray { shownStatus, "Real sound" };
+        const auto candidates = ! processor.isEffect() ? juce::StringArray { shownStatus, "Real sound" }
+                              : showsUsersSong()       ? juce::StringArray { shownStatus, "Real output, your track", "Your track" }
+                                                       : juce::StringArray { shownStatus, "Real output, stand-in song", "Stand-in song" };
 
         for (const auto& text : candidates)
             if (juce::GlyphArrangement::getStringWidth (font, text) <= room)
@@ -1218,8 +1319,10 @@ struct CanvasView::Impl
     EditorState& state;
     std::atomic<float>* lengthParameter = nullptr;
 
-    CanvasPlanImage planImage;            // the fast preview
-    EffectPreviewImage effectPreview;     // ArtFreq FX: the drawing as the effect's output shows it
+    // The fast preview, made on its own thread; the canvas repaints when a new picture is in.
+    FastPreview fast { [this] { owner.repaint (area().getSmallestIntegerContainer()); } };
+    std::shared_ptr<const MeasuredSpectrogram> fastSong, fastLows;   // see updateMeasuredSong
+    bool fastAtOnce = false;              // the snapshot tool: made while painting
     std::shared_ptr<const ArtPlan> plan;  // kept alive while it is shown
     FrequencyScale scale;
     EffectMode effectMode = EffectMode::carve;
@@ -1236,6 +1339,7 @@ struct CanvasView::Impl
     MeasureRequest measuredRequest, lastRequest;
     std::shared_ptr<const MeasuredSpectrogram> measuredAnalysis;
     bool hasMeasured = false;
+    bool recalled = false;   // the processor's memory of the last window's measurement was looked at
     double lastMeasureMilliseconds = 0.0;
     int pictureWidth = 0, pictureHeight = 0;   // image pixels, as last painted
 
@@ -1347,7 +1451,6 @@ void CanvasView::paint (juce::Graphics& g)
 
 void CanvasView::resized()
 {
-    impl->planImage.invalidate();
     repaint();
 }
 
@@ -1678,8 +1781,20 @@ CanvasView::PreviewStatus CanvasView::getPreviewStatus() const
     status.measuredShown = d.shown == Impl::Shown::measured && d.measuredImage.isValid();
     status.current = d.measurementIsCurrent();
     status.fading = d.fading;
+    status.fastCurrent = d.fast.isCurrent();
     status.text = d.shownStatus.isNotEmpty() ? d.shownStatus : d.statusText();
     return status;
+}
+
+void CanvasView::setFastPreviewMadeWhilePainting (bool shouldMakeWhilePainting)
+{
+    impl->fastAtOnce = shouldMakeWhilePainting;
+    repaint();
+}
+
+int CanvasView::getFastPreviewsMadeInBackground() const noexcept
+{
+    return impl->fast.getBackgroundPictures();
 }
 
 void CanvasView::settleMeasuredPreview (float pixelScale)

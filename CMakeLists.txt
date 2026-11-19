@@ -257,6 +257,7 @@ if(ARTFREQ_BUILD_TOOLS)
     juce_add_console_app(ArtFreqTruthLab PRODUCT_NAME "ArtFreqTruthLab")
     target_sources(ArtFreqTruthLab PRIVATE
         tools/TruthLab.cpp
+        tools/TruthScenarios.cpp
         ${ARTFREQ_PLUGIN_SOURCES}
         ${ARTFREQ_CORE_SOURCES}
         ${ARTFREQ_DSP_SOURCES}

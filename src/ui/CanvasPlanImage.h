@@ -25,6 +25,11 @@
 #include "core/ArtPlan.h"
 #include "dsp/SpectrumAnalysis.h"
 
+namespace artfreq::ui
+{
+struct MeasuredSpectrogram;   // MeasuredPreview.h
+}
+
 #include <juce_graphics/juce_graphics.h>
 
 #include <cstdint>
@@ -65,6 +70,13 @@ public:
         (getPixelDbBeforeLevel), for ArtFreq FX, which makes its own picture from them. */
     void prepareLevels (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
 
+    /** The last measured preview (null: none) and the plan and Level it was made with: where the
+        lows of the plan drawn are those of `plan` (the same lines, the same amplitudes up to one
+        factor), the picture shows the measurement there instead of a model, as it is exactly
+        what the analyser shows (see renderGeometry). Only an analysis made with the scale, slope,
+        FFT, rate, length and height of the pictures asked for may be given. */
+    void setMeasuredLows (std::shared_ptr<const MeasuredSpectrogram> analysis, std::shared_ptr<const ArtPlan> plan, float gain);
+
     /** Forgets the cached picture (the next get() rebuilds it). */
     void invalidate() noexcept { image = {}; geometryValid = false; }
 
@@ -104,6 +116,12 @@ private:
     bool updateGeometry (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
 
     juce::Image image;
+
+    // The measured lows (setMeasuredLows)
+    std::shared_ptr<const MeasuredSpectrogram> measuredLows;
+    std::shared_ptr<const ArtPlan> measuredLowsPlan;
+    float measuredLowsGain = 1.0f;
+    bool measuredLowsChanged = false;
 
     // What the geometry (pixelDb before Level) was worked out for
     bool geometryValid = false;

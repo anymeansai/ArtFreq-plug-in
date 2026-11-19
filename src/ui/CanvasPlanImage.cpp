@@ -1,5 +1,6 @@
 #include "CanvasPlanImage.h"
 
+#include "MeasuredPreview.h"
 #include "Theme.h"
 
 #include <algorithm>
@@ -118,6 +119,17 @@ float CanvasPlanImage::combBrightness (int fftSize) noexcept
     return std::sqrt (8192.0f / static_cast<float> (std::max (256, fftSize))) / combGain;
 }
 
+void CanvasPlanImage::setMeasuredLows (std::shared_ptr<const MeasuredSpectrogram> analysis, std::shared_ptr<const ArtPlan> plan, float gain)
+{
+    if (analysis == measuredLows && plan == measuredLowsPlan && juce::exactlyEqual (gain, measuredLowsGain))
+        return;
+
+    measuredLows = std::move (analysis);
+    measuredLowsPlan = std::move (plan);
+    measuredLowsGain = gain;
+    measuredLowsChanged = true;
+}
+
 bool CanvasPlanImage::updateGeometry (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height)
 {
     const auto* planPointer = plan.get();
@@ -134,8 +146,10 @@ bool CanvasPlanImage::updateGeometry (const std::shared_ptr<const ArtPlan>& plan
                            && juce::exactlyEqual (geometryModel.sampleRate, model.sampleRate)
                            && juce::exactlyEqual (geometryModel.passSeconds, model.passSeconds);
 
-    if (sameGeometry)
+    if (sameGeometry && ! measuredLowsChanged)
         return false;
+
+    measuredLowsChanged = false;
 
     if (plan != nullptr && (amplitudesPlan != plan || amplitudesVersion != version
                             || ! juce::exactlyEqual (amplitudesPassSeconds, model.passSeconds)
@@ -446,8 +460,10 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
 
 void CanvasPlanImage::colour (const AnalyserModel& model, int width, int height)
 {
-    // Opaque RGB: drawn with a straight copy rather than blended pixel by pixel.
-    if (! image.isValid() || image.getWidth() != width || image.getHeight() != height)
+    // Opaque RGB: drawn with a straight copy rather than blended pixel by pixel. A picture still
+    // held elsewhere (the canvas draws the last one while this one is made on another thread) is
+    // left alone: a new one is made.
+    if (! image.isValid() || image.getWidth() != width || image.getHeight() != height || image.getReferenceCount() > 1)
         image = juce::Image (juce::Image::RGB, width, height, false);
 
     const auto gainDb = model.outputGain > 0.0f ? 20.0f * std::log10 (model.outputGain) : silentDb;

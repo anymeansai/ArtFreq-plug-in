@@ -12,7 +12,7 @@ namespace artfreq
 
 namespace
 {
-    constexpr float clipThreshold = 0.89f;
+    constexpr float clipThreshold = softClipThreshold;
     constexpr float clipHeadroom = 1.0f - clipThreshold;
     constexpr float largestBelowOne = 0.99999994f;   // the float just under 1
     constexpr double longestExportSeconds = 60.0 * 60.0;

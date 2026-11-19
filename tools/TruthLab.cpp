@@ -7,6 +7,8 @@
 //   ArtFreqTruthLab <snapshot-dir> <output-dir> [--before <old-snapshot-dir>] [--states default,rich,...]
 //                   [--range -100,0] [--ffts 4096,8192,16384] [--wav]
 //   ArtFreqTruthLab --marketing <output-dir> [--range -100,0]
+//   ArtFreqTruthLab --scenarios <output-dir> [--only a,b] [--standin]     (tools/TruthScenarios.cpp)
+//   ArtFreqTruthLab --bench | --drag
 //
 // <snapshot-dir> is a run of ArtFreqSnapshot with ARTFREQ_SNAPSHOT_STATES=1: for each state
 // artfreq-<name>.png (the screenshot), artfreq-<name>.state (the processor's state as a host
@@ -42,6 +44,7 @@
 //
 // On Linux run it under a virtual display (it renders text):  xvfb-run -a ArtFreqTruthLab ...
 
+#include "DenseProject.h"
 #include "LicenseTestSupport.h"
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -68,6 +71,11 @@
 #include <map>
 #include <memory>
 #include <vector>
+
+namespace artfreq::truthlab
+{
+int runScenarios (const juce::File& outDir, const juce::StringArray& only, bool standIn);   // tools/TruthScenarios.cpp
+}
 
 namespace
 {
@@ -962,6 +970,10 @@ struct Options
     bool wav = false;
     bool marketing = false;
     bool bench = false;
+    bool scenarios = false;
+    bool dragOnly = false;    // --drag: only the fast preview's cost per drag step
+    bool standIn = false;     // --scenarios: ArtFreq FX's canvas on the stand-in (as before any pass played)
+    juce::StringArray only;   // --scenarios: which (all when empty)
 };
 
 const char* modeName (EffectMode mode)
@@ -1760,6 +1772,82 @@ int runBench()
     return 0;
 }
 
+/** The fast preview's cost per drag step on the message thread, on a dense project (nine words,
+    a picture, a brush stroke, Density 1024): the median over 15 steps of moving a word, after the
+    plan (and the masks) are rebuilt, at the canvas's size at 100 % (1x), on a Retina screen (2x)
+    and at 200 % on one (4x). */
+void benchDrag()
+{
+    struct Size { const char* name; int width, height; };
+    const Size sizes[] { { "1x", 764, 462 }, { "2x", 1528, 924 }, { "4x", 3056, 1848 } };
+
+    std::cout << "\nThe fast preview per drag step (dense project, median of 15)\n";
+
+    for (const auto effect : { false, true })
+    {
+        auto processor = makeProcessor (effect, {});
+        auto& p = *processor;
+        const auto first = testutil::makeDenseProject (p);
+
+        if (effect)
+            setParameter (p, params::id::mode, static_cast<float> (static_cast<int> (EffectMode::carveDraw)));
+
+        p.rebuildPlanIfNeeded();
+
+        for (const auto& size : sizes)
+        {
+            ui::CanvasPlanImage planImage;
+            ui::EffectPreviewImage effectImage;
+            std::vector<double> times;
+
+            for (int step = 0; step < 16; ++step)
+            {
+                p.editDocument ([first, step] (ArtDocument& d)
+                {
+                    if (auto* o = d.find (first))
+                        o->startTime = 0.02f + 0.002f * static_cast<float> (step);
+                });
+                p.rebuildPlanIfNeeded();
+
+                const auto request = ui::MeasureRequest::forProcessor (p, size.width, size.height);
+                ui::AnalyserModel model;
+                model.scale = request.scale;
+                model.slopeDbPerOctave = request.slopeDbPerOctave;
+                model.view = request.view;
+                model.sampleRate = request.sampleRate;
+                model.passSeconds = request.passSeconds;
+                model.outputGain = ui::previewGain (p.getOutputGain());
+                ui::EffectPreviewImage::Settings settings;
+                settings.mode = request.mode;
+                settings.depthDb = request.depthDb;
+                settings.view = request.view;
+                settings.sampleRate = request.sampleRate;
+                settings.passSeconds = request.passSeconds;
+
+                const auto started = juce::Time::getMillisecondCounterHiRes();
+
+                if (! effect)
+                {
+                    planImage.get (p.getCurrentPlan(), model, size.width, size.height);
+                }
+                else
+                {
+                    planImage.prepareLevels (p.getCurrentPlan(), model, size.width, size.height);
+                    effectImage.get (planImage.getPixelDbBeforeLevel(), planImage.getLevelDb(), planImage.getRenderCount(), settings,
+                                     p.getCurrentMasks(), request.scale, size.width, size.height);
+                }
+
+                if (step > 0)
+                    times.push_back (juce::Time::getMillisecondCounterHiRes() - started);
+            }
+
+            std::sort (times.begin(), times.end());
+            std::cout << "   " << (effect ? "ArtFreq FX, Carve + Draw" : "ArtFreq") << ", " << size.name << " (" << size.width << " x "
+                      << size.height << "): " << num (times[times.size() / 2], 1) << " ms (max " << num (times.back(), 1) << ")\n";
+        }
+    }
+}
+
 bool parseOptions (int argc, char* argv[], Options& options, juce::String& error)
 {
     juce::StringArray args;
@@ -1795,6 +1883,10 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
         else if (a == "--wav") options.wav = true;
         else if (a == "--marketing") options.marketing = true;
         else if (a == "--bench") options.bench = true;
+        else if (a == "--drag") { options.bench = true; options.dragOnly = true; }
+        else if (a == "--scenarios") options.scenarios = true;
+        else if (a == "--standin") options.standIn = true;
+        else if (a == "--only") { options.only = juce::StringArray::fromTokens (value, ",", ""); ++i; }
         else if (a.startsWith ("-")) { error = "unknown option " + a; return false; }
         else positional.add (a);
     }
@@ -1804,7 +1896,7 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
     if (options.bench)
         return error.isEmpty();
 
-    if (options.marketing && positional.size() == 1)
+    if ((options.marketing || options.scenarios) && positional.size() == 1)
         options.outputDir = cwd.getChildFile (positional[0]);
     else if (! options.marketing && positional.size() == 2)
     {
@@ -1845,10 +1937,19 @@ int main (int argc, char* argv[])
         return 1;
     }
 
+    if (options.scenarios)
+    {
+        licensetest::installRunnerLicensing();
+        const auto result = artfreq::truthlab::runScenarios (options.outputDir, options.only, options.standIn);
+        licensetest::removeRunnerLicensing();
+        return result;
+    }
+
     if (options.bench)
     {
         licensetest::installRunnerLicensing();
-        const auto result = runBench();
+        const auto result = options.dragOnly ? 0 : runBench();
+        benchDrag();
         licensetest::removeRunnerLicensing();
         return result;
     }

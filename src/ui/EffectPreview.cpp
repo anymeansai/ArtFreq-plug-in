@@ -339,7 +339,8 @@ juce::Image EffectPreviewImage::get (const std::vector<float>& sinesDb, float le
         carveHeight = height;
     }
 
-    if (! image.isValid() || image.getWidth() != width || image.getHeight() != height)
+    // (A picture still held elsewhere, the canvas's last one, is left alone: a new one is made.)
+    if (! image.isValid() || image.getWidth() != width || image.getHeight() != height || image.getReferenceCount() > 1)
         image = juce::Image (juce::Image::RGB, width, height, false);
 
     const auto withSines = playsSines (settings.mode) && sinesDb.size() == static_cast<size_t> (work) * static_cast<size_t> (height);

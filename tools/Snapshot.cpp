@@ -271,6 +271,10 @@ void settleCanvas (juce::Component& editor, float scale, const juce::String& nam
     if (canvas == nullptr || ! canvas->isVisible())
         return;
 
+    // The picture taken shows the fast preview of what is drawn now (in the plug-in it is made
+    // on its own thread and comes in a frame later).
+    canvas->setFastPreviewMadeWhilePainting (true);
+
     if (name.contains ("dragging") || name.contains ("painting"))
     {
         check (! canvas->getPreviewStatus().current && canvas->getPreviewStatus().text.startsWith ("Updating"),

@@ -265,7 +265,12 @@ void ArtFreqProcessor::releaseResources()
     tracker.reset();
 
     if (isEffect())
+    {
         carver.reset();
+
+        if (auto* capture = songCaptureForAudio.load (std::memory_order_acquire))
+            capture->endTake();
+    }
 }
 
 void ArtFreqProcessor::reset()
@@ -287,6 +292,10 @@ void ArtFreqProcessor::reset()
     engine.reset();
     tracker.reset();
     sinesRunning = false;
+
+    // The pass the song was being kept for is over.
+    if (auto* capture = songCaptureForAudio.load (std::memory_order_acquire))
+        capture->endTake();
 
     if (sineDelayLength > 0)
         std::fill (sineDelay.get(), sineDelay.get() + sineDelayLength, 0.0f);
@@ -699,6 +708,10 @@ void ArtFreqProcessor::processEffect (juce::AudioBuffer<float>& buffer, juce::Mi
         for (int channel = 0; channel < numChannels; ++channel)
             channels[channel] = buffer.getWritePointer (channel, start);
 
+        // The song as it comes in, before it is carved, for the canvas (once an editor asked).
+        if (auto* capture = songCaptureForAudio.load (std::memory_order_acquire))
+            capture->process (channels, numChannels, length, segments, numSegments, sampleRate);
+
         carver.process (channels, numChannels, length, segments, numSegments, carve);
 
         // The sines, in the modes that play them (and while they fade out of them). Not
@@ -892,6 +905,17 @@ int ArtFreqProcessor::getSinglePassStartBar() const noexcept
         return 0;
 
     return juce::jlimit (params::firstStartBar, params::lastStartBar, juce::roundToInt (startBarParam->load()));
+}
+
+void ArtFreqProcessor::enableSongCapture()
+{
+    if (! isEffect() || songCapture != nullptr)
+        return;
+
+    // 16 MB, made here (the message thread), never on the audio thread; from the next block on
+    // the audio thread writes into it.
+    songCapture = std::make_shared<SongCapture>();
+    songCaptureForAudio.store (songCapture.get(), std::memory_order_release);
 }
 
 float ArtFreqProcessor::getOutputGain() const noexcept

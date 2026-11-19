@@ -20,6 +20,7 @@
 #include "dsp/LiveAnalyzer.h"
 #include "dsp/PlanExchange.h"
 #include "dsp/PlayheadTracker.h"
+#include "dsp/SongCapture.h"
 #include "dsp/SpectrumAnalysis.h"
 #include "dsp/TunedCarver.h"
 #include "license/LicenseManager.h"
@@ -33,6 +34,11 @@
 
 namespace artfreq
 {
+
+namespace ui
+{
+    struct PreviewMemory;   // ui/MeasuredPreview.h
+}
 
 class ArtFreqProcessor final : public juce::AudioProcessor,
                                public juce::ChangeBroadcaster,
@@ -214,6 +220,18 @@ public:
         Draw and in bypass): what the audio thread uses, and the canvas's measured preview. */
     static CarveSettings carveSettingsFor (EffectMode mode, float depthDb, bool carving) noexcept;
 
+    /** ArtFreq FX: from now on, keep the song coming in during the passes that play (see
+        dsp/SongCapture.h), for the canvas to carve instead of a stand-in. Message thread; the
+        editor calls it once it has been on screen a moment (so host scans make none). */
+    void enableSongCapture();
+
+    /** ... and what it keeps (null until enabled; the instrument never has one). Message thread. */
+    std::shared_ptr<SongCapture> getSongCapture() const noexcept { return songCapture; }
+
+    /** What the editor's canvas keeps between its windows: its last measured preview (see
+        ui/MeasuredPreview.h). Message thread. */
+    std::shared_ptr<ui::PreviewMemory>& getPreviewMemory() noexcept { return previewMemory; }
+
     /** The output level as a linear gain (for the WAV export). */
     float getOutputGain() const noexcept;
 
@@ -306,6 +324,13 @@ private:
     int monoCapacity = 0;
     juce::MidiBuffer chunkMidi;  // for hosts that send blocks larger than announced
     std::atomic<double> currentSampleRate { 48000.0 };
+
+    // The song coming in (the effect, once an editor has asked for it): made on the message
+    // thread, written by the audio thread through the atomic pointer, freed with the processor.
+    std::shared_ptr<SongCapture> songCapture;
+    std::atomic<SongCapture*> songCaptureForAudio { nullptr };
+
+    std::shared_ptr<ui::PreviewMemory> previewMemory;   // message thread
 
     // audio thread, the effect only
     TunedCarver carver;

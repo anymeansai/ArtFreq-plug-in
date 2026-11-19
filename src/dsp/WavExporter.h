@@ -66,9 +66,10 @@ bool renderPlanToWav (const ArtPlan& plan, const ExportSettings& settings,
                       const std::function<bool()>& shouldCancel = nullptr,
                       const std::function<void (double)>& onProgress = nullptr);
 
-/** The plug-in's safety clipper: transparent below 0.89 (-1 dBFS), then a smooth curve that
-    never exceeds 1.0 in magnitude. */
+/** The plug-in's safety clipper: transparent up to softClipThreshold (0.89, -1 dBFS), then a smooth
+    curve that never exceeds 1.0 in magnitude. */
 float softClip (float x) noexcept;
+inline constexpr float softClipThreshold = 0.89f;
 
 //==============================================================================
 // Bounce file names. DAWs know dropped audio by its path and name (Logic, Live and FL Studio

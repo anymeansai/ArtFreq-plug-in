@@ -529,8 +529,8 @@ ARTFREQ_TEST (canvasCrossFadesToTheMeasuredPreview)
 {
     // The editor on screen: the canvas starts with the fast preview ("Updating..."), and once the
     // drawing has stayed still a moment fades to the measured one ("Preview of the real sound").
-    // A change to the drawing goes back to the fast preview at once; a change of Level keeps the
-    // measured picture (its shapes are right) until the new one is in.
+    // A change to the drawing or to the sound goes back to the fast preview at once; a change of
+    // Level alone moves the measured picture by as many dB.
     ArtFreqProcessor processor;
     processor.setRateAndBufferSizeDetails (48000.0, 512);
     processor.prepareToPlay (48000.0, 512);
@@ -564,13 +564,28 @@ ARTFREQ_TEST (canvasCrossFadesToTheMeasuredPreview)
     CHECK (sawFade);
     CHECK (canvas->getPreviewStatus().text == "Preview of the real sound");
 
-    // Level: the measured picture stays (stale) while the new one renders, then the new one.
+    // Level (the clipper untouched): the sound is the same times a gain, so the measured picture
+    // moves by as many dB at once, without a new render, and stays on screen meanwhile.
+    // (Until the review of the measured preview it stayed, stale, for a whole new render.)
     testutil::setParameter (processor, params::id::level, -12.0f);
+    auto alwaysMeasured = true;
+    const auto relevelled = pumpUntil ([&]
+    {
+        alwaysMeasured = alwaysMeasured && canvas->getPreviewStatus().measuredShown;
+        return canvas->getPreviewStatus().current;
+    }, 0.6);
+    CHECK (relevelled);
+    CHECK (alwaysMeasured);
+
+    // Density changes the sound itself: the fast preview at once (it follows the change within a
+    // frame), whether the change came from the mouse, the wheel, the keyboard or the host; the
+    // measured one when it is in. (It used to keep the stale measured picture unless the mouse
+    // was down.)
+    testutil::setParameter (processor, params::id::density, 64.0f);
     pumpFor (80);
-    CHECK (canvas->getPreviewStatus().measuredShown);
-    CHECK (! canvas->getPreviewStatus().current);
+    CHECK (! canvas->getPreviewStatus().measuredShown);
     CHECK (canvas->getPreviewStatus().text.startsWith ("Updating"));
-    CHECK (pumpUntil ([&] { return canvas->getPreviewStatus().current; }, 8.0));
+    CHECK (pumpUntil ([&] { return canvas->getPreviewStatus().current && canvas->getPreviewStatus().measuredShown; }, 8.0));
 
     // The drawing: the fast preview at once, the measured one when it is in.
     processor.editDocument ([] (ArtDocument& document)

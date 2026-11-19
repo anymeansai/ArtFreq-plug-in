@@ -21,6 +21,7 @@
 #include "Parameters.h"
 #include "core/ArtPlan.h"
 #include "core/MaskPlan.h"
+#include "dsp/SongCapture.h"
 #include "dsp/SpectrumAnalysis.h"
 
 #include <juce_graphics/juce_graphics.h>
@@ -56,17 +57,34 @@ struct MeasureRequest
     double passSeconds = 8.0;                       // one pass of the drawing
     double sampleRate = 48000.0;
 
+    // ArtFreq FX: the song carved. The user's own, as it came in during the last pass that
+    // played (dsp/SongCapture.h), once one has; until then (songSerial 0) the stand-in.
+    std::shared_ptr<SongCapture> song;
+    uint32_t songSerial = 0;
+
     FrequencyScale scale;
     float slopeDbPerOctave = 0.0f;
     AnalyserView view;
     int width = 0, height = 0;                      // the picture, in pixels
     uint64_t documentRevision = 0;                  // the drawing the plan and masks were made from
 
+    /** What two requests may differ in (sameExcept). */
+    enum Aspect
+    {
+        colours = 1,   // the analyser's level range
+        size = 2,      // the picture's width and height
+        level = 4,     // outputGain
+        songTake = 8   // which take of the user's song (the same song, another pass of it)
+    };
+
+    /** The same but for the aspects in `ignored`. */
+    bool sameExcept (const MeasureRequest& other, int ignored) const noexcept;
+
     /** Everything but the colours' range: the same sound, analysed the same way. */
-    bool sameAnalysis (const MeasureRequest& other) const noexcept;
+    bool sameAnalysis (const MeasureRequest& other) const noexcept { return sameExcept (other, colours); }
 
     /** The same and the same colours. */
-    bool operator== (const MeasureRequest& other) const noexcept;
+    bool operator== (const MeasureRequest& other) const noexcept { return sameExcept (other, 0); }
     bool operator!= (const MeasureRequest& other) const noexcept { return ! operator== (other); }
 
     /** Whether there is anything to render (a picture size, a plan or masks). */
@@ -83,7 +101,9 @@ struct MeasuredSpectrogram
 {
     int frames = 0, rows = 0;
     std::vector<int16_t> output;   // [row * frames + frame]: the sound
-    std::vector<int16_t> input;    // ArtFreq FX: the stand-in song going in, the same way (else empty)
+    std::vector<int16_t> input;    // ArtFreq FX: the song going in, the same way (else empty)
+    uint32_t songSerial = 0;       // ArtFreq FX: the take of the user's song carved (0: the stand-in)
+    float peak = 0.0f;             // the instrument: the pass's largest sample (after Level and the clipper)
 
     float outputDb (int row, int frame) const noexcept { return 0.01f * output[static_cast<size_t> (row) * static_cast<size_t> (frames) + static_cast<size_t> (frame)]; }
     float inputDb (int row, int frame) const noexcept { return 0.01f * input[static_cast<size_t> (row) * static_cast<size_t> (frames) + static_cast<size_t> (frame)]; }
@@ -96,6 +116,14 @@ struct MeasuredSpectrogram
     `shouldStop` said so (asked once per block) or there was nothing to render. */
 bool measure (const MeasureRequest& request, MeasuredSpectrogram& result, const std::function<bool()>& shouldStop = nullptr);
 
+/** Whether `analysis` of `from` gives `to` by a change of level alone: the instrument, the same
+    but for Level, and the clipper untouched at both levels (the sound is then the same times a
+    gain: the analysis moves by as many dB). */
+bool canRelevel (const MeasuredSpectrogram& analysis, const MeasureRequest& from, const MeasureRequest& to) noexcept;
+
+/** `analysis` (of `from`) as `to`'s Level makes it (canRelevel must hold). */
+std::shared_ptr<const MeasuredSpectrogram> relevel (const MeasuredSpectrogram& analysis, const MeasureRequest& from, const MeasureRequest& to);
+
 /** The picture of an analysis with a view's colours, `width` x `height` (its frames stretched
     across the width), row by row. */
 void colourise (const MeasuredSpectrogram& analysis, const AnalyserView& view, int width, int height,
@@ -104,6 +132,16 @@ void colourise (const MeasuredSpectrogram& analysis, const AnalyserView& view, i
 /** How many analyses a pass gets: one per pixel column at most, none closer than fftSize / 16
     samples, at least 2. */
 int framesFor (double passSamples, int fftSize, int width) noexcept;
+
+/** The canvas's last measured preview, which the processor keeps while no editor is open: the
+    next editor window shows it at once and renders again only what changed since (opening and
+    closing a plug-in's window is frequent; the picture is the same). Message thread. */
+struct PreviewMemory
+{
+    MeasureRequest request;
+    std::shared_ptr<const MeasuredSpectrogram> analysis;
+    juce::Image image;   // request.width x request.height
+};
 
 //==============================================================================
 /** Renders measured previews on a background thread. Message thread only, but the thread. */
@@ -140,6 +178,10 @@ public:
     /** How many renders started (tests). */
     int getRendersStarted() const noexcept { return rendersStarted.load(); }
     int getRendersFinished() const noexcept { return rendersFinished.load(); }
+
+    /** Takes over an analysis made earlier (in an editor window closed since): a request for
+        exactly it renders nothing, and recolouring and relevelling start from it. */
+    void adopt (const MeasureRequest& request, std::shared_ptr<const MeasuredSpectrogram> analysis);
 
     /** Renders `request` on the calling thread (the snapshot tool, the truth lab, tests). */
     static std::unique_ptr<Result> renderNow (const MeasureRequest& request);

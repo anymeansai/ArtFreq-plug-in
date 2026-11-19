@@ -101,7 +101,7 @@ namespace
 
     /** The instrument: one pass of the drawing as Bounce WAV renders it, silence around it. */
     bool measureInstrument (const MeasureRequest& request, int64_t passSamples, FrameAnalyser& output,
-                            const std::function<bool()>& shouldStop)
+                            float& peak, const std::function<bool()>& shouldStop)
     {
         constexpr int block = PassRenderer::blockSize;
         std::vector<float> samples (static_cast<size_t> (block));
@@ -128,6 +128,9 @@ namespace
             {
                 skipTo (*pass, t, samples);
                 count = pass->render (samples.data(), block);
+
+                for (int i = 0; i < count; ++i)
+                    peak = std::max (peak, std::abs (samples[static_cast<size_t> (i)]));
             }
             else
             {
@@ -146,7 +149,7 @@ namespace
         masks and settings, the gate open for the pass), the sines of the Draw modes added, the
         carver's latency taken out (as the host's delay compensation does). */
     bool measureEffect (const MeasureRequest& request, int64_t passSamples, FrameAnalyser& output, FrameAnalyser& input,
-                        const std::function<bool()>& shouldStop)
+                        uint32_t& songSerial, const std::function<bool()>& shouldStop)
     {
         constexpr int block = 1024;
         const auto sampleRate = request.sampleRate;
@@ -173,7 +176,24 @@ namespace
         // history is the song, not silence.
         const auto firstOut = output.firstNeeded();
         const auto firstIn = firstOut - 2 * static_cast<int64_t> (latency);
-        StandInSong song (sampleRate, passSamples, firstIn);
+
+        // The song: the user's, as it came in during the last pass that played, at this rate;
+        // before any has, the stand-in.
+        std::shared_ptr<const CapturedSong> captured;
+
+        if (request.song != nullptr && request.songSerial != 0)
+            if (auto latest = request.song->getLatest(); latest != nullptr && juce::exactlyEqual (latest->sampleRate, sampleRate))
+                captured = std::move (latest);
+
+        std::unique_ptr<StandInSong> standIn;
+        std::unique_ptr<CapturedSong::Reader> userSong;
+
+        if (captured != nullptr)
+            userSong = std::make_unique<CapturedSong::Reader> (*captured, firstIn);
+        else
+            standIn = std::make_unique<StandInSong> (sampleRate, passSamples, firstIn);
+
+        songSerial = captured != nullptr ? captured->serial : 0;
 
         std::unique_ptr<PassRenderer> sines;
 
@@ -193,7 +213,10 @@ namespace
             if (shouldStop != nullptr && shouldStop())
                 return false;
 
-            song.render (audio.data(), block);
+            if (userSong != nullptr)
+                userSong->render (audio.data(), block);
+            else
+                standIn->render (audio.data(), block);
 
             if (! input.isDone() && t + block > firstOut)
             {
@@ -307,6 +330,14 @@ MeasureRequest MeasureRequest::forProcessor (const ArtFreqProcessor& processor, 
 
     request.passSeconds = previewSeconds (processor.getLengthSeconds());
     request.sampleRate = processor.getCurrentSampleRate();
+
+    if (request.effect)
+        if (auto capture = processor.getSongCapture(); capture != nullptr && capture->getSerial() != 0)
+        {
+            request.song = std::move (capture);
+            request.songSerial = request.song->getSerial();
+        }
+
     request.scale = processor.getScale();
     request.slopeDbPerOctave = processor.getPlanSettings().slopeDbPerOctave;
     request.view = processor.getAnalyserView();
@@ -316,19 +347,20 @@ MeasureRequest MeasureRequest::forProcessor (const ArtFreqProcessor& processor, 
     return request;
 }
 
-bool MeasureRequest::sameAnalysis (const MeasureRequest& other) const noexcept
+bool MeasureRequest::sameExcept (const MeasureRequest& other, int ignored) const noexcept
 {
-    return effect == other.effect && plan == other.plan && masks == other.masks && mode == other.mode
-        && juce::exactlyEqual (depthDb, other.depthDb) && juce::exactlyEqual (outputGain, other.outputGain)
-        && juce::exactlyEqual (passSeconds, other.passSeconds) && juce::exactlyEqual (sampleRate, other.sampleRate)
-        && scale == other.scale && juce::exactlyEqual (slopeDbPerOctave, other.slopeDbPerOctave)
-        && view.fftSize == other.view.fftSize && width == other.width && height == other.height
-        && documentRevision == other.documentRevision;
-}
+    const auto ignores = [ignored] (Aspect aspect) { return (ignored & aspect) != 0; };
 
-bool MeasureRequest::operator== (const MeasureRequest& other) const noexcept
-{
-    return sameAnalysis (other) && view == other.view;
+    return effect == other.effect && plan == other.plan && masks == other.masks && mode == other.mode
+        && juce::exactlyEqual (depthDb, other.depthDb)
+        && (ignores (level) || juce::exactlyEqual (outputGain, other.outputGain))
+        && juce::exactlyEqual (passSeconds, other.passSeconds) && juce::exactlyEqual (sampleRate, other.sampleRate)
+        && song == other.song && (ignores (songTake) || songSerial == other.songSerial)
+        && scale == other.scale && juce::exactlyEqual (slopeDbPerOctave, other.slopeDbPerOctave)
+        && view.fftSize == other.view.fftSize
+        && (ignores (colours) || view == other.view)
+        && (ignores (size) || (width == other.width && height == other.height))
+        && documentRevision == other.documentRevision;
 }
 
 bool MeasureRequest::isValid() const noexcept
@@ -368,14 +400,40 @@ bool measure (const MeasureRequest& request, MeasuredSpectrogram& result, const 
 
     FrameAnalyser output (view.fftSize, result.frames, passSamples, rows, result.output);
 
+    result.peak = 0.0f;
+    result.songSerial = 0;
+
     if (! request.effect)
     {
         result.input.clear();
-        return measureInstrument (request, passSamples, output, shouldStop);
+        return measureInstrument (request, passSamples, output, result.peak, shouldStop);
     }
 
     FrameAnalyser input (view.fftSize, result.frames, passSamples, rows, result.input);
-    return measureEffect (request, passSamples, output, input, shouldStop);
+    return measureEffect (request, passSamples, output, input, result.songSerial, shouldStop);
+}
+
+bool canRelevel (const MeasuredSpectrogram& analysis, const MeasureRequest& from, const MeasureRequest& to) noexcept
+{
+    if (from.effect || ! from.sameExcept (to, MeasureRequest::colours | MeasureRequest::level)
+        || ! (from.outputGain > 0.0f) || ! (to.outputGain > 0.0f))
+        return false;
+
+    // The clipper leaves both passes alone: the louder one's peak stays under where it starts.
+    return analysis.peak <= softClipThreshold && analysis.peak * to.outputGain / from.outputGain <= softClipThreshold;
+}
+
+std::shared_ptr<const MeasuredSpectrogram> relevel (const MeasuredSpectrogram& analysis, const MeasureRequest& from, const MeasureRequest& to)
+{
+    auto result = std::make_shared<MeasuredSpectrogram> (analysis);
+    const auto shift = static_cast<int> (std::lround (100.0f * 20.0f * std::log10 (to.outputGain / from.outputGain)));
+    const auto silence = static_cast<int> (toCentiDb (SpectrumAnalyser::floorDb));
+
+    for (auto& level : result->output)
+        level = static_cast<int16_t> (juce::jlimit (silence, 30000, static_cast<int> (level) + shift));
+
+    result->peak = analysis.peak * to.outputGain / from.outputGain;
+    return result;
 }
 
 void colourise (const MeasuredSpectrogram& analysis, const AnalyserView& view, int width, int height,
@@ -447,14 +505,16 @@ void MeasuredPreview::update (const MeasureRequest& request, bool mayStart)
     if (latestHandedOver || ! mayStart || ! latest.isValid())
         return;
 
-    // A change of colours alone needs no wait: it recolours the last analysis.
-    bool coloursOnly = false;
+    // A change of colours, or of the instrument's Level, alone needs no wait: the last analysis is
+    // recoloured, or moved by as many dB, in a few ms.
+    bool quick = false;
     {
         const juce::ScopedLock sl (lock);
-        coloursOnly = lastAnalysis != nullptr && lastAnalysisRequest.sameAnalysis (latest);
+        quick = lastAnalysis != nullptr
+             && (lastAnalysisRequest.sameAnalysis (latest) || canRelevel (*lastAnalysis, lastAnalysisRequest, latest));
     }
 
-    if (! coloursOnly && now - latestSince < debounceSeconds)
+    if (! quick && now - latestSince < debounceSeconds)
         return;
 
     {
@@ -487,6 +547,24 @@ bool MeasuredPreview::isBusy() const noexcept
     return hasJob || running.load();
 }
 
+void MeasuredPreview::adopt (const MeasureRequest& request, std::shared_ptr<const MeasuredSpectrogram> analysis)
+{
+    if (analysis == nullptr)
+        return;
+
+    if (! hasLatest)
+    {
+        latest = request;
+        hasLatest = true;
+        latestSince = nowSeconds();
+        latestHandedOver = true;
+    }
+
+    const juce::ScopedLock sl (lock);
+    lastAnalysis = std::move (analysis);
+    lastAnalysisRequest = request;
+}
+
 std::unique_ptr<MeasuredPreview::Result> MeasuredPreview::renderNow (const MeasureRequest& request)
 {
     return compute (request, nullptr, nullptr, nullptr);
@@ -504,6 +582,10 @@ std::unique_ptr<MeasuredPreview::Result> MeasuredPreview::compute (const Measure
     if (reuse != nullptr && reuseRequest != nullptr && reuseRequest->sameAnalysis (request))
     {
         result->analysis = reuse;
+    }
+    else if (reuse != nullptr && reuseRequest != nullptr && canRelevel (*reuse, *reuseRequest, request))
+    {
+        result->analysis = relevel (*reuse, *reuseRequest, request);
     }
     else
     {
