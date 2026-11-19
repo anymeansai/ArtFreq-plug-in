@@ -3,10 +3,14 @@
 // cover the licence code itself); and instances following each other's activation.
 //
 // These need JUCE's GUI classes, so on Linux run them under a virtual display (xvfb-run -a).
+// The editor follows the licence and the settings on its timers and listeners, and requests come
+// back on threads: a slow machine (the macOS runner's Intel half, under Rosetta) does all of that
+// much later than a fast one, so checks of it wait for it (CHECK_EVENTUALLY, WaitFor.h).
 
 #include "LicenseTestSupport.h"
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
+#include "WaitFor.h"
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -81,7 +85,7 @@ struct Instance
     bool screenShown() const               { return isShown (*editor, "activation"); }
 
     /** Waits for the request to come back (results arrive on the message thread). */
-    bool settle (const std::function<bool()>& done) const   { return pumpUntil (done, 4000); }
+    bool settle (const std::function<bool()>& done) const   { return pumpUntil (done, testwait::timeoutMs); }
 
     std::unique_ptr<ArtFreqProcessor> processor;
     std::unique_ptr<ArtFreqEditor> editor;
@@ -239,8 +243,7 @@ ARTFREQ_TEST (uiLicensingActivatingWithAGoodKey)
 
         // Continue (Return): the screen goes, the window is whole again.
         CHECK (instance.content().keyPressed (returnKey));
-        CHECK (! instance.screenShown());
-        CHECK (isShown (*instance.editor, instrument ? "view-switch" : "effect-controls"));
+        CHECK_EVENTUALLY (! instance.screenShown() && isShown (*instance.editor, instrument ? "view-switch" : "effect-controls"));
 
         // Saved for every AnyMeans plug-in on this computer: a new instance is activated at once,
         // without the network.
@@ -352,7 +355,7 @@ ARTFREQ_TEST (uiLicensingBusyAndClosingTheWindowDuringARequest)
     server.hang();
     instrument.field().setKey (keyArtFreq);
     instrument.button ("activate").onClick();
-    CHECK (server.hanging.wait (3000));
+    CHECK (server.hanging.wait (testwait::timeoutMs));
     CHECK (instrument.screen().isBusy());
     CHECK (instrument.field().isReadOnly());
     CHECK (instrument.button ("activate").getButtonText().startsWith ("Checking your key"));
@@ -384,11 +387,11 @@ ARTFREQ_TEST (uiLicensingBusyAndClosingTheWindowDuringARequest)
     // processor finishes it, and the plug-in is locked.
     instrument.content().keyPressed (returnKey);   // Continue
     instrument.editor->showSettings (true);
-    pump (30);
-    server.replyAfter (deactivateArtFreq, 300);
+    CHECK_EVENTUALLY (isShown (*instrument.editor, "deactivate"));
+    server.replyAfter (deactivateArtFreq, 1500);   // (still on its way when the window closes, even on a slow machine)
     instrument.button ("deactivate").onClick();
     instrument.button ("deactivate-confirm").onClick();
-    CHECK (server.started.wait (3000));
+    CHECK (server.started.wait (testwait::timeoutMs));
 
     instrument.editor.reset();
     CHECK (instrument.processor->getLicense().getRequestInProgress() == anymeans::license::LicenseManager::Request::deactivating);
@@ -415,10 +418,10 @@ ARTFREQ_TEST (uiLicensingTheLicenceCardAndDeactivating)
         CHECK (instance.processor->isLicensed() && ! instance.screenShown());
 
         editor.showSettings (true);
-        pump (30);
+        CHECK_EVENTUALLY (isShown (editor, "licence-card") && isShown (editor, "deactivate"));
 
         auto* panel = dynamic_cast<ui::shell::SettingsPanel*> (findComponent (editor, "settings-panel"));
-        CHECK (panel != nullptr && isShown (editor, "licence-card") && isShown (editor, "deactivate"));
+        CHECK (panel != nullptr);
 
         // The panel fits the window in every state of the card (ArtFreq FX's is small).
         const auto fits = [&]
@@ -472,11 +475,10 @@ ARTFREQ_TEST (uiLicensingTheLicenceCardAndDeactivating)
 
         // Locked, the card offers the activation screen.
         editor.showSettings (true);
-        pump (30);
-        CHECK (isShown (editor, "licence-activate") && ! isShown (editor, "deactivate"));
+        CHECK_EVENTUALLY (isShown (editor, "licence-activate") && ! isShown (editor, "deactivate"));
         CHECK (fits());
         instance.button ("licence-activate").onClick();
-        CHECK (! isShown (editor, "settings-panel") && instance.screenShown());
+        CHECK_EVENTUALLY (! isShown (editor, "settings-panel") && instance.screenShown());
     }
 }
 
@@ -504,7 +506,7 @@ ARTFREQ_TEST (uiLicensingInstancesFollowEachOther)
 
     server.reply (deactivateArtFreq);
     effect.editor->showSettings (true);
-    pump (30);
+    CHECK_EVENTUALLY (isShown (*effect.editor, "deactivate"));
     effect.button ("deactivate").onClick();
     effect.button ("deactivate-confirm").onClick();
 
@@ -570,7 +572,7 @@ ARTFREQ_TEST (uiLicensingTwoKeysDeactivatingTheNewerKeepsTheOlder)
 
     auto& editor = *instrument.editor;
     editor.showSettings (true);
-    pump (30);
+    CHECK_EVENTUALLY (isShown (editor, "deactivate"));
 
     instrument.button ("deactivate").onClick();
     const auto warning = instrument.processor->getLicense().getDeactivationWarning();
@@ -609,18 +611,18 @@ ARTFREQ_TEST (uiLicensingAProjectClosedDuringADeactivation)
     // offers Deactivate to finish (or Activate... to use it here again).
     const juce::ScopedJuceInitialiser_GUI gui;
     ScopedLockedLicensing licensing;
-    licensing.setRequestTimeout (300);
+    licensing.setRequestTimeout (2000);   // (the project closes while the answer is on its way, even on a slow machine)
     auto& server = *licensing.server;
     CHECK (licensing.activatePro());
 
     {
         Instance closing (Variant::instrument);
         closing.editor->showSettings (true);
-        pump (30);
-        server.replyAfter (deactivateArtFreq, 250);
+        CHECK_EVENTUALLY (isShown (*closing.editor, "deactivate"));
+        server.replyAfter (deactivateArtFreq, 1500);
         closing.button ("deactivate").onClick();
         closing.button ("deactivate-confirm").onClick();
-        CHECK (server.started.wait (3000));
+        CHECK (server.started.wait (testwait::timeoutMs));
         closing.editor.reset();
         closing.processor.reset();
     }
@@ -629,13 +631,12 @@ ARTFREQ_TEST (uiLicensingAProjectClosedDuringADeactivation)
 
     // Opened again: locked (at once, or as soon as the request could have ended).
     Instance reopened (Variant::effect);
-    CHECK (pumpUntil ([&] { return ! reopened.processor->isLicensed() && reopened.screenShown(); }, 3000));
+    CHECK (pumpUntil ([&] { return ! reopened.processor->isLicensed() && reopened.screenShown(); }));
     CHECK (reopened.processor->getLicense().getInterruptedDeactivation().has_value());
 
     auto& editor = *reopened.editor;
     editor.showSettings (true);
-    pump (30);
-    CHECK (isShown (editor, "deactivate-confirm") && isShown (editor, "licence-activate") && ! isShown (editor, "deactivate"));
+    CHECK_EVENTUALLY (isShown (editor, "deactivate-confirm") && isShown (editor, "licence-activate") && ! isShown (editor, "deactivate"));
 
     auto* panel = findComponent (editor, "settings-panel");
     CHECK (panel != nullptr && panel->getBottom() <= editor.getBaseHeight() - 6);
@@ -667,10 +668,11 @@ ARTFREQ_TEST (uiLicensingNoResetDrawingWhileLocked)
 
         auto& editor = *instance.editor;
         editor.showSettings (true);
-        pump (30);
 
+        // (The settings shown first, with their Licence card: only then does a row not shown say
+        // anything.)
         auto* panel = dynamic_cast<ui::shell::SettingsPanel*> (findComponent (editor, "settings-panel"));
-        CHECK (panel != nullptr && isShown (editor, "licence-card"));
+        CHECK_EVENTUALLY (panel != nullptr && isShown (editor, "settings-panel") && isShown (editor, "licence-card"));
         CHECK (! isShown (editor, "reset-drawing") && ! isShown (editor, "reset-confirm"));
         CHECK (panel != nullptr && ! panel->isDrawingResettable());
 

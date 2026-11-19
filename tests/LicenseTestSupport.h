@@ -404,8 +404,10 @@ inline anymeans::license::StoredActivation storedActivationFrom (const Reply& re
     return activation;
 }
 
-/** Runs the message loop until the condition holds or the time is up. */
-inline bool pumpUntil (const std::function<bool()>& condition, int timeoutMs = 3000)
+/** Runs the message loop until the condition holds or the time is up. The time is generous
+    (as in WaitFor.h): only a failure waits that long, and a slow machine (the macOS runner's
+    Intel half, under Rosetta) runs timers, listeners and requests' answers much later. */
+inline bool pumpUntil (const std::function<bool()>& condition, int timeoutMs = 10000)
 {
     const auto end = juce::Time::getMillisecondCounter() + static_cast<juce::uint32> (timeoutMs);
 

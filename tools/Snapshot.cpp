@@ -130,12 +130,18 @@
 //
 // On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
 //
+// The editor follows a change on its timers and change messages, which a slow or busy machine
+// runs much later than a fast one: a check of what it shows after a change waits for it
+// (checkSoon, tests/WaitFor.h), and every pump also deals with whatever is already posted to the
+// message loop, so a picture or a check after it sees the editor caught up.
+//
 // With ARTFREQ_SNAPSHOT_STATES=1 in the environment it also writes, beside each PNG, the
 // processor's state (<name>.state) and where the canvas's drawing lies in the PNG (<name>.json),
 // for ArtFreqTruthLab, which plays each state through the processor and puts what an analyser
 // shows of the real output beside the canvas.
 
 #include "LicenseTestSupport.h"
+#include "WaitFor.h"
 #include "Parameters.h"
 #include "PluginProcessor.h"
 #include "core/Compositor.h"
@@ -191,9 +197,37 @@ bool writePng (const juce::Image& image, const juce::File& file)
     return stream.openedOk() && juce::PNGImageFormat().writeImageToStream (image, stream);
 }
 
+/** Runs the message loop for a while, then until all that was posted to it by then is dealt
+    with (change messages, posted calls: on a slow machine more than fits in a few milliseconds). */
 void pump (int milliseconds)
 {
     juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
+    testwait::pumpPosted();
+}
+
+/** check (condition), once the message loop has run until it holds (the editor's timers and
+    change messages come late on a slow machine), or for testwait::timeoutMs. */
+template <typename Condition>
+void checkSoon (Condition&& condition, const juce::String& what)
+{
+    check (testwait::pumpUntil (std::forward<Condition> (condition)), what);
+}
+
+juce::Component* findComponentWithId (juce::Component& root, const juce::String& id);
+
+/** Waits until ArtFreq FX's window shows what its processor's mode has a use for: it follows the
+    mode on its 30 Hz timer, which a slow machine runs late. (The checks that follow say what is
+    shown; this only waits for the window to have caught up.) */
+void waitForTheMode (juce::Component& editor, artfreq::ArtFreqProcessor& processor)
+{
+    testwait::pumpUntil ([&]
+    {
+        const auto mode = processor.getEffectMode();
+        auto* sound = findComponentWithId (editor, "sound-strip");
+        auto* depth = findComponentWithId (editor, "depth");
+        return sound != nullptr && depth != nullptr && sound->isVisible() == artfreq::playsSines (mode)
+            && depth->isVisible() == artfreq::carvesAudio (mode);
+    });
 }
 
 void setParameter (artfreq::ArtFreqProcessor& processor, const char* id, float plainValue)
@@ -552,8 +586,11 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
     }
 
     // ---- nudging (keys sent to the window, as from any focused control) ----------------------------
+    // (A held arrow repeats every few tens of milliseconds, and its undo step ends after a second's
+    // pause: the two presses go in back to back, as the message loop between them can take longer
+    // than that on a slow machine.)
     editor.selectObject (textId);
-    key (juce::KeyPress (juce::KeyPress::rightKey));
+    content.keyPressed (juce::KeyPress (juce::KeyPress::rightKey));
     key (juce::KeyPress (juce::KeyPress::rightKey, juce::ModifierKeys::shiftModifier, 0));
     check (std::abs ((object (textId).startTime - text0.startTime) - 11.0f / w) < 1.0e-4f, "arrows nudge 1 px, Shift+arrow 10 px");
     undo();
@@ -1390,8 +1427,8 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     const auto smoothCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
     clickOn (*lows, at (0.75f));
     pump (60);
-    check (juce::exactlyEqual (value(), 1.0f) && lows->getSelectedIndex() == 1 && ! planHasComb(),
-           "clicking Stripes plays the lows as separate lines");
+    checkSoon ([&] { return juce::exactlyEqual (value(), 1.0f) && lows->getSelectedIndex() == 1 && ! planHasComb(); },
+               "clicking Stripes plays the lows as separate lines");   // (the plan is rebuilt on the processor's timer)
     pump (60);
     canvas->settleMeasuredPreview (1.0f);
     const auto stripesCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
@@ -1409,7 +1446,7 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     // The parameter, changed elsewhere (a host, a loaded state), moves the control too.
     setParameter (processor, params::id::lowEnd, 0.0f);
     pump (60);
-    check (lows->getSelectedIndex() == 0 && planHasComb(), "Lows follows the parameter back to Smooth");
+    checkSoon ([&] { return lows->getSelectedIndex() == 0 && planHasComb(); }, "Lows follows the parameter back to Smooth");
     pump (60);
     canvas->settleMeasuredPreview (1.0f);
     check (countDifferentPixels (smoothCanvas, canvas->createComponentSnapshot (canvas->getLocalBounds())) == 0,
@@ -1826,6 +1863,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     {
         clickOn (*mode, { static_cast<float> (mode->getWidth()) * fraction, static_cast<float> (mode->getHeight()) * 0.5f });
         pump (80);
+        waitForTheMode (*editor, processor);
     };
 
     const auto canvasHeightInCarve = canvas->getHeight();
@@ -2098,20 +2136,24 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         // Both strips at once (Draw, painting), with the drawer open: the least room there is.
         setParameter (processor, params::id::mode, 3.0f);
         pump (80);
+        waitForTheMode (*editor, processor);
         editor->showLayers (true);
         pump (60);
-        check (sound->isVisible() && brush->isVisible() && editor->isDrawerOpen(), "Draw while painting, the layer list open: both strips and the drawer");
+        checkSoon ([&] { return sound->isVisible() && brush->isVisible() && editor->isDrawerOpen(); },
+                   "Draw while painting, the layer list open: both strips and the drawer");
         checkEffectLayout (*editor, "Draw, the eraser and the layer list");
         save ("draw-brush", pixelScale);
         editor->showLayers (false);
         setParameter (processor, params::id::mode, 0.0f);
         pump (80);
+        waitForTheMode (*editor, processor);
 
         if (auto* select = find<juce::Button> (*editor, "tool-select"))
         {
             select->onClick();
             pump (60);
-            check (! brush->isVisible() && canvas->getHeight() == heightBefore, "back on Select the brush's settings are gone");
+            checkSoon ([&] { return ! brush->isVisible() && canvas->getHeight() == heightBefore; },
+                       "back on Select the brush's settings are gone");
         }
     }
 
@@ -2275,12 +2317,14 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         setParameter (processor, params::id::mode, 1.0f);
         editor->selectObject (textId);
         pump (80);
+        waitForTheMode (*editor, processor);
         checkEffectLayout (*editor, size + ", Carve + Draw with a text's settings");
         save (size, 1.0f);
 
         setParameter (processor, params::id::mode, 3.0f);
         editor->selectObject (imageId);
         pump (80);
+        waitForTheMode (*editor, processor);
         checkEffectLayout (*editor, size + ", Draw with a picture's settings");
 
         editor->selectObject (juce::Uuid::null());
@@ -2298,6 +2342,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         editor->showLayers (false);
         setParameter (processor, params::id::mode, 0.0f);
         pump (80);
+        waitForTheMode (*editor, processor);
 
         editor->showSettings (true);
         pump (40);
@@ -2579,13 +2624,7 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
             continue;
 
         const auto message = [&] { return screen->getMessageText().getMessage(); };
-        const auto settle = [&] (const std::function<bool()>& done)
-        {
-            for (int waited = 0; waited < 5000 && ! done(); waited += 10)
-                pump (10);
-
-            return done();
-        };
+        const auto settle = [&] (const std::function<bool()>& done) { return testwait::pumpUntil (done); };
 
         // ---- the screen, empty -------------------------------------------------------------------
         check (screen->isVisible(), who + ": the activation screen is shown on first run");
@@ -2621,7 +2660,7 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
         field->setKey (licensetest::keyPro);
         server.hang();
         activate->onClick();
-        check (server.hanging.wait (3000) && screen->isBusy() && field->isReadOnly(), who + ": busy while the request is on its way");
+        check (server.hanging.wait (testwait::timeoutMs) && screen->isBusy() && field->isReadOnly(), who + ": busy while the request is on its way");
         checkActivationLayout (*editor, who + ", busy");
         save ("activate-busy", pixelScale);
 
@@ -2677,8 +2716,8 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
 
         editor->showSettings (true);
         pump (40);
-        check (find<juce::Button> (*editor, "deactivate") != nullptr && findComponentWithId (*editor, "deactivate")->isVisible(),
-               who + ": activated, the card offers Deactivate");
+        checkSoon ([&] { return find<juce::Button> (*editor, "deactivate") != nullptr && findComponentWithId (*editor, "deactivate")->isVisible(); },
+                   who + ": activated, the card offers Deactivate");
         panelFits ("activated");
         save ("licence", pixelScale);
 
@@ -2719,7 +2758,7 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
         // is out of reach).
         editor->showSettings (true);
         pump (40);
-        check (findComponentWithId (*editor, "licence-activate")->isVisible(), who + ": not activated, the card offers Activate...");
+        checkSoon ([&] { return findComponentWithId (*editor, "licence-activate")->isVisible(); }, who + ": not activated, the card offers Activate...");
         check (! findComponentWithId (*editor, "reset-drawing")->isVisible(), who + ": locked, the settings offer no Reset drawing");
         panelFits ("not activated");
         save ("licence-locked", pixelScale);
@@ -2735,6 +2774,7 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
         pump (40);
         editor->showSettings (true);
         pump (40);
+        testwait::pumpUntil ([&] { return findComponentWithId (*editor, "deactivate")->isVisible(); });
         find<juce::Button> (*editor, "deactivate")->onClick();
         pump (30);
         check (processor.getLicense().getDeactivationWarning().contains ("ArtFreq stays activated with your ArtFreq key"),
@@ -2775,15 +2815,15 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
         check (anymeans::license::LicenseStore (licensing.folder.folder).put (cutOff), who + ": a cut-off deactivation stored");
         processor.getLicense().reload();
         pump (60);
-        check (! processor.isLicensed() && screen->isVisible() && processor.getLicense().getInterruptedDeactivation().has_value(),
-               who + ": a deactivation that didn't finish leaves it locked");
+        checkSoon ([&] { return ! processor.isLicensed() && screen->isVisible() && processor.getLicense().getInterruptedDeactivation().has_value(); },
+                   who + ": a deactivation that didn't finish leaves it locked");
         checkActivationLayout (*editor, who + ", unfinished");
         save ("activate-unfinished", pixelScale);
 
         editor->showSettings (true);
         pump (40);
-        check (findComponentWithId (*editor, "deactivate-confirm")->isVisible() && findComponentWithId (*editor, "licence-activate")->isVisible(),
-               who + ": the card offers Deactivate to finish it, and Activate...");
+        checkSoon ([&] { return findComponentWithId (*editor, "deactivate-confirm")->isVisible() && findComponentWithId (*editor, "licence-activate")->isVisible(); },
+                   who + ": the card offers Deactivate to finish it, and Activate...");
         panelFits ("unfinished deactivation");
         save ("licence-unfinished", pixelScale);
         editor->showSettings (false);
@@ -2829,10 +2869,13 @@ struct KeyRig
         editor->addToDesktop (0);
         editor->setVisible (true);
         pump (150);
+        testwait::pumpUntil ([this] { return editor->isShowing(); });
 
-        // As when the user clicks into the plug-in's window for the first time.
+        // As when the user clicks into the plug-in's window for the first time: the display gives
+        // the window the keyboard (a slow machine takes its time), and JUCE gives the editor the focus.
         editor->grabKeyboardFocus();
         pump (50);
+        testwait::pumpUntil ([this] { return hasKeyboard(); });
 
         // The display tells the window that it has the keyboard in a message, and JUCE then gives
         // the focus to the editor. On X11 that message can lie unseen until something more
@@ -3406,6 +3449,7 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
         setParameter (processor, params::id::repeat, 0.0f);
         setParameter (processor, params::id::mode, 0.0f);
         pump (40);
+        waitForTheMode (editor, processor);
     }
 
     check (! editor.isDrawerOpen(), name + ": the drawer's close button closed it");
@@ -3446,6 +3490,7 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
 
     setParameter (processor, params::id::mode, 3.0f);
     pump (80);
+    waitForTheMode (editor, processor);
     rig.click ("lows");
     spaceIsTheDaws ("after a click on Lows");
     rig.click (rig.get ("sound-strip"), { 700.0f, 16.0f });
@@ -3478,7 +3523,8 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     check (rig.editing(), name + ": (typing a density)");
     setParameter (processor, params::id::mode, 0.0f);
     pump (120);
-    check (! rig.get ("sound-strip").isVisible() && ! rig.editing(), name + ": the Sound strip goes with the mode, and the typing with it");
+    checkSoon ([&] { return ! rig.get ("sound-strip").isVisible() && ! rig.editing(); },
+               name + ": the Sound strip goes with the mode, and the typing with it");
     spaceIsTheDaws ("after the Sound strip went while a value was typed");
     setParameter (processor, params::id::lowEnd, 0.0f);
     setParameter (processor, params::id::level, -6.0f);
@@ -3508,8 +3554,8 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
         pump (60);
     }
 
-    check (juce::roundToInt (parameterValue (params::id::startAt)) == params::atBarStartIndex && rig.get ("start-bar").isShowing()
-               && rig.get ("bpm").isShowing(), name + ": (At bar and a typed tempo: their fields are there)");
+    checkSoon ([&] { return juce::roundToInt (parameterValue (params::id::startAt)) == params::atBarStartIndex && rig.get ("start-bar").isShowing()
+                            && rig.get ("bpm").isShowing(); }, name + ": (At bar and a typed tempo: their fields are there)");
     rig.click ("start-bar");
     check (rig.editing() && ! rig.typing(), name + ": a click on the start bar field starts typing a number into it");
     rig.type ("9");
@@ -3537,7 +3583,7 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     setParameter (processor, params::id::repeat, 0.0f);
     rig.click ("live");
     pump (60);
-    check (rig.get ("canvas").isShowing(), name + ": Live again shows the canvas");
+    checkSoon ([&] { return rig.get ("canvas").isShowing(); }, name + ": Live again shows the canvas");
 
     // ---- the drawer: the layer list -------------------------------------------------------------------
     rig.click ("layers");
@@ -4057,12 +4103,13 @@ int main (int argc, char* argv[])
         editor->addToDesktop (0);
         editor->setVisible (true);
         pump (200);
+        testwait::pumpUntil ([&] { return editor->isShowing(); });
 
         if (auto* live = find<ui::LiveView> (*editor, "live-view"); live != nullptr && editor->isShowing())
         {
             editor->showLiveView (true);
             pump (100);
-            check (processor.getAnalyzer().isActive(), "the live view, on screen, turns the analyser on");
+            checkSoon ([&] { return processor.getAnalyzer().isActive(); }, "the live view, on screen, turns the analyser on");
 
             processor.setPreview (true);
 
@@ -4076,14 +4123,16 @@ int main (int argc, char* argv[])
             playFor (processor, 0.1);
             pump (600);  // past the point where the view stops waiting for the host
 
+            // (It scrolls on its own timer: on a slow machine the view may take longer than the
+            // 400 ms a fast one needs to move this far.)
             const auto before = live->createComponentSnapshot (live->getLocalBounds());
             pump (400);
-            const auto after = live->createComponentSnapshot (live->getLocalBounds());
-            check (countDifferentPixels (before, after) > 1000, "with the host silent, the live view keeps scrolling");
+            checkSoon ([&] { return countDifferentPixels (before, live->createComponentSnapshot (live->getLocalBounds())) > 1000; },
+                       "with the host silent, the live view keeps scrolling");
 
             editor->showLiveView (false);
             pump (100);
-            check (! processor.getAnalyzer().isActive(), "hiding the live view turns the analyser off");
+            checkSoon ([&] { return ! processor.getAnalyzer().isActive(); }, "hiding the live view turns the analyser off");
         }
         else
         {

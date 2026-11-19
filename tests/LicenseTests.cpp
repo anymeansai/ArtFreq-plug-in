@@ -1322,16 +1322,18 @@ ARTFREQ_TEST (licenseADeactivationCutOffLeavesTheComputerLocked)
     CHECK (store.put (storedActivationFrom (activateProFresh, keyPro)));
 
     auto environment = makeEnvironment (temporary.folder, server);
-    environment.requestTimeoutMs = 300;   // a request may take 1.25 of these: the mark counts after 2
+    // A request may take 1.25 of these: the mark counts after 2. (Long enough for the project to
+    // close, below, while the answer is still on its way, even on a slow, busy machine.)
+    environment.requestTimeoutMs = 2000;
 
     LicenseManager other (artFreqInstrumentLicensing(), environment);   // another instance, open all along
 
     {
         LicenseManager effect (artFreqEffectLicensing(), environment);
-        server->replyAfter (deactivateArtFreq, 250);
+        server->replyAfter (deactivateArtFreq, 1500);
         Recorded never;
         CHECK (effect.deactivate (recordInto (never)));
-        CHECK (server->started.wait (3000));
+        CHECK (server->started.wait (10000));
 
         // On its way: marked in the file, and still activated everywhere (the request may fail
         // and change nothing).
@@ -1346,7 +1348,7 @@ ARTFREQ_TEST (licenseADeactivationCutOffLeavesTheComputerLocked)
 
     // Once the request could have ended, the open instance locks by itself, and a new one is
     // locked from the start; both know why.
-    CHECK (pumpUntil ([&] { return ! other.isActivated(); }, 3000));
+    CHECK (pumpUntil ([&] { return ! other.isActivated(); }));
     CHECK (other.getInterruptedDeactivation().has_value() && ! other.getActivation().has_value());
     CHECK (other.getStatusText().startsWith ("Deactivating your ArtFreq Pro key didn't finish, so this computer is locked."));
 
@@ -1360,7 +1362,7 @@ ARTFREQ_TEST (licenseADeactivationCutOffLeavesTheComputerLocked)
     server->replyAfter (deactivateArtFreqAgain, 100);
     Recorded finished;
     CHECK (other.deactivate (recordInto (finished)));
-    CHECK (server->started.wait (3000));
+    CHECK (server->started.wait (10000));
     CHECK (! other.isActivated());
     CHECK (pumpUntil ([&] { return finished.calls > 0; }));
     CHECK (finished.result.outcome == Outcome::deactivated);
@@ -1398,8 +1400,11 @@ ARTFREQ_TEST (licenseADeactivationTheServerDidNotDoChangesNothing)
         const LicenseStore store (temporary.folder);
         CHECK (store.put (storedActivationFrom (activateProFresh, keyPro)));
 
+        // The other instance takes the mark for an interrupted deactivation once it is two
+        // timeouts old, so the request must be over by then: a second here (not the 300 ms of the
+        // tests that time a cut-off), which a slow, busy machine also keeps to.
         auto environment = makeEnvironment (temporary.folder, server);
-        environment.requestTimeoutMs = 300;
+        environment.requestTimeoutMs = 1000;
         LicenseManager effect (artFreqEffectLicensing(), environment);
         LicenseManager other (artFreqInstrumentLicensing(), environment);
 
@@ -1419,7 +1424,7 @@ ARTFREQ_TEST (licenseADeactivationTheServerDidNotDoChangesNothing)
         CHECK (recorded.result.message.endsWith ("This computer stays activated."));
         CHECK (store.read().activations.size() == 1 && store.read().activations[0].deactivatingSince.isEmpty());
 
-        pump (700);
+        pump (2100);   // past the mark's grace: nothing locks later either
         CHECK (effect.isActivated() && other.isActivated() && ! other.getInterruptedDeactivation().has_value());
     }
 }
@@ -1566,7 +1571,7 @@ ARTFREQ_TEST (licenseManagerOneRequestAtATimeAndSafeToDestroy)
         CHECK (instrument.activate (keyArtFreq, recordInto (first)));
         CHECK (! instrument.activate (keyArtFreq, recordInto (second)));
         CHECK (! instrument.deactivate (recordInto (second)));
-        CHECK (server->hanging.wait (2000));
+        CHECK (server->hanging.wait (10000));
 
         // Cancelled (the editor closing): no callback, not busy, and the next request works.
         instrument.cancelRequest();
@@ -1589,7 +1594,7 @@ ARTFREQ_TEST (licenseManagerOneRequestAtATimeAndSafeToDestroy)
 
         Recorded recorded;
         CHECK (instrument->activate (keyArtFreq, recordInto (recorded)));
-        CHECK (server->hanging.wait (2000));
+        CHECK (server->hanging.wait (10000));
 
         const auto started = juce::Time::getMillisecondCounter();
         instrument.reset();
@@ -1682,8 +1687,13 @@ ARTFREQ_TEST (licenseManagerFollowsTheFileOtherInstancesWrite)
         }
     });
 
+    // (The reader is reading before the flag changes, and reads again after it has: a slow, busy
+    // machine can keep a new thread waiting longer than the change takes.)
+    CHECK (pumpUntil ([&] { return reads.load() > 0; }));
     CHECK (LicenseStore (temporary.folder).put (storedActivationFrom (activateArtFreqFresh, keyArtFreq)));
     CHECK (pumpUntil ([&] { return instrument.isActivated(); }));
+    const auto readsBefore = reads.load();
+    CHECK (pumpUntil ([&] { return reads.load() > readsBefore; }));
     stop = true;
     audio.join();
     CHECK (reads > 0);

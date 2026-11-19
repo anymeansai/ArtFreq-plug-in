@@ -9,6 +9,7 @@
 #include "LicenseTestSupport.h"
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
+#include "WaitFor.h"
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -977,9 +978,7 @@ ARTFREQ_TEST (effectKeepsTheMasksItIsReadingAlive)
     {
         effect->editDocument ([r = row++] (ArtDocument& document) { document.paint[static_cast<size_t> (r * ArtDocument::paintWidth + 10)] = 255; });
 
-        for (int waited = 0; effect->isPlanPending() && waited < 3000; waited += 10)
-            juce::MessageManager::getInstance()->runDispatchLoopUntil (10);
-
+        testwait::pumpUntil ([&] { return ! effect->isPlanPending(); });   // (a slow machine runs the timer late)
         CHECK (! effect->isPlanPending());
     };
 

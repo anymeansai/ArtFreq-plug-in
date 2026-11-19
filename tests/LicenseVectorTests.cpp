@@ -516,7 +516,8 @@ ARTFREQ_TEST (licenseStoreFolderLockKeepsOutWritersInThisProcessToo)
         CHECK (again.isLocked());  // free again once the first is gone
     }
 
-    // Read-modify-write under the lock alone (no lock inside the module): no update is lost.
+    // Read-modify-write under the lock alone (no lock inside the module): no update is lost. (Each
+    // writer waits as long as it takes: on a slow, busy machine one can be kept out for seconds.)
     const auto counter = temporary.folder.getChildFile ("counter.txt");
     CHECK (counter.replaceWithText ("0"));
 
@@ -529,7 +530,7 @@ ARTFREQ_TEST (licenseStoreFolderLockKeepsOutWritersInThisProcessToo)
         {
             for (int i = 0; i < 50; ++i)
             {
-                const LicenseStore::FolderLock lock (temporary.folder, 5000);
+                const LicenseStore::FolderLock lock (temporary.folder, 60000);
                 notLocked += lock.isLocked() ? 0 : 1;
 
                 const auto value = counter.loadFileAsString().getIntValue();

@@ -8,10 +8,15 @@
 // analyser will show in each mode.
 //
 // These need JUCE's GUI classes, so on Linux run them under a virtual display (xvfb-run -a).
+//
+// The editor follows the parameters, the drawing and the editor's own state on its timers and
+// change messages, which a slow machine (the macOS runner's Intel half, under Rosetta) runs much
+// later than a fast one: a check of what the editor shows after a change waits for it
+// (CHECK_EVENTUALLY, WaitFor.h), never for a fixed time.
 
-#include <functional>
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
+#include "WaitFor.h"
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -195,8 +200,7 @@ ARTFREQ_TEST (uiEffectHasASmallWindowOfItsOwn)
     mode->setSelectedIndex (2, juce::sendNotificationSync);
     CHECK (effect->getEffectMode() == EffectMode::stencil);
     setParameter (*effect, params::id::mode, 3.0f);
-    pump (30);
-    CHECK (mode->getSelectedIndex() == 3);
+    CHECK_EVENTUALLY (mode->getSelectedIndex() == 3);
 
     // The instrument's window is as it was, and has none of this.
     auto instrument = makeProcessor (ArtFreqProcessor::Variant::instrument);
@@ -239,8 +243,21 @@ ARTFREQ_TEST (uiEffectShowsOnlyWhatAppliesAndGreysNothing)
     for (const auto& [mode, carves, sines] : { std::tuple<float, bool, bool> { 0.0f, true, false }, { 1.0f, true, true },
                                                { 2.0f, true, false }, { 3.0f, false, true } })
     {
+        // The editor follows the mode on its timer: wait until it shows the mode's controls (each
+        // mode shows something the one before did not), then check them one by one.
+        const auto shows = [&, carves = carves, sines = sines]
+        {
+            auto all = isShown (*editor, "depth") == carves && isShown (*editor, "sound-strip") == sines
+                    && canvas->getHeight() == fullHeight - (sines ? ui::shell::effectMetrics::stripHeight : 0);
+
+            for (const auto* id : { "level", "density", "contrast", "lows" })
+                all = all && isShown (*editor, id) == sines;
+
+            return all;
+        };
+
         setParameter (*effect, params::id::mode, mode);
-        pump (120);
+        CHECK_EVENTUALLY (shows());
 
         CHECK (isShown (*editor, "depth") == carves);
         CHECK (isShown (*editor, "sound-strip") == sines);
@@ -257,7 +274,7 @@ ARTFREQ_TEST (uiEffectShowsOnlyWhatAppliesAndGreysNothing)
     }
 
     setParameter (*effect, params::id::mode, 0.0f);
-    pump (120);
+    CHECK_EVENTUALLY (! isShown (*editor, "sound-strip") && canvas->getHeight() == fullHeight);
 
     // The brush.
     auto* brushTool = dynamic_cast<juce::Button*> (findComponent (*editor, "tool-brush"));
@@ -272,8 +289,7 @@ ARTFREQ_TEST (uiEffectShowsOnlyWhatAppliesAndGreysNothing)
 
     CHECK (! strip->isVisible());
     brushTool->onClick();
-    pump (60);
-    CHECK (strip->isVisible() && isShown (*editor, "brush-size") && isShown (*editor, "brush-softness") && isShown (*editor, "brush-strength"));
+    CHECK_EVENTUALLY (strip->isVisible() && isShown (*editor, "brush-size") && isShown (*editor, "brush-softness") && isShown (*editor, "brush-strength"));
     // It lies over the canvas's time axis, clear of the drawing: choosing a tool never resizes
     // the canvas, so the drawing does not move under the brush.
     auto* canvasView = dynamic_cast<ui::CanvasView*> (canvas);
@@ -284,25 +300,20 @@ ARTFREQ_TEST (uiEffectShowsOnlyWhatAppliesAndGreysNothing)
 
     // The live view has no use for the tools or the brush's settings: they are not there.
     editor->showLiveView (true);
-    pump (60);
-    CHECK (! strip->isVisible() && ! isShown (*editor, "tool-brush") && ! isShown (*editor, "tool-select") && isShown (*editor, "add-text"));
+    CHECK_EVENTUALLY (! strip->isVisible() && ! isShown (*editor, "tool-brush") && ! isShown (*editor, "tool-select") && isShown (*editor, "add-text"));
     CHECK (nothingGreyed());
     editor->showLiveView (false);
-    pump (60);
-    CHECK (strip->isVisible() && isShown (*editor, "tool-brush"));
+    CHECK_EVENTUALLY (strip->isVisible() && isShown (*editor, "tool-brush"));
 
     selectTool->onClick();
-    pump (60);
-    CHECK (! strip->isVisible() && canvas->getHeight() == fullHeight);
+    CHECK_EVENTUALLY (! strip->isVisible() && canvas->getHeight() == fullHeight);
 
     // Undo and redo are there while they have something to do.
     CHECK (! isShown (*editor, "undo") && ! isShown (*editor, "redo"));
     effect->editDocument ([] (ArtDocument& document) { document.objects.clear(); });
-    pump (60);
-    CHECK (isShown (*editor, "undo") && ! isShown (*editor, "redo"));
+    CHECK_EVENTUALLY (isShown (*editor, "undo") && ! isShown (*editor, "redo"));
     effect->undo();
-    pump (60);
-    CHECK (! isShown (*editor, "undo") && isShown (*editor, "redo"));
+    CHECK_EVENTUALLY (! isShown (*editor, "undo") && isShown (*editor, "redo"));
     CHECK (nothingGreyed());
 }
 
@@ -515,8 +526,8 @@ ARTFREQ_TEST (uiEffectDrawerOpensForLayersAndObjects)
 
     // An object selected: its settings, over the right of the canvas, the object in view.
     editor->selectObject (left.id);
-    pump (60);
-    CHECK (editor->isDrawerOpen() && drawer->isVisible() && ! editor->isLayerListShown() && ! editor->isDrawerOnLeft());
+    CHECK_EVENTUALLY (editor->isDrawerOpen() && drawer->isVisible() && ! editor->isLayerListShown() && ! editor->isDrawerOnLeft()
+                      && isShown (*editor, "inspector-text"));
     CHECK (drawer->getWidth() == ui::Inspector::compactWidth && drawer->getRight() == 720 && drawer->getHeight() >= ui::Inspector::compactMinimumHeight);
     CHECK (isShown (*editor, "inspector-text") && isShown (*editor, "inspector-band") && isShown (*editor, "inspector-intensity"));
     CHECK (childrenAreApart (*drawer));
@@ -527,42 +538,34 @@ ARTFREQ_TEST (uiEffectDrawerOpensForLayersAndObjects)
 
     // The object on the right: its settings would cover it there, so they open on the left.
     editor->selectObject (right.id);
-    pump (60);
-    CHECK (editor->isDrawerOpen() && editor->isDrawerOnLeft() && drawer->getX() == 0);
+    CHECK_EVENTUALLY (editor->isDrawerOpen() && editor->isDrawerOnLeft() && drawer->getX() == 0);
     CHECK (childrenAreApart (*drawer));
 
     // Deselect: gone (and it opens on the right again next time).
     editor->selectObject (juce::Uuid::null());
-    pump (60);
-    CHECK (! editor->isDrawerOpen() && ! editor->isDrawerOnLeft());
+    CHECK_EVENTUALLY (! editor->isDrawerOpen() && ! editor->isDrawerOnLeft());
 
     // The Layers button: the list, and the button lit; again: closed.
     layers->onClick();
-    pump (60);
-    CHECK (editor->isDrawerOpen() && editor->isLayerListShown() && layers->getToggleState() && isShown (*editor, "layer-list"));
+    CHECK_EVENTUALLY (editor->isDrawerOpen() && editor->isLayerListShown() && layers->getToggleState() && isShown (*editor, "layer-list"));
     CHECK (! isShown (*editor, "inspector-add-text") && ! isShown (*editor, "lows") && ! isShown (*editor, "inspector-size"));
     CHECK (childrenAreApart (*drawer));
     layers->onClick();
-    pump (60);
-    CHECK (! editor->isDrawerOpen() && ! layers->getToggleState());
+    CHECK_EVENTUALLY (! editor->isDrawerOpen() && ! layers->getToggleState());
 
     // Its own close button closes it whatever it shows, and keeps the selection.
     editor->selectObject (left.id);
-    pump (60);
-    CHECK (editor->isDrawerOpen());
+    CHECK_EVENTUALLY (editor->isDrawerOpen());
     close->onClick();
-    pump (60);
-    CHECK (! editor->isDrawerOpen() && editor->getSelectedObject() == left.id);
+    CHECK_EVENTUALLY (! editor->isDrawerOpen() && editor->getSelectedObject() == left.id);
 
     // Another object selected opens it again.
     editor->selectObject (right.id);
-    pump (60);
-    CHECK (editor->isDrawerOpen());
+    CHECK_EVENTUALLY (editor->isDrawerOpen());
 
     // The object deleted: nothing selected, nothing to show.
     effect->editDocument ([] (ArtDocument& d) { d.objects.clear(); });
-    pump (80);
-    CHECK (editor->getSelectedObject().isNull() && ! editor->isDrawerOpen());
+    CHECK_EVENTUALLY (editor->getSelectedObject().isNull() && ! editor->isDrawerOpen());
 
     // The drawer is open through both strips at once and still has room for its tallest content.
     editor->showLayers (true);
@@ -571,8 +574,7 @@ ARTFREQ_TEST (uiEffectDrawerOpensForLayersAndObjects)
     if (auto* brush = dynamic_cast<juce::Button*> (findComponent (*editor, "tool-brush")))
         brush->onClick();
 
-    pump (120);
-    CHECK (isShown (*editor, "sound-strip") && isShown (*editor, "brush-strip") && editor->isDrawerOpen());
+    CHECK_EVENTUALLY (isShown (*editor, "sound-strip") && isShown (*editor, "brush-strip") && editor->isDrawerOpen());
     CHECK (drawer->getHeight() >= ui::Inspector::compactMinimumHeight);
 }
 
@@ -620,35 +622,31 @@ ARTFREQ_TEST (uiEffectDrawerKeepsWideObjectsInView)
 
     // The wide one: the canvas beside the drawer, the whole object in view.
     editor->selectObject (wide.id);
-    pump (60);
-    CHECK (editor->isDrawerOpen() && canvas->getWidth() < fullWidth - 200);
+    CHECK_EVENTUALLY (editor->isDrawerOpen() && canvas->getWidth() < fullWidth - 200);
     CHECK (canvas->getRight() <= drawer->getX() || canvas->getX() >= drawer->getRight());
     CHECK (inView (wide.id));
 
     // A narrow one: the drawer over the canvas again (its drawing does not move for it).
     editor->selectObject (narrow.id);
-    pump (60);
-    CHECK (editor->isDrawerOpen() && canvas->getWidth() == fullWidth && inView (narrow.id));
+    CHECK_EVENTUALLY (editor->isDrawerOpen() && canvas->getWidth() == fullWidth);
+    CHECK (inView (narrow.id));
 
     // Fill length makes it too wide for either side: the canvas moves aside, under the mouse's
     // feet as it were, but the drawer (where the mouse is) stays where it was.
     const auto drawerBefore = drawer->getBounds();
     fill->triggerClick();
-    pump (80);
-    CHECK (effect->getDocument().find (narrow.id)->endTime > 0.9f);
-    CHECK (drawer->getBounds() == drawerBefore && canvas->getWidth() < fullWidth - 200 && inView (narrow.id));
+    CHECK_EVENTUALLY (effect->getDocument().find (narrow.id)->endTime > 0.9f && canvas->getWidth() < fullWidth - 200);
+    CHECK (drawer->getBounds() == drawerBefore && inView (narrow.id));
 
     // The settings closed (Esc, the close button, deselecting): the canvas has the width again.
     editor->selectObject (juce::Uuid::null());
-    pump (60);
-    CHECK (! editor->isDrawerOpen() && canvas->getWidth() == fullWidth);
+    CHECK_EVENTUALLY (! editor->isDrawerOpen() && canvas->getWidth() == fullWidth);
 
     // The layer list lies over the canvas, whatever is selected in it.
     editor->selectObject (wide.id);
-    pump (60);
+    CHECK_EVENTUALLY (editor->isDrawerOpen() && canvas->getWidth() < fullWidth - 200);
     editor->showLayers (true);
-    pump (60);
-    CHECK (editor->isLayerListShown() && canvas->getWidth() == fullWidth);
+    CHECK_EVENTUALLY (editor->isLayerListShown() && canvas->getWidth() == fullWidth);
 }
 
 ARTFREQ_TEST (uiEffectSettingsHoldTheTiming)
@@ -659,7 +657,7 @@ ARTFREQ_TEST (uiEffectSettingsHoldTheTiming)
     auto editor = makeEditor (*effect);
     pump (60);
     editor->showSettings (true);
-    pump (80);
+    CHECK_EVENTUALLY (isShown (*editor, "settings-panel"));
 
     auto* panel = dynamic_cast<ui::shell::SettingsPanel*> (findComponent (*editor, "settings-panel"));
     auto* trigger = dynamic_cast<ui::SegmentedControl*> (findComponent (*editor, "trigger"));
@@ -673,49 +671,33 @@ ARTFREQ_TEST (uiEffectSettingsHoldTheTiming)
     }
 
     const auto choice = [&] (const char* id) { return juce::roundToInt (effect->getParameters().getRawParameterValue (id)->load()); };
-    const auto settle = [&] { pump (80); };
 
-    // The settings follow the parameters on the editor's 30 Hz timer. A busy CI machine (the macOS
-    // runner) can hold that timer back for longer than one settle, so each check waits, for up to
-    // two seconds, for what it expects instead of assuming the timer has already run.
-    const auto eventually = [&] (const std::function<bool()>& condition)
-    {
-        for (int waited = 0; ! condition() && waited < 2000; waited += 20)
-            pump (20);
-
-        return condition();
-    };
-
+    // The settings follow the parameters on the editor's 30 Hz timer: each check waits for what it
+    // expects (each change shows or hides a field).
     CHECK (isShown (*editor, "scale") && isShown (*editor, "range-low") && isShown (*editor, "slope") && isShown (*editor, "window-size")
            && isShown (*editor, "reset-drawing") && isShown (*editor, "trigger") && isShown (*editor, "start-at") && isShown (*editor, "tempo-source"));
-    CHECK (eventually ([&] { return ! isShown (*editor, "start-bar") && ! isShown (*editor, "bpm"); }));
+    CHECK_EVENTUALLY (! isShown (*editor, "start-bar") && ! isShown (*editor, "bpm"));
     CHECK (childrenAreApart (*panel));
 
     // Start: at a bar, with its field.
     startAt->setSelectedIndex (1, juce::sendNotificationSync);
-    settle();
-    CHECK (eventually ([&] { return choice (params::id::startAt) == params::atBarStartIndex && isShown (*editor, "start-bar"); }));
+    CHECK_EVENTUALLY (choice (params::id::startAt) == params::atBarStartIndex && isShown (*editor, "start-bar"));
 
     // Tempo: typed, with its field.
     tempo->setSelectedIndex (1, juce::sendNotificationSync);
-    settle();
-    CHECK (eventually ([&] { return choice (params::id::tempoSource) == 1 && isShown (*editor, "bpm"); }));
+    CHECK_EVENTUALLY (choice (params::id::tempoSource) == 1 && isShown (*editor, "bpm"));
     CHECK (childrenAreApart (*panel));
     tempo->setSelectedIndex (0, juce::sendNotificationSync);
-    settle();
-    CHECK (eventually ([&] { return ! isShown (*editor, "bpm"); }));
+    CHECK_EVENTUALLY (! isShown (*editor, "bpm"));
 
     // A single pass is the only one with a start to choose.
     setParameter (*effect, params::id::repeat, 1.0f);
-    settle();
-    CHECK (eventually ([&] { return ! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"); }));
+    CHECK_EVENTUALLY (! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"));
     setParameter (*effect, params::id::repeat, 0.0f);
     trigger->setSelectedIndex (1, juce::sendNotificationSync);
-    settle();
-    CHECK (eventually ([&] { return choice (params::id::trigger) == 1 && ! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"); }));
+    CHECK_EVENTUALLY (choice (params::id::trigger) == 1 && ! isShown (*editor, "start-at") && ! isShown (*editor, "start-bar"));
     trigger->setSelectedIndex (0, juce::sendNotificationSync);
-    settle();
-    CHECK (eventually ([&] { return isShown (*editor, "start-at") && isShown (*editor, "start-bar"); }));
+    CHECK_EVENTUALLY (isShown (*editor, "start-at") && isShown (*editor, "start-bar"));
 
     juce::StringArray disabled;
     collectDisabled (*editor, disabled);
@@ -754,8 +736,7 @@ ARTFREQ_TEST (uiEffectWindowSizes)
 
         // From 75 to 200 % of 720 x 440, the shape fixed; remembered.
         editor->setSize (1080, 660);
-        pump (40);
-        CHECK (effect->getEditorWidth() == 1080 && effect->getEditorHeight() == 660);
+        CHECK_EVENTUALLY (effect->getEditorWidth() == 1080 && effect->getEditorHeight() == 660);
 
         auto* limits = editor->getConstrainer();
         CHECK (limits != nullptr && limits->getMinimumWidth() == 540 && limits->getMinimumHeight() == 330
@@ -805,7 +786,7 @@ ARTFREQ_TEST (uiEffectCanvasFollowsLevel)
         editor->setVisible (true);
         pump (100);
 
-        auto* canvas = findComponent (*editor, "canvas");
+        auto* canvas = dynamic_cast<ui::CanvasView*> (findComponent (*editor, "canvas"));
 
         if (canvas == nullptr)
         {
@@ -813,11 +794,30 @@ ARTFREQ_TEST (uiEffectCanvasFollowsLevel)
             return;
         }
 
+        // Painted once, the canvas knows the size of its picture (it asks for none before).
+        canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+
+        // The canvas takes Level in on its timer, and the fast preview's thread then makes the
+        // picture for it: a slow machine does both well after any fixed wait. So each picture is
+        // taken once both have happened: a new picture made since Level changed (Level is part of
+        // what the fast preview is of in every mode, so one is made even where it looks the same),
+        // and the snapshot showing the picture of what is set now, not the one before.
         const auto snapshotAt = [&] (float levelDb)
         {
+            const auto madeBefore = canvas->getFastPreviewsMadeInBackground();
             setParameter (*effect, params::id::level, levelDb);
-            pump (100);
-            return canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+            juce::Image snapshot;
+
+            CHECK (testwait::pumpUntil ([&]
+            {
+                if (canvas->getFastPreviewsMadeInBackground() == madeBefore)
+                    return false;
+
+                snapshot = canvas->createComponentSnapshot (canvas->getLocalBounds(), true, 1.0f);
+                return canvas->getPreviewStatus().fastCurrent;
+            }));
+
+            return snapshot;
         };
 
         const auto loud = snapshotAt (0.0f), quiet = snapshotAt (-60.0f);

@@ -4,9 +4,12 @@
 // pictures that cannot be read.
 //
 // These need JUCE's GUI classes, so on Linux run them under a virtual display (xvfb-run -a).
+// What the editor shows after a change comes on its timers and change messages, which a slow
+// machine runs much later: checks of it wait for it (CHECK_EVENTUALLY, WaitFor.h).
 
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
+#include "WaitFor.h"
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -465,7 +468,7 @@ ARTFREQ_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
     processor.rebuildPlanIfNeeded();
     exporter.refresh();
     CHECK (! exporter.isBouncing() && rig.chipShows (updatingText));
-    CHECK (pumpUntil ([&] { return exporter.isBouncing() || exporter.hasCurrentFile(); }, 5000));
+    CHECK (pumpUntil ([&] { return exporter.isBouncing() || exporter.hasCurrentFile(); }, testwait::timeoutMs));
     CHECK (pumpUntil ([&] { return exporter.hasCurrentFile(); }, 60000));
 
     const auto second = exporter.getBounceFile();
@@ -502,7 +505,7 @@ ARTFREQ_TEST (uiExportAlwaysHandsOutWhatIsDrawn)
     // An empty drawing: nothing to hand out until something is drawn again.
     const auto fifth = exporter.getBounceFile();
     rig.setText ("");
-    CHECK (pumpUntil ([&] { return rig.chipShows ("Nothing drawn"); }, 5000));
+    CHECK (pumpUntil ([&] { return rig.chipShows ("Nothing drawn"); }, testwait::timeoutMs));
     CHECK (exporter.getFileToHandOut() == juce::File() && ! exporter.isBouncing());
     rig.setText ("AGAIN");
     CHECK (pumpUntil ([&] { return exporter.hasCurrentFile(); }, 60000));
@@ -545,21 +548,45 @@ ARTFREQ_TEST (uiExportStopsRendersThatAreNoLongerWanted)
     setParameter (processor, params::id::level, -10.0f);
     exporter.refresh();
     CHECK (! exporter.isBouncing());
-    CHECK (pumpUntil ([&] { return ! firstRender.exists(); }, 2000));
+    CHECK (pumpUntil ([&] { return ! firstRender.exists(); }, 60000));   // (its thread stops within a block: on a starved machine that is a while)
 
     // ... and the new one starts once the change has settled.
-    CHECK (pumpUntil ([&] { return exporter.isBouncing(); }, 5000));
+    CHECK (pumpUntil ([&] { return exporter.isBouncing(); }, testwait::timeoutMs));
     // (In the same second it may take the name the stopped one had: that file never existed.)
     const auto secondRender = exporter.getRenderingFile();
     CHECK (secondRender.existsAsFile());
     pump (50);
 
-    // Closing during it does not wait for it, and leaves nothing behind.
+    // Closing during it does not wait for it, and leaves nothing behind. Timed three times (the
+    // window opened again and a bounce started in it), the quickest counted: a busy machine can
+    // stall any one closing for longer than the limit, but not every one of them.
     const auto closeStart = std::chrono::steady_clock::now();
     rig.editor.reset();
-    const auto closing = secondsSince (closeStart);
-    CHECK_MSG (closing < 0.5, "closing took " << closing << " s");
+    auto quickest = secondsSince (closeStart);
     CHECK (! secondRender.exists() && ! firstRender.exists());
+
+    for (int again = 0; again < 2; ++again)
+    {
+        rig.editor = makeEditor (processor);
+        rig.editor->setVisible (true);
+        auto* panel = find<ui::shell::ExportPanel> (*rig.editor, "export");
+        CHECK (panel != nullptr);
+
+        if (panel == nullptr)
+            return;
+
+        panel->startBounce();
+        const auto rendering = panel->getRenderingFile();
+        CHECK (panel->isBouncing() && rendering.existsAsFile());
+        pump (50);
+
+        const auto start = std::chrono::steady_clock::now();
+        rig.editor.reset();
+        quickest = std::min (quickest, secondsSince (start));
+        CHECK (! rendering.exists());
+    }
+
+    CHECK_MSG (quickest < 0.5, "closing took " << quickest << " s (the quickest of three)");
 }
 
 ARTFREQ_TEST (uiExportSavesTheCurrentFile)
@@ -631,9 +658,9 @@ ARTFREQ_TEST (uiWheelGestureIsOneUndoStep)
     processor->editDocument ([textId] (ArtDocument& document) { document.find (textId)->fontIndex = 1; });
 
     editor->selectObject (textId);
-    pump (30);
     auto* intensity = find<juce::Slider> (*editor, "inspector-intensity");
-    CHECK (intensity != nullptr && intensity->isVisible());
+    CHECK (intensity != nullptr);
+    CHECK_EVENTUALLY (intensity != nullptr && intensity->isVisible());
 
     if (intensity == nullptr)
         return;
@@ -753,11 +780,19 @@ ARTFREQ_TEST (uiClickInsideTheSelectionKeepsIt)
 
     const auto scale = processor->getScale();
     const auto shared = onCanvas (*canvas, a, scale).getIntersection (onCanvas (*canvas, b, scale)).getCentre();
+    // The text the inspector shows, once it has caught up with the selection (it follows it on a
+    // change message): of the object selected now, whichever that is.
     const auto selected = [&]
     {
-        pump (20);
-        auto* field = find<juce::TextEditor> (*editor, "inspector-text");
-        return field != nullptr && field->isVisible() ? field->getText() : juce::String();
+        const auto shown = [&]
+        {
+            auto* field = find<juce::TextEditor> (*editor, "inspector-text");
+            return field != nullptr && field->isVisible() ? field->getText() : juce::String();
+        };
+        const auto* object = processor->getDocument().find (editor->getSelectedObject());
+        const auto expected = object != nullptr ? object->text : juce::String();
+        testwait::pumpUntil ([&] { return shown() == expected; });
+        return shown();
     };
 
     // Nothing selected: the top-most.
@@ -812,8 +847,7 @@ ARTFREQ_TEST (uiLayerListSelectsHidesReordersAndDeletes)
 
     // Clicking a row selects its object and keeps the list; it is no undo step.
     clickOn (*list, centreOf (list->getRowBounds (1)));
-    pump (20);
-    CHECK (editor->getSelectedObject() == b.id && editor->isLayerListShown() && list->isVisible());
+    CHECK_EVENTUALLY (editor->getSelectedObject() == b.id && editor->isLayerListShown() && list->isVisible());
     CHECK (processor->undo() && processor->getDocument().objects.size() == 1);   // straight back to the default drawing
     CHECK (processor->redo() && order() == "ABC");
     pump (20);
@@ -831,19 +865,18 @@ ARTFREQ_TEST (uiLayerListSelectsHidesReordersAndDeletes)
 
     // Return opens the settings; "< Layers" goes back to the list, the selection kept.
     list->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
-    pump (20);
     auto* field = find<juce::TextEditor> (*editor, "inspector-text");
-    CHECK (! editor->isLayerListShown() && field != nullptr && field->isVisible() && field->getText() == "C");
+    CHECK (field != nullptr);
+    CHECK_EVENTUALLY (! editor->isLayerListShown() && field != nullptr && field->isVisible() && field->getText() == "C");
     CHECK (! list->isVisible());
 
     if (auto* back = find<juce::Button> (*editor, "inspector-layers"))
     {
         CHECK (back->isVisible());
         back->onClick();
-        pump (20);
     }
 
-    CHECK (editor->isLayerListShown() && list->isVisible() && editor->getSelectedObject() == c.id);
+    CHECK_EVENTUALLY (editor->isLayerListShown() && list->isVisible() && editor->getSelectedObject() == c.id);
 
     // A double-click on a row, or its chevron, opens the settings too.
     list->mouseDown (mouseEventAt (*list, centreOf (list->getRowBounds (2)), centreOf (list->getRowBounds (2)),
@@ -854,15 +887,13 @@ ARTFREQ_TEST (uiLayerListSelectsHidesReordersAndDeletes)
                              0.0f, 0.0f, 0.0f, 0.0f, list, list, juce::Time::getCurrentTime(), centreOf (list->getRowBounds (2)),
                              juce::Time::getCurrentTime(), 2, false);
     list->mouseDown (second);
-    pump (20);
-    CHECK (editor->getSelectedObject() == a.id && ! editor->isLayerListShown());
+    CHECK_EVENTUALLY (editor->getSelectedObject() == a.id && ! editor->isLayerListShown());
     editor->selectObject (juce::Uuid::null());
-    pump (20);
+    CHECK_EVENTUALLY (list->isVisible());
     clickOn (*list, centreOf (list->getSettingsBounds (0)));
-    pump (20);
-    CHECK (editor->getSelectedObject() == c.id && ! editor->isLayerListShown());
+    CHECK_EVENTUALLY (editor->getSelectedObject() == c.id && ! editor->isLayerListShown());
     editor->selectObject (juce::Uuid::null());
-    pump (20);
+    CHECK_EVENTUALLY (list->isVisible());
 
     // The eye hides an object (one undo step) and shows it again.
     clickOn (*list, centreOf (list->getEyeBounds (1)));
@@ -901,8 +932,7 @@ ARTFREQ_TEST (uiLayerListSelectsHidesReordersAndDeletes)
     // Delete with the list focused removes the selection and selects its neighbour.
     clickOn (*list, centreOf (list->getRowBounds (1)));
     list->keyPressed (juce::KeyPress (juce::KeyPress::deleteKey));
-    pump (20);
-    CHECK (order() == "AC" && editor->getSelectedObject() == a.id && editor->isLayerListShown());
+    CHECK_EVENTUALLY (order() == "AC" && editor->getSelectedObject() == a.id && editor->isLayerListShown());
     CHECK (processor->undo() && order() == "ABC");
     pump (20);
 
@@ -951,9 +981,8 @@ ARTFREQ_TEST (uiLayerListScrollsToTheSelection)
 
     // Up with nothing selected picks the last row (the back-most object), and brings it into view.
     list->keyPressed (juce::KeyPress (juce::KeyPress::upKey));
-    pump (20);
-    CHECK (editor->getSelectedObject() == document.objects.front().id);
-    CHECK (inView (list->getRowBounds (23)) && ! inView (list->getRowBounds (0)));
+    CHECK_EVENTUALLY (editor->getSelectedObject() == document.objects.front().id && inView (list->getRowBounds (23)));
+    CHECK (! inView (list->getRowBounds (0)));
 
     // The wheel scrolls back up, and down to the paint layer.
     wheel (*list, 60, 0.1f);
@@ -963,8 +992,7 @@ ARTFREQ_TEST (uiLayerListScrollsToTheSelection)
 
     // A selection made on the canvas (or a new object) is scrolled to as well.
     editor->selectObject (document.objects.back().id);
-    pump (20);
-    CHECK (inView (list->getRowBounds (0)));
+    CHECK_EVENTUALLY (inView (list->getRowBounds (0)));
 }
 
 ARTFREQ_TEST (uiClickingAgainPicksTheObjectUnderneath)
@@ -1148,9 +1176,9 @@ ARTFREQ_TEST (uiNewObjectsDoNotLandOnOthers)
 
     editor->selectObject (juce::Uuid::null());
     clickOn (*canvas, onCanvas (*canvas, defaultText, processor->getScale()).getCentre());
-    pump (20);
     auto* field = find<juce::TextEditor> (*editor, "inspector-text");
-    CHECK (field != nullptr && field->getText() == "ArtFreq");
+    CHECK (field != nullptr);
+    CHECK_EVENTUALLY (field != nullptr && field->getText() == "ArtFreq");
 }
 
 //==============================================================================

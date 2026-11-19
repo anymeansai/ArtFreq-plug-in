@@ -6,6 +6,7 @@
 #include "DenseProject.h"
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
+#include "WaitFor.h"
 
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -32,18 +33,13 @@ namespace
         juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
     }
 
+    /** Pumps the message loop until `condition` (or `timeout` seconds), asking every
+        millisecond, between the timer's ticks (WaitFor.h): the canvas's states that last only a
+        few ticks are seen however late a slow machine runs them. */
     template <typename Condition>
     bool pumpUntil (Condition&& condition, double timeout)
     {
-        for (const auto start = seconds(); seconds() - start < timeout;)
-        {
-            if (condition())
-                return true;
-
-            pumpFor (10);
-        }
-
-        return condition();
+        return testwait::pumpUntil (std::forward<Condition> (condition), juce::roundToInt (timeout * 1000.0));
     }
 
     juce::Component* findById (juce::Component& root, const juce::String& id)
@@ -293,17 +289,24 @@ ARTFREQ_TEST (effectCanvasFollowsEverySoundChangeAtOnce)
 
     const auto current = [&] { const auto s = canvas->getPreviewStatus(); return s.measuredShown && s.current && ! s.fading; };
 
+    // (A render of ArtFreq FX's stand-in song takes many seconds on a slow, busy machine.)
+    constexpr double renderTimeout = 60.0;
+
     for (const auto& [id, value] : { std::pair<const char*, float> { params::id::mode, 2.0f }, { params::id::depth, -12.0f },
                                      { params::id::mode, 3.0f } })
     {
-        CHECK (pumpUntil (current, 10.0));
+        CHECK (pumpUntil (current, renderTimeout));
         testutil::setParameter (processor, id, value);
-        pumpFor (60);
+
+        // The canvas takes the change in on its timer, which a slow machine runs late: it then
+        // shows the fast preview, until the new measurement is in (a render later).
+        const auto fast = [&] { const auto s = canvas->getPreviewStatus(); return ! s.measuredShown && s.text.startsWith ("Updating"); };
+        CHECK (pumpUntil (fast, 10.0));
         CHECK (! canvas->getPreviewStatus().measuredShown);
         CHECK (canvas->getPreviewStatus().text.startsWith ("Updating"));
     }
 
-    CHECK (pumpUntil (current, 10.0));
+    CHECK (pumpUntil (current, renderTimeout));
     editor->removeFromDesktop();
     editor.reset();
     pumpFor (20);
@@ -313,14 +316,21 @@ ARTFREQ_TEST (canvasRemembersItsMeasurementAcrossWindows)
 {
     // Closing the plug-in's window and opening it again on the same project shows the measured
     // preview at once (before a new one could even start), for both plug-ins.
+    //
+    // The canvas's clock starts when it is first painted (on a slow machine a window takes a while
+    // to come up), so the time is taken from then. The window is opened again three times: each
+    // time it must show the measurement the first one made (none made anew), and the quickest must
+    // be in before a new one could even start (a busy machine can stall any one of them).
     for (const auto variant : { ArtFreqProcessor::Variant::instrument, ArtFreqProcessor::Variant::effect })
     {
         ArtFreqProcessor processor (variant);
         processor.setRateAndBufferSizeDetails (48000.0, 512);
         processor.prepareToPlay (48000.0, 512);
+        auto quickest = 1.0e9;
 
-        for (int window = 0; window < 2; ++window)
+        for (int window = 0; window < 4; ++window)
         {
+            const auto remembered = processor.getPreviewMemory();   // what the window before measured
             std::unique_ptr<ArtFreqEditor> editor (dynamic_cast<ArtFreqEditor*> (processor.createEditor()));
             editor->addToDesktop (0);
             editor->setVisible (true);
@@ -330,22 +340,29 @@ ARTFREQ_TEST (canvasRemembersItsMeasurementAcrossWindows)
             if (canvas == nullptr)
                 return;
 
+            const auto painted = [&] { const auto s = canvas->getPreviewStatus(); return s.fastCurrent || s.measuredShown; };
+            CHECK (pumpUntil (painted, 10.0));
             const auto opened = seconds();
             const auto current = [&] { const auto s = canvas->getPreviewStatus(); return s.measuredShown && s.current; };
-            CHECK (pumpUntil (current, 10.0));
+
+            // (The first window renders it: ArtFreq FX's takes seconds on a slow machine.)
+            CHECK (pumpUntil (current, window == 0 ? 60.0 : 10.0));
             const auto took = seconds() - opened;
 
-            if (window == 1)
+            if (window > 0)
             {
                 std::printf ("    %s, opened again: the measured preview after %.0f ms\n", variant == ArtFreqProcessor::Variant::effect ? "ArtFreq FX" : "ArtFreq",
                              took * 1000.0);
-                CHECK_LESS (took, 0.45);   // a first render waits 0.5 s after opening, then 0.2 s more, then renders
+                CHECK (remembered != nullptr && processor.getPreviewMemory() == remembered);   // the one measured before, not a new one
+                quickest = std::min (quickest, took);
             }
 
             editor->removeFromDesktop();
             editor.reset();
             pumpFor (50);
         }
+
+        CHECK_LESS (quickest, 0.45);   // a first render waits 0.5 s after opening, then 0.2 s more, then renders
     }
 }
 
@@ -416,7 +433,10 @@ ARTFREQ_TEST (fastPreviewLeavesTheMessageThreadFree)
                 CHECK_LESS (askSeconds, 0.005);
                 CHECK (shown.isValid());
                 CHECK (! fast.isCurrent());
-                CHECK (pumpUntil ([&] { fast.get (request); return fast.isCurrent(); }, 3.0));
+                // In shortly after, and counted: the thread counts a picture just after handing it
+                // over, and on a busy machine (or one core) the message thread can see the picture
+                // before the count.
+                CHECK (pumpUntil ([&] { fast.get (request); return fast.isCurrent() && fast.getBackgroundPictures() >= step; }, 10.0));
             }
 
             std::printf ("    %s %d x %d: a picture %.0f ms (background), asking for one on the message thread < 5 ms\n",

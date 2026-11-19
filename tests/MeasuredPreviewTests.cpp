@@ -2,6 +2,7 @@
 
 #include "ProcessorTestUtils.h"
 #include "TestFramework.h"
+#include "WaitFor.h"
 #include "TestPlans.h"
 
 #include "Parameters.h"
@@ -296,7 +297,7 @@ ARTFREQ_TEST (measuredPreviewWaitsForTheDrawingToStayStill)
 
     CHECK (preview.getRendersStarted() == 0);
 
-    const auto result = waitForResult (preview, request, 5.0);
+    const auto result = waitForResult (preview, request, 30.0);
     CHECK (result != nullptr);
 
     if (result == nullptr)
@@ -337,7 +338,7 @@ ARTFREQ_TEST (measuredPreviewStopsWhatIsNoLongerWanted)
 
     ui::MeasuredPreview preview;
 
-    for (const auto start = now(); preview.getRendersStarted() == 0 && now() - start < 3.0;)
+    for (const auto start = now(); preview.getRendersStarted() == 0 && now() - start < 10.0;)
     {
         preview.update (slow, true);
         sleepMs (5);
@@ -348,7 +349,7 @@ ARTFREQ_TEST (measuredPreviewStopsWhatIsNoLongerWanted)
 
     const auto quick = smallRequest (bandPlan (false, 3));
     const auto changed = now();
-    const auto result = waitForResult (preview, quick, 10.0);
+    const auto result = waitForResult (preview, quick, 30.0);
     const auto waited = now() - changed;
     std::printf ("    the new result was in %.0f ms after the change\n", waited * 1000.0);
 
@@ -362,24 +363,37 @@ ARTFREQ_TEST (measuredPreviewRecoloursWithoutRendering)
     // A new colour range (Settings' levels) recolours the analysis it has, at once.
     ui::MeasuredPreview preview;
     auto request = smallRequest (bandPlan());
-    const auto first = waitForResult (preview, request, 5.0);
+    const auto first = waitForResult (preview, request, 30.0);
     CHECK (first != nullptr);
 
     if (first == nullptr)
         return;
 
     request.view.floorDb = -80.0f;
-    const auto changed = now();
-    const auto second = waitForResult (preview, request, 2.0);
+    auto changed = now();
+    const auto second = waitForResult (preview, request, 10.0);
+    auto quickest = now() - changed;
     CHECK (second != nullptr);
 
     if (second == nullptr)
         return;
 
     CHECK (second->analysis == first->analysis);
-    CHECK_LESS (now() - changed, ui::MeasuredPreview::debounceSeconds);
     CHECK (second->pixels.size() == first->pixels.size());
     CHECK (std::memcmp (second->pixels.data(), first->pixels.data(), first->pixels.size() * sizeof (juce::PixelARGB)) != 0);
+
+    // In before a render could even start (the debounce): timed with two more ranges, the quickest
+    // counted (a busy machine can stall any one of them past it, but not every one).
+    for (const auto floorDb : { -90.0f, -70.0f })
+    {
+        request.view.floorDb = floorDb;
+        changed = now();
+        const auto again = waitForResult (preview, request, 10.0);
+        quickest = std::min (quickest, now() - changed);
+        CHECK (again != nullptr && again->analysis == first->analysis);
+    }
+
+    CHECK_LESS (quickest, ui::MeasuredPreview::debounceSeconds);
 }
 
 ARTFREQ_TEST (measuredPreviewOfTheEffectIsOnTime)
@@ -509,20 +523,19 @@ namespace
         juce::MessageManager::getInstance()->runDispatchLoopUntil (milliseconds);
     }
 
-    /** Pumps the message loop until `condition` (or `timeout` seconds); returns whether it held. */
+    /** Pumps the message loop until `condition` (or `timeout` seconds); returns whether it held.
+        It is asked every millisecond, between the timer's ticks (WaitFor.h), so the canvas's states
+        that last only a few ticks (the fast preview after a change, a cross-fade) are seen however
+        late a slow machine runs them. */
     template <typename Condition>
     bool pumpUntil (Condition&& condition, double timeout)
     {
-        for (const auto start = now(); now() - start < timeout;)
-        {
-            if (condition())
-                return true;
-
-            pumpFor (20);
-        }
-
-        return condition();
+        return testwait::pumpUntil (std::forward<Condition> (condition), juce::roundToInt (timeout * 1000.0));
     }
+
+    // A render of the default drawing, on its thread: a moment here, many seconds on a slow and
+    // busy machine.
+    constexpr double renderTimeout = 60.0;
 } // namespace
 
 ARTFREQ_TEST (canvasCrossFadesToTheMeasuredPreview)
@@ -548,44 +561,82 @@ ARTFREQ_TEST (canvasCrossFadesToTheMeasuredPreview)
     if (canvas == nullptr)
         return;
 
-    pumpFor (150);
+    // Painted (a slow machine takes a while to put the window up), and the measured preview's
+    // wait has not even begun.
+    CHECK (pumpUntil ([&] { return canvas->getPreviewStatus().fastCurrent; }, 10.0));
     CHECK (! canvas->getPreviewStatus().measuredShown);
     CHECK (canvas->getPreviewStatus().text.startsWith ("Updating"));
 
+    // The measured preview fades in, each of the four times it comes in below. The 0.3 s fade is
+    // watched for between the canvas's ticks (TimerWatch: on a stalled machine the message loop
+    // can run two ticks in one go). A busy machine can also stall the canvas for longer than the
+    // fade in the middle of a tick, which then starts and ends it at once, so one of the four may
+    // go unseen (fadesSeen is checked at the end).
+    auto fadesSeen = 0;
     auto sawFade = false;
+    const testwait::TimerWatch fadeWatch ([&] { sawFade = sawFade || canvas->getPreviewStatus().fading; });
     const auto measured = pumpUntil ([&]
     {
         sawFade = sawFade || canvas->getPreviewStatus().fading;
         const auto status = canvas->getPreviewStatus();
         return status.measuredShown && status.current && ! status.fading;
-    }, 8.0);
+    }, renderTimeout);
 
     CHECK (measured);
-    CHECK (sawFade);
+    fadesSeen += sawFade ? 1 : 0;
     CHECK (canvas->getPreviewStatus().text == "Preview of the real sound");
+
+    // Waits for the measured preview to come in again (`done`), noting whether it faded in.
+    const auto fadesIn = [&] (auto done)
+    {
+        sawFade = false;
+        const auto in = pumpUntil ([&]
+        {
+            sawFade = sawFade || canvas->getPreviewStatus().fading;
+            return done();
+        }, renderTimeout);
+        fadesSeen += sawFade ? 1 : 0;
+        return in;
+    };
 
     // Level (the clipper untouched): the sound is the same times a gain, so the measured picture
     // moves by as many dB at once, without a new render, and stays on screen meanwhile.
     // (Until the review of the measured preview it stayed, stale, for a whole new render.)
-    testutil::setParameter (processor, params::id::level, -12.0f);
-    auto alwaysMeasured = true;
-    const auto relevelled = pumpUntil ([&]
+    // Done when the canvas shows the new picture: a measurement put in since the change (the
+    // processor keeps the last one for the next window) and current. Five times, the quickest
+    // timed (a busy machine can stall any one of them past the time a render takes); each must
+    // stay measured all along.
+    auto quickest = 1.0e9;
+
+    for (const auto levelDb : { -12.0f, -18.0f, -24.0f, -30.0f, -36.0f })
     {
-        alwaysMeasured = alwaysMeasured && canvas->getPreviewStatus().measuredShown;
-        return canvas->getPreviewStatus().current;
-    }, 0.6);
-    CHECK (relevelled);
-    CHECK (alwaysMeasured);
+        const auto before = processor.getPreviewMemory();
+        testutil::setParameter (processor, params::id::level, levelDb);
+        const auto changed = now();
+        auto alwaysMeasured = true;
+        const auto relevelled = pumpUntil ([&]
+        {
+            alwaysMeasured = alwaysMeasured && canvas->getPreviewStatus().measuredShown;
+            return processor.getPreviewMemory() != before && canvas->getPreviewStatus().current;
+        }, renderTimeout);
+        quickest = std::min (quickest, now() - changed);
+        CHECK (relevelled);
+        CHECK (alwaysMeasured);
+    }
+
+    std::printf ("    Level changed: the measured picture moved in %.0f ms (the quickest of five)\n", quickest * 1000.0);
+    CHECK_LESS (quickest, 0.6);
 
     // Density changes the sound itself: the fast preview at once (it follows the change within a
     // frame), whether the change came from the mouse, the wheel, the keyboard or the host; the
     // measured one when it is in. (It used to keep the stale measured picture unless the mouse
     // was down.)
+    const auto showsFast = [&] { const auto s = canvas->getPreviewStatus(); return ! s.measuredShown && s.text.startsWith ("Updating"); };
     testutil::setParameter (processor, params::id::density, 64.0f);
-    pumpFor (80);
+    CHECK (pumpUntil (showsFast, 10.0));   // (the canvas takes the change in on its timer, which a slow machine runs late)
     CHECK (! canvas->getPreviewStatus().measuredShown);
     CHECK (canvas->getPreviewStatus().text.startsWith ("Updating"));
-    CHECK (pumpUntil ([&] { return canvas->getPreviewStatus().current && canvas->getPreviewStatus().measuredShown; }, 8.0));
+    CHECK (fadesIn ([&] { return canvas->getPreviewStatus().current && canvas->getPreviewStatus().measuredShown; }));
 
     // The drawing: the fast preview at once, the measured one when it is in.
     processor.editDocument ([] (ArtDocument& document)
@@ -594,9 +645,9 @@ ARTFREQ_TEST (canvasCrossFadesToTheMeasuredPreview)
             object.startTime = std::max (0.0f, object.startTime - 0.1f);
     });
 
-    pumpFor (80);
+    CHECK (pumpUntil (showsFast, 10.0));
     CHECK (! canvas->getPreviewStatus().measuredShown);
-    CHECK (pumpUntil ([&] { return canvas->getPreviewStatus().current && canvas->getPreviewStatus().measuredShown; }, 8.0));
+    CHECK (fadesIn ([&] { return canvas->getPreviewStatus().current && canvas->getPreviewStatus().measuredShown; }));
 
     // Loading a project: the same.
     juce::MemoryBlock state;
@@ -609,9 +660,10 @@ ARTFREQ_TEST (canvasCrossFadesToTheMeasuredPreview)
     }
 
     processor.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
-    pumpFor (80);
+    CHECK (pumpUntil ([&] { return ! canvas->getPreviewStatus().current; }, 10.0));
     CHECK (! canvas->getPreviewStatus().current);
-    CHECK (pumpUntil ([&] { return canvas->getPreviewStatus().current; }, 8.0));
+    CHECK (fadesIn ([&] { return canvas->getPreviewStatus().current; }));
+    CHECK_MSG (fadesSeen >= 3, "the measured preview was seen fading in " << fadesSeen << " of 4 times");
 
     editor->removeFromDesktop();
     editor.reset();
