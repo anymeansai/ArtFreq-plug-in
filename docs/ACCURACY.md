@@ -1,26 +1,65 @@
 # Are the screenshots accurate?
 
-**Short answer:** in the mids and highs, yes: text, pictures and carved shapes land where the
-canvas shows them, with the right shape. **In the lows (below about 250 Hz, and clearly below
-about 120 Hz) the screenshots look sharper and cleaner than any analyser will show.** Two smaller
-things differ everywhere: the colours (the canvas paints the loudest part white, MiniMeters
-paints by dB) and, at the default Density, the highs (fine horizontal lines, not solid letters).
+## In plain words
 
-The canvas is a *preview*: it is drawn from the plan of sine waves, as an ideal analyser with
-perfect resolution would show it. A real analyser has to trade time for frequency (that is the
-FFT size), and the low octaves get only a few FFT bins each. No sound can beat that, so this is
-mostly about what the screenshots promise, not about the sound.
+- **Mids and highs (above about 250 Hz): yes.** Text, pictures and carved shapes come out where
+  the screenshots show them, with the right shape.
+- **Lows (below about 250 Hz, and clearly below about 120 Hz): no. The screenshots look sharper
+  and cleaner there than any analyser will show.** No analyser can show fine detail that low (it
+  has only a few frequency steps per octave down there; this is how spectrograms work, not a fault
+  in the sound). So small low shapes come out blurred and thicker, low text does not read, a faint
+  haze shows under bright low shapes, and ArtFreq FX's carves in the bass are mostly filled back
+  in by the song's kick and bass.
+- **Two smaller differences everywhere.** The colours: the canvas paints the loudest part white,
+  while MiniMeters colours by level, so the same sound may well show orange or pink instead (it
+  depends on MiniMeters' level range). And at the default Density the highs show fine horizontal
+  lines where the canvas shows solid letters.
+- **Why:** the canvas is a *preview*, drawn as a perfect analyser would show the drawing. The Live
+  view, and the demo clips made from it, show the plug-in's real sound.
+
+("FFT size" below is the analyser's resolution setting, as in MiniMeters: a bigger FFT is sharper
+in pitch and blurrier in time. "dBFS" is level, 0 being the loudest a file can hold.)
+
+## What to put on the website
+
+1. **Lead with real measurements**, captioned as such: `docs/marketing/artfreq-real-output.png`,
+   `artfreq-real-output-text.png` and `artfreq-fx-real-output.png` (real analyses of the plug-ins'
+   audio), and the demo clips (`docs/marketing/*-demo.mp4` and `.gif`, made with the demo reel
+   tool: the plug-ins' own window filmed while they play, with their Live view of the real output).
+2. **Safe with a caption:** `artfreq-default.png` and `artfreq-fx-default.png`. Any interface
+   screenshot is fine *to show the interface*, with the caption.
+3. **Do not present as "what you will see":** artfreq-layers, artfreq-fx-carve,
+   artfreq-fx-carve-draw, artfreq-linear, and artfreq-rich / -on-play (their low parts).
+4. **Test content:** every screenshot with a drawing except `artfreq-default.png` and
+   `artfreq-fx-default.png` shows the test drawing: the word HELLO and a test picture named
+   `logo.png` (in the layer list too). That includes `artfreq-live.png`, which is otherwise a real
+   analysis. Fine in the documentation; on the website it looks like a placeholder, so better
+   re-shot with a real drawing (see Fixes) or replaced by a demo clip's poster frame.
+
+Captions, ready to paste:
+
+- Under an ArtFreq canvas screenshot: *"The canvas previews your spectrogram. Text and shapes in the
+  mids and highs come out as drawn; below about 150 Hz every analyser blurs detail, so keep low art
+  big and simple. Colours depend on your analyser's settings."*
+- Under an ArtFreq FX canvas screenshot: *"The canvas previews the carve over a stand-in texture,
+  not your song; the Live view shows the real result. Carving reads best in the mids and highs: in
+  the bass, a song's kick and bass fill small shapes back in."*
+- Under a real-output image: *"Real measurement of ArtFreq's output, not a mock-up."* For the FX
+  image add *"on a synthetic test song"*.
+
+The rest of this page is the detail behind these points.
 
 ## How it was checked
 
 For every screenshot with a drawing, the exact drawing and settings were saved from the snapshot
 tool and played, one pass, through the real plug-in (activated, as a buyer's copy): ArtFreq on its
 own, ArtFreq FX on a dense synthetic master (drums, bass, chords, a voice, cymbals and a noise bed
-at -10 dBFS RMS). The output was analysed the way MiniMeters' spectrogram works: Hann window, FFT
-4096, 8192 and 16384 points, log scale 20 Hz - 20 kHz, a column every 5 - 7 ms, coloured with the
-canvas's colour map over -100 to 0 dBFS, at 48 kHz. (MiniMeters' own defaults could not be looked up here:
-its dB range, window and colour map are assumptions. The shapes do not depend on them; the colours
-do.)
+at -10 dBFS RMS). The output was analysed as an FFT spectrogram such as MiniMeters' works: Hann
+window, FFT 4096, 8192 and 16384 points, log scale 20 Hz - 20 kHz, a column every 5 - 7 ms, coloured
+with the canvas's colour map over -100 to 0 dBFS, at 48 kHz. (MiniMeters itself was not available
+here and its own defaults could not be looked up: its dB range, window and colour map are
+assumptions. The shapes do not depend on them; the colours do. "Analysed like MiniMeters" in the
+figures means this.)
 
 Each comparison puts the screenshot's canvas beside the real output, at the same size and on the
 same frequency axis (`docs/accuracy/compare-*.png`; the full sheets, with 4096 and 16384 and the
@@ -103,37 +142,37 @@ numbers, come out of `ArtFreqTruthLab`, see the end). Bands: **lows** below 250 
 | Screenshot | Lows (< 250 Hz) | Low mids (250 Hz - 2 kHz) | Highs (> 2 kHz) | Use for marketing? |
 | --- | --- | --- | --- | --- |
 | artfreq-default | nothing drawn; faint streaks below | accurate | letter tops show fine lines | yes, with the caption |
-| artfreq-rich, -on-play, -playing and the other UI states of that drawing | **not accurate**: thicker, blurred, hazy; dot becomes a streak | accurate | HELLO striped, not solid | only to show the interface |
+| artfreq-rich, -on-play, -playing and the other UI states of that drawing | **not accurate**: thicker, blurred, hazy; dot becomes a streak | accurate | HELLO striped, not solid | only to show the interface (test drawing: HELLO, logo.png) |
 | artfreq-layers | **not accurate**: low text does not read | accurate | as rich; the sunset striped | no |
 | artfreq-linear (1 bar) | small, roughly right | roughly right | blurred at 8192, unreadable at 16384 | no |
 | artfreq-150 / -75 (Density 200, 1x) | as rich | accurate | lines shown, and real | only to show the interface |
-| artfreq-live | real measurement | real | real | yes |
+| artfreq-live | real measurement | real | real | accurate, but shows the test drawing (HELLO, logo.png): a demo clip's poster is better |
 | artfreq-fx-default | nothing drawn | accurate (dark, sharp) | accurate | **yes** (best FX shot) |
 | artfreq-fx-carve | **not accurate**: dot and bottom edge vanish | big shapes yes; thin wave and frame sides much fainter | accurate at 4096 / 8192 | no |
 | artfreq-fx-carve-draw | **not accurate**: dot becomes a dark gap | roughly | accurate, even stronger | not for the lows |
-| artfreq-fx-stencil | brighter and thicker than shown | accurate, more colourful | accurate | with the caption |
+| artfreq-fx-stencil | brighter and thicker than shown | accurate, more colourful | accurate | with the caption (see the note below) |
+
+Note on `compare-fx-stencil.png`: the bright full-height lines at its left and right edges are in
+the sound. After the pass, Stencil lets the song through again, as designed. At the pass's start,
+which is also where the test song starts, the first 5 ms of the song come through before the
+stencil closes (a peak of -4 dBFS fading out over 256 samples): a short tick, which an analyser
+draws as a line from top to bottom. Not changed here (it is the plug-in's behaviour); worth a
+look by the developer.
 
 ## Fixes
 
 ### (a) Marketing: what to show and say
 
-- **Lead with real measurements**, not the canvas: `docs/marketing/artfreq-real-output.png`
-  (ArtFreq's default drawing), `artfreq-real-output-hello.png` (HELLO over WORLD, Density 1024),
-  `artfreq-fx-real-output.png` (ArtFreq FX carving its default drawing into a dense master). Each
-  is the plug-in's real audio analysed (Hann, FFT 8192, log 20 Hz - 20 kHz, -100 to 0 dBFS),
-  2400 x 1280 (1200 x 640 at 2x), captioned as a measurement on the image. Say so on the site:
-  *"Real measurement of ArtFreq's output, not a mock-up."* For the FX image add: *"on a
-  synthetic test song"*.
-- **Interface screenshots** are fine to show the interface. Put a caption under them: *"The
-  canvas previews your spectrogram. Text and shapes in the mids and highs come out as drawn;
-  below about 150 Hz every analyser blurs detail, so keep low art big and simple. Colours depend
-  on your analyser's dB range."*
-- **Do not present as "what you will see"**: artfreq-layers, artfreq-fx-carve,
-  artfreq-fx-carve-draw, artfreq-rich / on-play (their low-band parts), artfreq-linear.
-  `artfreq-fx-default.png` and `artfreq-default.png` are safe with the caption.
-- Cheaper than re-shooting by hand: move the screenshots' low-band parts (the dot at 50 Hz, the
-  logo's frame at 70 - 90 Hz, "Bass drop / second line") above about 150 Hz in the snapshot
-  tool's drawings, and use Density 1024 there; the canvas and the analyser then agree.
+- What to show and the captions: see "What to put on the website" at the top.
+- The real-output images: `docs/marketing/artfreq-real-output.png` (ArtFreq's default drawing),
+  `artfreq-real-output-text.png` (ARTFREQ over ANYMEANS, Density 1024) and
+  `artfreq-fx-real-output.png` (ArtFreq FX carving its default drawing into a dense synthetic
+  master). Each is the plug-in's real audio analysed (Hann, FFT 8192, log 20 Hz - 20 kHz, -100 to
+  0 dBFS), 2400 x 1280 (1200 x 640 at 2x), captioned as a measurement on the image.
+- Cheaper than re-shooting by hand: in the snapshot tool's drawings, replace the test word and
+  picture (HELLO, `logo.png`) with real ones, move the low-band parts (the dot at 50 Hz, the
+  logo's frame at 70 - 90 Hz, "Bass drop / second line") above about 150 Hz, and use Density 1024
+  there; the canvas and the analyser then agree.
 - Tell buyers the settings that show it best: FFT 4096 or 8192, Length 4 bars or more for text.
 
 ### (b) The canvas: the smallest changes that would make it honest (not made; for approval)

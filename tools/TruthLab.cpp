@@ -20,10 +20,11 @@
 //      ArtFreq FX gets a dense synthetic song (makeSong: drums, bass, chords, a voice, cymbals and
 //      a bed of noise, mastered to -10 dBFS RMS), from the moment the transport starts; its output
 //      is moved back by the latency it reports, as the DAW's delay compensation does;
-//   2. analyses the output (the mean of the channels) as MiniMeters' spectrogram does: Hann
-//      window, FFT 4096, 8192 and 16384 points, dB of the magnitude (a full-scale sine reads
-//      0 dB), one analysis per pixel column of the canvas (a hop of 1/W of the pass: about 5 ms,
-//      a smoothly scrolling display), frequency on the state's own scale (log 20 Hz - 20 kHz for
+//   2. analyses the output (the mean of the channels) as an FFT spectrogram such as MiniMeters'
+//      does (its settings assumed, not looked up): Hann window, FFT 4096, 8192 and 16384
+//      points, dB of the magnitude (a full-scale sine reads 0 dB), one analysis per pixel
+//      column of the canvas (a hop of 1/W of the pass: about 5 ms, a smoothly scrolling
+//      display), frequency on the state's own scale (log 20 Hz - 20 kHz for
 //      all but the linear screenshot), each pixel row reading the dB interpolated between the bin
 //      centres around it, or the loudest bin inside it where it spans several; coloured with the
 //      canvas's own colour map over a fixed range (default -100 to 0 dBFS);
@@ -39,8 +40,8 @@
 //
 // --marketing renders a few drawings for the website (the instrument and the effect), each as a
 // real measurement of the plug-in's output (FFT 8192), at 2x (2400 x 1280), captioned as such:
-// ArtFreq's default drawing, HELLO over WORLD at Density 1024, and ArtFreq FX carving its default
-// drawing into the test song from bar 2 (so the song plays either side of the pass).
+// ArtFreq's default drawing, ARTFREQ over ANYMEANS at Density 1024, and ArtFreq FX carving its
+// default drawing into the test song from bar 2 (so the song plays either side of the pass).
 //
 // On Linux run it under a virtual display (it renders text):  xvfb-run -a ArtFreqTruthLab ...
 
@@ -1499,20 +1500,21 @@ std::vector<MarketingShot> marketingShots()
                        [] (ArtFreqProcessor&) {} });
 
     // 2. Text in the highs and the mids, where an analyser shows the most detail; Density at its
-    //    top, 1024, so the highs are solid rather than fine scan lines.
-    shots.push_back ({ "artfreq-real-output-hello.png", "ArtFreq: text in the highs and mids",
-                       "ArtFreq's output for HELLO (3.5 - 16 kHz) over WORLD (300 Hz - 3 kHz), Density 1024, one 8 s pass.", false,
+    //    top, 1024, so the highs are solid rather than fine scan lines. The words are the product
+    //    and the company (not test text: this one goes on the website).
+    shots.push_back ({ "artfreq-real-output-text.png", "ArtFreq: text in the highs and mids",
+                       "ArtFreq's output for ARTFREQ (3.5 - 16 kHz) over ANYMEANS (300 Hz - 3 kHz), Density 1024, one 8 s pass.", false,
                        [] (ArtFreqProcessor& p)
                        {
                            const auto scale = p.getScale();
                            ArtDocument document;
                            const auto high = bandRange (Band::high, scale), mid = bandRange (Band::mid, scale);
-                           auto hello = ArtDocument::makeTextObject ("HELLO", static_cast<float> (high.low), static_cast<float> (high.high));
-                           auto world = ArtDocument::makeTextObject ("WORLD", static_cast<float> (mid.low), static_cast<float> (mid.high));
-                           hello.startTime = world.startTime = 0.04f;
-                           hello.endTime = world.endTime = 0.96f;
-                           document.objects.push_back (hello);
-                           document.objects.push_back (world);
+                           auto top = ArtDocument::makeTextObject ("ARTFREQ", static_cast<float> (high.low), static_cast<float> (high.high));
+                           auto bottom = ArtDocument::makeTextObject ("ANYMEANS", static_cast<float> (mid.low), static_cast<float> (mid.high));
+                           top.startTime = bottom.startTime = 0.04f;
+                           top.endTime = bottom.endTime = 0.96f;
+                           document.objects.push_back (top);
+                           document.objects.push_back (bottom);
                            p.setDocument (document);
                            setParameter (p, params::id::density, 1024.0f);
                        } });

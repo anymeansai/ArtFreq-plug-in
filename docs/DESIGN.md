@@ -1266,8 +1266,9 @@ sound. The snapshot tool, run with `ARTFREQ_SNAPSHOT_STATES=1`, saves each state
 (the processor's state and where the canvas lies in the picture); the lab loads each into a fresh
 processor of its kind, activated against the test licensing environment, plays one pass with a
 transport that starts after 0.77 s stopped (ArtFreq FX on a dense synthetic master at -10 dBFS RMS,
-its output moved back by the latency), analyses the output as MiniMeters does (Hann, 4096 / 8192 /
-16384 points, one analysis per canvas column, the state's scale, rows interpolated between bins
+its output moved back by the latency), analyses the output as an FFT spectrogram such as
+MiniMeters' does (its settings assumed: Hann, 4096 / 8192 / 16384 points, one analysis per canvas
+column, the state's scale, rows interpolated between bins
 or the loudest bin inside them, the canvas's colour map over -100 to 0 dBFS) and writes the
 screenshot's canvas beside the real display with numbers per band (lows < 250 Hz, low mids, highs
 > 2 kHz): correlation, levels inside and around the drawing, contrast against the canvas's, and

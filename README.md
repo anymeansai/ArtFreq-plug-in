@@ -323,7 +323,7 @@ or run `build/ArtFreqTests_artefacts/Release/ArtFreqTests [filter]` to run only 
 
 ### Accuracy check
 
-The canvas is a preview. `ArtFreqTruthLab <snapshot-folder> <out>` plays each screenshot's saved state through the real (activated, test-licensed) plug-in, ArtFreq FX on a dense synthetic song, analyses the output as MiniMeters' spectrogram does (Hann, FFT 4096, 8192 and 16384, log scale) and puts it beside the screenshot's canvas, with numbers per band (`metrics.txt`). `ArtFreqTruthLab --marketing <out>` renders real-output images for the website. The findings, and what they mean for the screenshots: [docs/ACCURACY.md](docs/ACCURACY.md).
+The canvas is a preview. `ArtFreqTruthLab <snapshot-folder> <out>` plays each screenshot's saved state through the real (activated, test-licensed) plug-in, ArtFreq FX on a dense synthetic song, analyses the output as an FFT spectrogram such as MiniMeters' does (Hann, FFT 4096, 8192 and 16384, log scale; MiniMeters' own settings are assumed, not measured) and puts it beside the screenshot's canvas, with numbers per band (`metrics.txt`). `ArtFreqTruthLab --marketing <out>` renders real-output images for the website. The findings, and what they mean for the screenshots: [docs/ACCURACY.md](docs/ACCURACY.md).
 
 ### Continuous integration
 
