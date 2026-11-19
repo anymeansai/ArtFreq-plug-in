@@ -309,7 +309,8 @@ jobs:
 
       # One zip with both bundles side by side at its top: ArtFreq.vst3 and "ArtFreq FX.vst3".
       # The Windows zip also holds "How to install.txt" (installer/windows), with Windows line
-      # endings whatever the checkout did to them: there is no Windows installer yet.
+      # endings whatever the checkout did to them: the zip is the manual way, next to the
+      # installer built below.
       - name: Package
         shell: bash
         run: |
@@ -442,6 +443,182 @@ jobs:
           path: out/*.pkg
           if-no-files-found: error
 
+      # A standard Windows installer (installer/windows/ArtFreq.iss, Inno Setup 6.3 or later) that
+      # puts both plug-ins in C:\Program Files\Common Files\VST3 and registers an uninstaller. Inno
+      # Setup 6 comes with the windows-2022 image; Chocolatey installs it only if it is missing.
+      # The installer is not code-signed, so SmartScreen warns before it runs. ISCC's switches
+      # start with "/", which Git Bash would turn into paths: MSYS_NO_PATHCONV=1 (and
+      # MSYS2_ARG_CONV_EXCL) stop that, so every path given to it is a Windows path.
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          version=$(sed -n 's/^project(ArtFreq VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          nopathconv() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$@"; }
+          find_iscc()
+          {
+            local candidate
+            for candidate in "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/c/Program Files/Inno Setup 6/ISCC.exe" \
+                             /c/Program\ Files*/Inno\ Setup*/ISCC.exe; do
+              if [ -f "$candidate" ]; then
+                echo "$candidate"
+                return 0
+              fi
+            done
+            command -v ISCC.exe 2> /dev/null
+          }
+          if ! iscc=$(find_iscc); then
+            echo "::warning::Inno Setup is not on this runner: installing it with Chocolatey."
+            choco install innosetup -y --no-progress
+            if ! iscc=$(find_iscc); then
+              echo "::error::ISCC.exe (Inno Setup) not found, even after installing it."
+              exit 1
+            fi
+          fi
+          echo "Inno Setup compiler: $iscc"
+          rm -rf out
+          mkdir -p out
+          nopathconv "$iscc" "/DAppVersion=$version" "/DBuildDir=$(cygpath -wa build)" \
+            "/O$(cygpath -wa out)" "$(cygpath -wa installer/windows/ArtFreq.iss)"
+          installer="out/ArtFreq-$version-Windows.exe"
+          if [ ! -f "$installer" ]; then
+            echo "::error::$installer was not built."
+            ls -la out
+            exit 1
+          fi
+          ls -l out
+          sha256sum "$installer"
+
+      # Uploaded before it is tested, so a failing installer can be downloaded and looked at.
+      - name: Upload Windows installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ArtFreq-Installer-Windows
+          path: out/*.exe
+          if-no-files-found: error
+
+      # Prove it on this machine as an upgrade. First, stand-ins for what an older install leaves
+      # in the VST3 folder: the plug-ins as they were called before 0.4 (FreqArt.vst3 and
+      # "FreqArt FX.vst3") and a file an older ArtFreq.vst3 had that this one does not (on top of
+      # the copies "Test the Windows zip" put there). The silent install must remove all three,
+      # exit with 0, and leave, byte for byte, the bundles that were built and validated (every
+      # file, nothing more), which must pass pluginval where a DAW finds them, with an entry under
+      # Installed apps naming the uninstaller in C:\Program Files\AnyMeans\ArtFreq. Then the
+      # silent uninstall must leave none of the bundles, no uninstaller folder and no entry, and
+      # the activation file untouched (a stand-in for it, unless this runner has a real one).
+      - name: Test the Windows installer
+        if: runner.os == 'Windows'
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          version=$(sed -n 's/^project(ArtFreq VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          installer="out/ArtFreq-$version-Windows.exe"
+          test -f "$installer"
+          vst3="/c/Program Files/Common Files/VST3"
+          app="/c/Program Files/AnyMeans/ArtFreq"
+          # ArtFreq.iss's AppId (with "_is1", as Inno Setup names the key), in the 64-bit registry.
+          key='HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{8D861029-3188-4297-B978-7DA3D9DD561A}_is1'
+          licence="/c/ProgramData/AnyMeans/Licenses.json"
+          mkdir -p inno-logs
+          logs=$(cygpath -wa inno-logs)
+          fail() { echo "::error::$*"; exit 1; }
+          nopathconv() { MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' "$@"; }
+
+          # ---- what an upgrade finds ----------------------------------------------------------
+          mkdir -p "$vst3/FreqArt.vst3/Contents/x86_64-win" "$vst3/FreqArt FX.vst3/Contents/x86_64-win" \
+                   "$vst3/ArtFreq.vst3/Contents/x86_64-win" \
+            || fail "Cannot write to $vst3: this test needs a runner with administrator rights."
+          echo "old" > "$vst3/FreqArt.vst3/Contents/x86_64-win/FreqArt.vst3"
+          echo "old" > "$vst3/FreqArt FX.vst3/Contents/x86_64-win/FreqArt FX.vst3"
+          stale="$vst3/ArtFreq.vst3/Contents/x86_64-win/stale-file-from-an-older-version.txt"
+          echo "stale" > "$stale"
+          echo "Before installing:"
+          ls -la "$vst3"
+
+          # ---- install ------------------------------------------------------------------------
+          echo "Installing: $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+          status=0
+          nopathconv "./$installer" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$logs\\install.log" || status=$?
+          [ "$status" -eq 0 ] || fail "The installer exited with code $status (its log is printed below)."
+          echo "After installing:"
+          ls -la "$vst3"
+          [ ! -e "$vst3/FreqArt.vst3" ] || fail "The installer left the old FreqArt.vst3 in $vst3."
+          [ ! -e "$vst3/FreqArt FX.vst3" ] || fail "The installer left the old FreqArt FX.vst3 in $vst3."
+          [ ! -e "$stale" ] || fail "The installer left a stale file inside ArtFreq.vst3: $stale"
+          check_installed()
+          {
+            local target="$1" name="$2"
+            local built="build/${target}_artefacts/Release/VST3/$name.vst3"
+            local installed="$vst3/$name.vst3"
+            [ -f "$installed/Contents/x86_64-win/$name.vst3" ] || fail "$name.vst3 was not installed in $vst3."
+            find "$installed" | sort
+            diff -r "$built" "$installed" || fail "The installed $name.vst3 is not the one that was built and validated."
+            "./${{ matrix.pluginval_bin }}" --strictness-level 5 --validate-in-process --validate "$(cygpath -wa "$installed")"
+          }
+          check_installed ArtFreq "ArtFreq"
+          check_installed ArtFreqFX "ArtFreq FX"
+
+          # ---- its entry under Installed apps, and the uninstaller it names ------------------
+          entry=$(nopathconv reg query "$key" /reg:64 | tr -d '\r') || fail "No Installed apps entry: $key"
+          echo "$entry"
+          value() { sed -n "s/^ *$1  *REG_[A-Z_]*  *//p" <<< "$entry"; }
+          [ "$(value DisplayName)" = "ArtFreq" ] || fail "Its DisplayName is not ArtFreq."
+          [ "$(value DisplayVersion)" = "$version" ] || fail "Its DisplayVersion is not $version."
+          [ "$(value Publisher)" = "AnyMeans" ] || fail "Its Publisher is not AnyMeans."
+          uninstaller=$(cygpath -u "$(value UninstallString | tr -d '"')")
+          [ "$uninstaller" = "$app/unins000.exe" ] || fail "The uninstaller is '$uninstaller', not $app/unins000.exe."
+          [ -f "$uninstaller" ] || fail "$uninstaller is missing."
+
+          # ---- uninstall ----------------------------------------------------------------------
+          made_licence=false
+          if [ ! -e "$licence" ]; then
+            mkdir -p "$(dirname "$licence")"
+            echo '{"stand-in": "the uninstaller must not delete this file"}' > "$licence"
+            made_licence=true
+          fi
+          licence_sum=$(sha256sum < "$licence")
+          echo "Uninstalling: $uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+          status=0
+          nopathconv "$uninstaller" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART "/LOG=$logs\\uninstall.log" || status=$?
+          [ "$status" -eq 0 ] || fail "The uninstaller exited with code $status (its log is printed below)."
+          # A copy of the uninstaller in TEMP does the work, and deletes unins000.exe and its folder
+          # after the original has returned: give it a minute.
+          for _ in $(seq 1 60); do
+            [ -e "$app" ] || break
+            sleep 1
+          done
+          [ ! -e "$app" ] || { ls -la "$app"; fail "The uninstaller's folder $app is still there a minute after uninstalling."; }
+          echo "After uninstalling:"
+          ls -la "$vst3"
+          for name in "ArtFreq" "ArtFreq FX" "FreqArt" "FreqArt FX"; do
+            [ ! -e "$vst3/$name.vst3" ] || fail "$name.vst3 is still in $vst3 after uninstalling."
+          done
+          if nopathconv reg query "$key" /reg:64 > /dev/null 2>&1; then
+            fail "The Installed apps entry is still there after uninstalling: $key"
+          fi
+          { [ -f "$licence" ] && [ "$(sha256sum < "$licence")" = "$licence_sum" ]; } \
+            || fail "The uninstaller deleted or changed $licence (the activation must stay)."
+          if [ "$made_licence" = true ]; then
+            rm -f "$licence"
+            rmdir "$(dirname "$licence")" 2> /dev/null || true
+          fi
+          if [ -d "/c/Program Files/AnyMeans" ] && [ -z "$(ls -A "/c/Program Files/AnyMeans")" ]; then
+            echo "::warning::The uninstaller left an empty C:\\Program Files\\AnyMeans folder."
+          fi
+          echo "The Windows installer installed, upgraded and uninstalled as it should."
+
+      - name: Show the Windows installer's logs
+        if: ${{ failure() && runner.os == 'Windows' }}
+        shell: bash
+        run: |
+          for log in inno-logs/*.log; do
+            [ -f "$log" ] || continue
+            echo "===== $log"
+            cat "$log"
+          done
+
   # Publishes the builds on the repository's Releases page, so they can be downloaded
   # from a browser. Each successful build of every platform on a branch updates the release
   # for the current version (the version number in CMakeLists.txt). It runs only when the plan
@@ -462,7 +639,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # The plug-in zips and the installer only (not the interface snapshots).
+      # The plug-in zips and the installers only (not the interface snapshots): the macOS pkg
+      # and the Windows exe, both from the ArtFreq-Installer-* artifacts.
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -487,7 +665,8 @@ jobs:
           ls -l dist
           # Every platform's downloads must be here: the clean-up below takes off the release
           # whatever this build did not make.
-          for expected in "ArtFreq-$version-macOS.pkg" "ArtFreq-VST3-macOS.zip" "ArtFreq-VST3-Windows.zip"; do
+          for expected in "ArtFreq-$version-macOS.pkg" "ArtFreq-VST3-macOS.zip" \
+                          "ArtFreq-$version-Windows.exe" "ArtFreq-VST3-Windows.zip"; do
             if [ ! -f "dist/$expected" ]; then
               echo "::error::dist/$expected is missing: nothing is published."
               exit 1
@@ -499,9 +678,12 @@ jobs:
 
           **macOS** (10.15 or later, Apple Silicon and Intel): download \`ArtFreq-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`. Or by hand: unzip \`ArtFreq-VST3-macOS.zip\` and copy both into \`~/Library/Audio/Plug-Ins/VST3\`; if your DAW will not load them, run \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 ~/Library/Audio/Plug-Ins/VST3/ArtFreq\\ FX.vst3\` once.
 
-          **Windows** (10 or 11, 64-bit; no installer yet): download \`ArtFreq-VST3-Windows.zip\`, unzip it, close your DAW and copy \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`C:\Program Files\Common Files\VST3\` (Windows asks for permission). \`How to install.txt\` in the zip says the same.
+          **Windows** (10 or 11, 64-bit): download \`ArtFreq-$version-Windows.exe\` and run it. It is not code-signed, so Windows SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`C:\Program Files\Common Files\VST3\` (replacing any earlier ArtFreq, or FreqArt, there) and can be removed again under **Settings > Apps**. Or by hand: right-click \`ArtFreq-VST3-Windows.zip\`, choose **Extract All**, close your DAW and copy both folders into \`C:\Program Files\Common Files\VST3\` (\`How to install.txt\` in the zip says how). **Ableton Live** finds them only with **Use VST3 Plug-In System Folders** on (Preferences > Plug-ins; Settings > Plug-ins in Live 12), then **Rescan**.
 
           Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
+
+          **New in 0.5.1**
+          - **Windows installer**: download the \`.exe\` and run it. It installs both plug-ins (either can be left out) into \`C:\Program Files\Common Files\VST3\`, replaces earlier copies (also the FreqArt ones from before 0.4) and adds an uninstaller under Settings > Apps, which keeps your activation. The zip stays for installing by hand.
 
           **New in 0.5**
           - **Activation**: the first time, enter the key from your purchase email (internet needed once; offline after that). A key works on 2 computers; Settings > Licence has Deactivate for moving to a new one. Until activated, ArtFreq is silent and ArtFreq FX passes your audio through untouched.
