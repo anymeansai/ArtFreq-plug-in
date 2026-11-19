@@ -153,16 +153,19 @@
 #include "ui/ShellExport.h"
 #include "ui/ShellFooter.h"
 #include "ui/ShellToolbar.h"
+#include "ui/Theme.h"
 #include "ui/Widgets.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 
 namespace
 {
@@ -1257,6 +1260,46 @@ void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     editor.selectObject (juce::Uuid::null());
     pump (30);
     check (sameDrawing (processor.getDocument(), start), "after the layer checks the drawing is back where it began");
+}
+
+/** The colour-map level (0..255) of every pixel, by the nearest colour of the map. */
+std::vector<int> colourLevels (const juce::Image& image)
+{
+    const auto& table = artfreq::ui::theme::spectrumTable();
+    std::map<uint32_t, int> cache;
+    std::vector<int> levels;
+    levels.reserve (static_cast<size_t> (image.getWidth()) * static_cast<size_t> (image.getHeight()));
+
+    for (int y = 0; y < image.getHeight(); ++y)
+        for (int x = 0; x < image.getWidth(); ++x)
+        {
+            const auto c = image.getPixelAt (x, y);
+            const auto key = c.getARGB() & 0xffffffu;
+            auto found = cache.find (key);
+
+            if (found == cache.end())
+            {
+                auto best = 0, bestDistance = std::numeric_limits<int>::max();
+
+                for (int i = 0; i < 256; ++i)
+                {
+                    const auto t = juce::Colour (table[static_cast<size_t> (i)].getUnpremultiplied());
+                    const auto dr = t.getRed() - c.getRed(), dg = t.getGreen() - c.getGreen(), db = t.getBlue() - c.getBlue();
+
+                    if (dr * dr + dg * dg + db * db < bestDistance)
+                    {
+                        bestDistance = dr * dr + dg * dg + db * db;
+                        best = i;
+                    }
+                }
+
+                found = cache.emplace (key, best).first;
+            }
+
+            levels.push_back (found->second);
+        }
+
+    return levels;
 }
 
 int countDifferentPixels (const juce::Image& a, const juce::Image& b)
@@ -3758,12 +3801,49 @@ int main (int argc, char* argv[])
         }
 
         // ---- live view --------------------------------------------------------------------------
+        // The canvas's measured picture of the drawing, for the live view's to agree with.
+        juce::Image canvasPicture;
+
+        if (auto* canvasView = find<ui::CanvasView> (*editor, "canvas"))
+        {
+            canvasView->settleMeasuredPreview (1.0f);
+            canvasPicture = canvasView->createComponentSnapshot (canvasView->getDrawingArea().toNearestInt());
+        }
+
         editor->showLiveView (true);
 
         if (auto* live = find<ui::LiveView> (*editor, "live-view"))
         {
             check (live->isVisible(), "the live view is shown");
             live->fillFromPlanForSnapshot (live->getVisibleSeconds());
+
+            // The same sound looks the same in both: the same analysis and colours, so the brightest
+            // and the typical drawn levels agree (to 4 dB; the views differ in time span and in
+            // where their columns fall).
+            const auto livePlot = ui::axes::plotArea (live->getLocalBounds(), ui::CanvasView::axisWidth, ui::CanvasView::axisHeight);
+            const auto livePicture = live->createComponentSnapshot (livePlot);
+            const auto canvasLevels = colourLevels (canvasPicture), liveLevels = colourLevels (livePicture);
+            const auto top = [] (const std::vector<int>& levels, double p)
+            {
+                std::vector<int> lit;
+
+                for (const auto level : levels)
+                    if (level > 40)
+                        lit.push_back (level);
+
+                if (lit.empty())
+                    return 0;
+
+                std::sort (lit.begin(), lit.end());
+                return lit[static_cast<size_t> (p * static_cast<double> (lit.size() - 1))];
+            };
+
+            std::cout << "  canvas / live view colour levels: 99th percentile " << top (canvasLevels, 0.99) << " / "
+                      << top (liveLevels, 0.99) << ", median of the lit " << top (canvasLevels, 0.5) << " / " << top (liveLevels, 0.5)
+                      << std::endl;
+            check (std::abs (top (canvasLevels, 0.99) - top (liveLevels, 0.99)) <= 10
+                       && std::abs (top (canvasLevels, 0.5) - top (liveLevels, 0.5)) <= 10,
+                   "the live view shows the drawing's sound in the canvas's colours");
         }
 
         save ("live", pixelScale);

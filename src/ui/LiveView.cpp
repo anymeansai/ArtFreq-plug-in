@@ -260,7 +260,7 @@ struct LiveView::Impl
         const auto ppc = pixelsPerColumn();
 
         // Oldest first, so sub-pixel columns merge into the right neighbours.
-        const auto count = juce::jmin (filled, static_cast<int> (std::ceil (width / juce::jmax (0.01f, ppc))) + 1);
+        const auto count = juce::jmin (filled, static_cast<int> (std::ceil (static_cast<float> (width) / juce::jmax (0.01f, ppc))) + 1);
 
         for (int age = count - 1; age >= 0; --age)
         {

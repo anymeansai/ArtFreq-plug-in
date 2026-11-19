@@ -796,8 +796,11 @@ struct CanvasView::Impl
 
         if (text != shownStatus)
         {
+            // The whole time axis: the bar numbers make room for the line, or take it back.
             shownStatus = text;
-            owner.repaint (statusArea().getSmallestIntegerContainer());
+            const auto a = area();
+            owner.repaint (juce::Rectangle<float> (0.0f, a.getBottom(), static_cast<float> (owner.getWidth()), static_cast<float> (axisHeight))
+                               .getSmallestIntegerContainer());
         }
     }
 

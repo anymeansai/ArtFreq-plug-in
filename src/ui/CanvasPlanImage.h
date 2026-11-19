@@ -12,11 +12,15 @@
 //  - in time, each line's loudness is blurred by the analyser's window (fftSize samples);
 //  - the rising comb (Smooth lows) is drawn as a filled band at the brightness the analyser shows
 //    it (its energy spreads along its glide: about 3 dB darker per doubling of the FFT);
+//  - under a shape in the comb's band, the faint haze its gliding sines leave below it (45 dB
+//    under the shape: measured, 40 to 55);
 //  - colours are absolute levels, dBFS at the output Level with the analyser's slope, over the
 //    analyser's range from Settings, as the measured preview and the live view colour them.
 //
-// What it leaves out, and only the measured preview shows: the comb's shimmer, the faint energy
-// spilled where shapes start and stop, lines beating against each other.
+// What it leaves out, and only the measured preview shows: the comb's shimmer, the energy spilled
+// where shapes start and stop elsewhere, lines beating against each other. (Truth lab, against the
+// real output: correlation 0.76 - 0.98 by band, the drawing standing out at most 9 dB more than in
+// reality, but in the few rows of a linear scale's lows, where it leaves out a haze.)
 
 #include "core/ArtPlan.h"
 #include "dsp/SpectrumAnalysis.h"
@@ -134,7 +138,7 @@ private:
     std::vector<int> rowStart;
     std::vector<int> columnOf, nextColumnOf;
     std::vector<float> columnFraction;
-    std::vector<float> accumulator, scratch;
+    std::vector<float> accumulator, combAccumulator, combDb, scratch;
     std::vector<int> stretchBefore;
     std::vector<float> stretchFraction, rowIndex;
     std::vector<juce::PixelARGB> rowPixels;

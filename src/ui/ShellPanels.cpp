@@ -20,7 +20,6 @@ namespace
     constexpr int titleRowHeight = 56;
     constexpr int closeSize = 28;
     constexpr int rowGap = 12;
-    constexpr int sectionGap = 20;
     constexpr int labelWidth = 76;
 
     void paintCard (juce::Graphics& g, juce::Rectangle<int> bounds)

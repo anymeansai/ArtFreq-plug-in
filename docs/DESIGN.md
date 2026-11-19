@@ -744,14 +744,14 @@ real output as the user's analyser will show it (`ui/MeasuredPreview.h`):
   the fast one (it follows the mouse). The selection, handles, outlines, the hidden layer's tag
   and the brush cursor are drawn on top as before.
 - **Cost** (`ArtFreqTruthLab --bench`, one core of the Linux build machine, JUCE's own FFT as on
-  Windows without IPP; vDSP on a Mac is several times faster): the default drawing, 4 bars at 120
-  BPM, Retina at 100 %: 146 ms (ArtFreq), 368 ms (ArtFreq FX, the carver and the stand-in); the
-  worst, everything drawn at Density 1024, 32 bars at 20 BPM (a 384 s pass): 2.6 s at 8192, 3.1 s
-  at 16384, 3.1 s on a Retina window at 200 % (ArtFreq); 5.1 s Carve, 7.0 - 7.6 s Carve + Draw
-  (ArtFreq FX); meanwhile the canvas shows the fast preview and "Updating…". Memory: the analysis
-  in hundredths of a dB (1.4 MB for the default, at most 12.5 MB at 200 % on Retina) and the
-  picture (5.6 MB at 100 % on Retina, 22.6 MB at 200 %). The fast preview on the message thread
-  after a change: 11 - 17 ms at 100 % on Retina, 30 - 39 ms at 200 % with everything drawn
+  Windows without IPP; vDSP on a Mac is several times faster; two runs): the default drawing, 4
+  bars at 120 BPM, Retina at 100 %: 0.12 - 0.15 s (ArtFreq), 0.37 - 0.40 s (ArtFreq FX, the carver
+  and the stand-in); the worst, everything drawn at Density 1024, 32 bars at 20 BPM (a 384 s
+  pass): 2.6 - 3.3 s (ArtFreq, at 8192 and 16384, at 100 and 200 %), 5 - 8 s (ArtFreq FX, Carve
+  and Carve + Draw); meanwhile the canvas shows the fast preview and "Updating…". Memory: the
+  analysis in hundredths of a dB (1.4 MB for the default, at most 12.5 MB at 200 % on Retina)
+  and the picture (5.6 MB at 100 % on Retina, 22.6 MB at 200 %). The fast preview on the message
+  thread after a change: 8 - 24 ms at 100 % on Retina, 38 - 40 ms at 200 % with everything drawn
   (it works at the plan's 1024 columns and stretches them across the width).
 - **Verified** by the truth lab against the real processor's output, analysed independently
   (`ArtFreqTruthLab`, see [docs/ACCURACY.md](ACCURACY.md)): ArtFreq's canvas matches its real
@@ -822,8 +822,10 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   blurred in time by the analyser's window, the comb's band filled at the brightness the analyser
   shows it (combGain at 8192, 3 dB more or less per halving or doubling), in absolute levels:
   dBFS at Level with the analyser's slope, coloured over the analyser's range from Settings, as
-  the measured preview and the live view are. It leaves out what only the sound has: the comb's
-  shimmer, the haze where shapes start and stop, lines beating. A change of Level, Density,
+  the measured preview and the live view are, and under the comb's shapes the haze its gliding
+  sines leave (45 dB down). It leaves out what only the sound has: the comb's shimmer, the energy
+  spilled where shapes start and stop elsewhere, lines beating (truth lab: correlation 0.76 - 0.98
+  with the real output, the drawing standing out at most 9 dB more, but in a linear scale's lows). A change of Level, Density,
   Contrast, Lows, length, mode, Depth, analyser setting or window size keeps the last measured
   picture (its shapes are right) until the new one is in, unless the mouse is down changing it
   (a knob being turned is seen turning). Under the canvas's right end, a quiet line: "Preview of
