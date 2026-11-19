@@ -145,9 +145,10 @@ namespace
         return true;
     }
 
-    /** ArtFreq FX: the stand-in song through the carver as the audio thread runs it (the mode's
-        masks and settings, the gate open for the pass), the sines of the Draw modes added, the
-        carver's latency taken out (as the host's delay compensation does). */
+    /** ArtFreq FX: the song (the user's, or before any pass the stand-in) through the carver as
+        the audio thread runs it (the mode's masks and settings, the gate open for the pass), the
+        sines of the Draw modes added, the carver's latency taken out (as the host's delay
+        compensation does). */
     bool measureEffect (const MeasureRequest& request, int64_t passSamples, FrameAnalyser& output, FrameAnalyser& input,
                         uint32_t& songSerial, const std::function<bool()>& shouldStop)
     {

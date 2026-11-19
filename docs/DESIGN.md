@@ -1333,8 +1333,15 @@ not on screen and one render once it stays, a render no longer wanted stopping w
 a change of levels recoloured at once without rendering, ArtFreq FX's carve on time (no latency
 left in), FFT size and levels saved and loaded in both plug-ins and their defaults for older
 states, and the canvas on screen: the fast preview first, the cross-fade to the measured one,
-Level keeping the measured picture until the new one, an edit and a loaded project going to the
-fast preview and back); the fast preview (the comb's band filled and Stripes' gaps, the comb as
+Level moving the measured picture at once without a render, Density, an edit and a loaded
+project going to the fast preview and back); what a review of it found
+(`PreviewHonestyTests.cpp`: ArtFreq FX keeping the pass that played as it came in, the same audio
+again publishing nothing new, a moment of a pass not replacing a whole one, the loop's seam
+without a click, the canvas carving a bass track that played rather than the stand-in, a mode
+or Depth from the host going to the fast preview at once, a window opened again showing the last
+measurement at once, the fast preview made on its own thread with the message thread asking for
+it in under 5 ms on a dense project at 2x and 4x, and showing the measurement where the drawing
+did not change); the fast preview (the comb's band filled and Stripes' gaps, the comb as
 bright as the lines, thin strokes as Stripes draws them and blurred by the window; ArtFreq FX's
 modes over the stand-in, the halo, the sines' level, the measured stand-in taking the texture's
 place); the live analyser at the FFT size from Settings;

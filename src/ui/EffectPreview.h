@@ -6,10 +6,12 @@
 //
 // The effect works on a song the canvas does not have, so a stand-in is drawn under the drawing
 // (dsp/StandInSong.h): once the measured preview has analysed it, its real analysis; until then,
-// the level the stand-in is made with. It is carved by the same masks the audio thread carves
-// with, as deep as Depth, and the carve is blurred as the carver and the analyser blur it (in
-// frequency by about a bin of each, so small holes in the lows fill in; in time by about half of
-// each one's window, so thin strokes in time come out faint):
+// the level the stand-in is made with (once the user's song has played, the measured preview
+// analyses that instead). It is carved by the same masks the audio thread carves with, as deep as
+// Depth, as the carver and the analyser carve it (makeCarve): per carver bin the drawing's mean
+// over its band and the mode's halo bins, the analyser's lobe reading the song around each bin
+// in the lows (so small holes there fill in from the song's own loud lines), and in time about
+// half of each one's window (so thin strokes in time come out faint):
 //
 //  - Carve: the stand-in with the drawing as dark shapes;
 //  - Stencil: the drawing filled with the stand-in, the rest dark;

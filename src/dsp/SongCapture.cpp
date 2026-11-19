@@ -31,16 +31,16 @@ CapturedSong::Reader::Reader (const CapturedSong& songToRead, int64_t firstSampl
 
 float CapturedSong::Reader::at (int64_t u) const noexcept
 {
-    const auto* samples = song.samples.data();
+    const auto* take = song.samples.data();
 
     if (u >= fade)
-        return static_cast<float> (samples[static_cast<size_t> (u)]);
+        return static_cast<float> (take[static_cast<size_t> (u)]);
 
     // The loop's seam: its start fades in over the end of the take (equal power: the two are not
     // the same sound).
     const auto w = (static_cast<double> (u) + 0.5) / static_cast<double> (fade) * juce::MathConstants<double>::halfPi;
-    return static_cast<float> (samples[static_cast<size_t> (u)] * std::sin (w)
-                               + samples[static_cast<size_t> (loopLength + u)] * std::cos (w));
+    return static_cast<float> (take[static_cast<size_t> (u)] * std::sin (w)
+                               + take[static_cast<size_t> (loopLength + u)] * std::cos (w));
 }
 
 void CapturedSong::Reader::render (float* out, int numSamples) noexcept

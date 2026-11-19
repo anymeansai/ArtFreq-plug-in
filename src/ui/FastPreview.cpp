@@ -2,6 +2,8 @@
 
 #include "dsp/WavExporter.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace artfreq::ui

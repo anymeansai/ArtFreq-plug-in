@@ -2,37 +2,56 @@
 
 ## In plain words (since the measured preview)
 
-**Yes, for screenshots taken with this version.** The canvas no longer shows an ideal picture of
-the drawing: a moment after each change it renders one pass of the plug-in's real output (the same
-sound as playback and Bounce WAV) and shows it as a spectrogram analyser with your settings shows
-it (Hann window, the FFT size and colour levels from Settings: 8192 points and -100 to 0 dBFS by
-default). So the blur and thickening below about 250 Hz, the faint haze under bright low shapes,
-the scan lines in the highs at the default Density and the analyser's colours are all on the
-canvas now, because they are in the sound and in every analyser. The Live view uses the same
-analysis and colours, so the same sound looks the same in both.
+**Yes, for screenshots taken with this version, once the canvas says so.** The canvas no longer
+shows an ideal picture of the drawing: a moment after each change it renders one pass of the
+plug-in's real output (the same sound as playback and Bounce WAV) and shows it as a spectrogram
+analyser with your settings shows it (Hann window, the FFT size and level range from Settings).
+So the blur and thickening below about 250 Hz, the faint haze under bright low shapes and the
+scan lines in the highs at the default Density are on the canvas, because they are in the sound
+and in every analyser. The Live view uses the same analysis and colours, so the same sound looks
+the same in both.
+
+What it does not claim:
+
+- **The analyser's settings.** FFT 8192 and -100 to 0 dBFS are ArtFreq's defaults and its own
+  assumptions, not MiniMeters' known defaults (MiniMeters was not available here and we found
+  none published). The canvas is as right as these settings are: set them to the user's analyser.
+- **The colours.** The canvas shows the same *levels* as the analyser, in ArtFreq's own palette
+  over the level range from Settings. The analyser's colour map is its own (and MiniMeters has
+  settings such as a Brightness Boost that this does not model): the shapes and their relative
+  brightness are what matches, not the hues.
+- **ArtFreq FX before a pass has played.** ArtFreq FX's canvas carves **the user's own track as
+  it came in during the last pass** (the status line says "Real output, on your track's last
+  pass"). Until a pass has played with the window open, it carves a stand-in for a loud master
+  ("Real output, on a stand-in song"), which can look very different from the user's track (on a
+  bass track the stand-in shows carved words in the mids and highs where the track has nothing to
+  carve).
+- **While you drag, paint or type, or turn a setting that changes the sound,** the canvas shows a
+  quick estimate (the status line says "Updating…"): the last real picture wherever the drawing
+  did not change near since, a model of the analyser where it did. The model is close in the mids
+  and highs; in the lows it can still show a shape a little cleaner than it will be (numbers
+  below). Screenshots should be taken once the line says "Preview of the real sound" or "Real
+  output, …" (the snapshot tool does).
 
 - **ArtFreq:** the canvas is its real output, analysed. Checked against the real processor's
   output analysed separately (the truth lab, below): correlation 0.95 - 1.00 in every band and at
-  FFT 4096, 8192 and 16384 (each canvas at that FFT size), mean difference within 0.2 dB, and the
-  drawing stands out no more on the canvas than in reality (excess contrast -0.6 to +0.1 dB). The
-  old canvas: correlation as low as 0.40 in the lows and a drawing that stood out 29 - 88 dB more
-  than in reality (white on black against the analyser's colours).
-- **ArtFreq FX:** the canvas is the real carver's output on a **stand-in song** (it does not have
-  yours), now shaped like a loud master (5 dB an octave towards the highs, a kick and a bass
-  line). Against the dense test master: correlation 0.62 - 0.98 by band and mode (old: 0.14 -
-  0.89), mean difference within 2 dB, and carved shapes stand out at most 4 dB more on the canvas
-  than on the master (old: up to 36 dB, in the lows). The lows now show what carving does there:
-  the small dot at 50 Hz and the logo's bottom edge mostly vanish, as on the master. A real song
-  differs from the stand-in (its bass may be brighter or quieter), which the help says.
-- **While you drag, paint or type** the canvas shows a quick estimate of the same picture (the
-  analyser's blur and colours, less exactly in the lows: the shimmer and some of the haze are only in
-  the sound) and fades to the
-  measured one when you stop; a line under the canvas says which ("Updating…", "Preview of the
-  real sound"). Screenshots should be taken once it says the latter (the snapshot tool does).
+  FFT 4096, 8192 and 16384, mean difference within 0.3 dB, and the drawing stands out no more on
+  the canvas than in reality (excess contrast -0.6 to +0.1 dB). The old canvas: correlation as
+  low as 0.40 in the lows and a drawing that stood out 29 - 88 dB more than in reality.
+- **ArtFreq FX, once a pass has played:** the canvas is the real carve of the song that played.
+  On the dense test master: correlation 0.96 - 1.00 by band, mode and FFT size, mean within
+  0.25 dB, excess contrast within 2 dB (1.1 at 8192). On songs the stand-in was never tuned to (`--scenarios`): a bass track
+  (a kick and a sub, nothing above 200 Hz), the stand-in 20 dB quieter and a bass-heavy master,
+  correlation 0.92 - 1.00 (the bass track's empty highs: 0.92 between two floors), mean within
+  0.2 dB, excess within 0.4 dB. Carving the stand-in instead, as before (and as before any pass):
+  on the bass track +56 dB more contrast in the low mids and +44 in the highs than reality, on the
+  quiet mix +20, on the bass-heavy one +9.
 - **The screenshots in `docs/screenshots` and the website's are of the old canvas**: re-shoot them
   with this version (`ArtFreqSnapshot`), and they are accurate for the plug-in's output at the
-  default analyser settings (FFT 8192, -100 to 0 dBFS, log 20 Hz - 20 kHz). Until then the
-  guidance below for the old screenshots stands.
+  default analyser settings (FFT 8192, -100 to 0 dBFS, log 20 Hz - 20 kHz). ArtFreq FX's
+  screenshots carve the stand-in (the snapshot tool plays no song) except
+  `artfreq-fx-carve-your-track.png`, which carves a bass track that played: caption the others
+  "on a stand-in song". Until then the guidance below for the old screenshots stands.
 
 The rest of this page first gives the measurements of the new canvas, then the audit of the old
 one, which led to it.
@@ -47,7 +66,9 @@ test master, analysed by the lab's own code), per band: lows below 250 Hz, low m
 clipped to it). **r**: correlation of canvas and real over the band; **mean**: canvas - real (dB);
 **excess**: how much more the canvas makes of the drawing than reality (its contrast between
 drawn cells and the cells around them, against the real contrast; > 0: the canvas looks better
-than it is). At FFT 8192 (the default), old -> new:
+than it is). ArtFreq FX's new canvas is the one shown once a pass of the song has played; in
+brackets, before any pass (the stand-in, against the master: two different songs). At FFT 8192
+(the default), old -> new [before a pass]:
 
 | State | Band | r | mean dB | excess dB |
 | --- | --- | --- | --- | --- |
@@ -62,35 +83,68 @@ than it is). At FFT 8192 (the default), old -> new:
 | linear | lows | 0.64 -> 1.00 | 0.2 -> 0.0 | 71.4 -> 0.1 |
 | linear | low mids | 0.56 -> 1.00 | -1.5 -> 0.0 | 38.0 -> 0.0 |
 | linear | highs | 0.63 -> 1.00 | -2.4 -> 0.0 | 46.3 -> 0.0 |
-| fx-default | low mids | 0.82 -> 0.92 | -7.0 -> 1.6 | -4.6 -> 2.5 |
-| fx-default | highs | 0.61 -> 0.66 | -3.2 -> 1.1 | -1.7 -> 2.6 |
-| fx-carve | lows | 0.52 -> 0.90 | -8.3 -> 2.0 | 34.3 -> 1.4 |
-| fx-carve | low mids | 0.78 -> 0.89 | -7.1 -> 1.4 | -0.6 -> -0.3 |
-| fx-carve | highs | 0.77 -> 0.85 | -4.2 -> 1.0 | 4.1 -> 0.5 |
-| fx-carve-draw | lows | 0.33 -> 0.89 | -4.9 -> 1.6 | 6.6 -> 2.1 |
-| fx-carve-draw | low mids | 0.32 -> 0.65 | -9.6 -> 0.8 | 3.7 -> -1.3 |
-| fx-carve-draw | highs | 0.32 -> 0.76 | -5.8 -> 0.7 | -4.0 -> -2.5 |
-| fx-stencil | lows | 0.40 -> 0.98 | -15.1 -> 0.2 | -9.1 -> 4.0 |
-| fx-stencil | low mids | 0.68 -> 0.95 | -6.8 -> 0.6 | -18.6 -> 1.5 |
-| fx-stencil | highs | 0.82 -> 0.97 | -2.0 -> 0.4 | -0.9 -> 2.6 |
+| fx-default | low mids | 0.82 -> 0.99 [0.92] | -7.0 -> 0.2 [1.6] | -4.6 -> 0.0 [2.5] |
+| fx-default | highs | 0.61 -> 1.00 [0.66] | -3.2 -> 0.0 [1.1] | -1.7 -> 0.0 [2.6] |
+| fx-carve | lows | 0.52 -> 1.00 [0.90] | -8.3 -> 0.0 [2.0] | 34.3 -> 0.0 [1.4] |
+| fx-carve | low mids | 0.78 -> 1.00 [0.89] | -7.1 -> 0.0 [1.4] | -0.6 -> 0.0 [-0.3] |
+| fx-carve | highs | 0.77 -> 1.00 [0.85] | -4.2 -> 0.0 [1.0] | 4.1 -> 1.1 [0.5] |
+| fx-carve-draw | lows | 0.33 -> 0.98 [0.89] | -4.9 -> 0.1 [1.6] | 6.6 -> 0.0 [2.1] |
+| fx-carve-draw | low mids | 0.32 -> 0.97 [0.65] | -9.6 -> 0.0 [0.8] | 3.7 -> 0.0 [-1.3] |
+| fx-carve-draw | highs | 0.32 -> 1.00 [0.76] | -5.8 -> 0.0 [0.7] | -4.0 -> 0.1 [-2.5] |
+| fx-stencil | lows | 0.40 -> 0.99 [0.98] | -15.1 -> 0.0 [0.2] | -9.1 -> -0.2 [4.0] |
+| fx-stencil | low mids | 0.68 -> 1.00 [0.96] | -6.8 -> 0.1 [0.6] | -18.6 -> 0.1 [1.5] |
+| fx-stencil | highs | 0.82 -> 0.99 [0.97] | -2.0 -> -0.1 [0.4] | -0.9 -> 0.0 [2.6] |
 
-(The default drawings have nothing in the lows. For ArtFreq FX the remaining differences are the
-songs': the stand-in is one song, the test master another; their medians agree within 1 - 4 dB
-per band, and r is limited by the songs' own patterns, which differ.) At FFT 4096 and 16384 the
-same holds: ArtFreq r 0.95 - 1.00, |mean| within 0.2 dB, excess -0.6 to 0.1 dB; ArtFreq FX r 0.62 -
-0.98, |mean| within 2 dB, excess -2.7 to +4.0 dB. The editor's screenshot and the direct render
-agree to a median 0.0 - 0.1 dB.
+(The default drawings have nothing in the lows.) At FFT 4096 and 16384 the same holds: ArtFreq r
+0.95 - 1.00, |mean| within 0.3 dB, excess -0.6 to 0.1 dB; ArtFreq FX after a pass r 0.96 - 1.00,
+|mean| within 0.25 dB, excess -0.5 to +2.0 dB (fx-default's highs at 16384). The editor's screenshot and the direct render agree
+to a median 0.0 - 0.1 dB.
 
-**Verdict: no band where the new canvas looks clearly better than reality** (at most 4 dB more
-contrast, in ArtFreq FX's lows on a different song; ArtFreq none).
+**ArtFreq FX on other songs** (`ArtFreqTruthLab --scenarios`, the drawing BASS / MIDS / HIGH,
+Carve at -80 dB, FFT 8192; each song played through the processor, which kept it; the canvas as
+the editor renders it then): canvas against the real output, per band lows / low mids / highs:
 
-The quick estimate shown while dragging is close but not exact: ArtFreq correlation 0.76 - 0.98,
-excess contrast within 9 dB in the low mids and highs and in the lows with Smooth lows; on a
-linear scale's lows (a few rows) it leaves out a haze the sound has (excess up to 35 dB there).
-It is replaced by the measured picture as soon as the drawing stays still.
+| Song | r | mean dB | excess dB | the stand-in instead (excess) |
+| --- | --- | --- | --- | --- |
+| the stand-in itself | 0.995 / 0.996 / 0.997 | 0.1 / 0.0 / -0.1 | -0.2 / 0.0 / 0.0 | -0.3 / 0.0 / 0.0 |
+| a bass-heavy master | 0.996 / 0.996 / 0.998 | 0.1 / 0.0 / -0.1 | -0.2 / 0.0 / 0.0 | -2.7 / 8.6 / 9.2 |
+| a bass track (nothing above 200 Hz) | 0.996 / 0.990 / 0.921 | 0.1 / -0.2 / 0.0 | -0.4 / 0.0 / 0.0 | 3.2 / 56.2 / 44.4 |
+| the stand-in 20 dB quieter | 0.997 / 0.996 / 0.998 | 0.1 / 0.0 / 0.0 | -0.2 / 0.0 / 0.0 | -0.3 / 20.0 / 20.0 |
+| the same, Draw (sines on top) | 0.907 / 0.985 / 0.999 | 0.0 / 0.0 / 0.0 | 0.0 / 0.0 / 0.0 | -8.9 / -18.7 / -19.9 |
 
-Side by sides (old canvas | new canvas | real output at 8192, the other FFT sizes under them, the
-numbers at the foot) come out of the lab as `truth-<state>.png`.
+**Verdict: no band where the new canvas looks clearly better than reality**: ArtFreq none (at
+most 0.1 dB more contrast); ArtFreq FX, once a pass has played, at most 2 dB (1.1 at 8192), on
+every song tried. Before a pass, ArtFreq FX's canvas is a stand-in's and can promise far more than a given
+track delivers (above); it says so under the canvas.
+
+### The quick estimate (shown while the drawing or the sound changes)
+
+Where the drawing did not change near since the last measurement, it *is* that measurement (a
+word moved in a dense project, against the new measurement: lows r 0.93 -> 0.97, mean |dB| 5.3 ->
+1.9; ArtFreq FX's Carve 0.91 -> 0.97, 5.1 -> 1.7). Where it changed, and before the first
+measurement, a model; its numbers alone (truth lab, FFT 8192):
+
+- **ArtFreq FX** (it models the carver's bins, halo and band means and the analyser's lobe over
+  the song): r 0.90 - 0.98 by band and mode; in the lows mean within 1.7 dB, excess -0.9 to
+  +1.5 dB in the audited states (8 - 11 dB on the scenarios' low text, where the real carve is a
+  little less deep); elsewhere mean within 2.2 dB, and where it differs most it shows thin carves
+  fainter than they are (fx-carve's highs, fx-default's low mids: down to -23 dB, it promises
+  less).
+- **ArtFreq**: mids and highs r 0.88 - 0.98, mean within 3.4 dB, excess within 9 dB (the highs'
+  scan lines at Density 384 a little sharper than measured). The haze under shapes is drawn at
+  its measured level and in streaks (before, an even block 45 dB under the shape down to 20 Hz:
+  in the scenarios 13.6 dB brighter than real on average under the default drawing; now -0.3).
+  **The lows remain the weak spot**: low shapes are drawn blurred, with the comb's rising stripes
+  and skirt, but still stand out 6 - 17 dB more than in the real sound at FFT 4096 and 8192
+  (at 8192: rich 9.7, layers 10.4, the scenarios 6 - 14), up to 28 dB with Lows on Stripes, and on a linear
+  scale's few low rows 23 dB at 8192 and 35 dB at 16384 (it leaves out a haze the sound has
+  there). Before this version: 10 - 33 dB with Smooth lows. It is replaced by the measured
+  picture as soon as the drawing stays still, and the measured picture (above) is exact.
+
+Side by sides (old canvas | new canvas | real output at 8192, the other FFT sizes under them, and
+for ArtFreq FX the master going in and the canvas before any pass; the numbers at the foot) come
+out of the lab as `truth-<state>.png`; `--scenarios` writes `scenario-<name>.png` (measured | quick
+estimate | real, and their differences).
 
 ## The old canvas (0.5): the audit
 
@@ -284,6 +338,9 @@ ARTFREQ_SNAPSHOT_STATES=1 xvfb-run -a <0.5 build>/ArtFreqSnapshot before 2
 ARTFREQ_SNAPSHOT_STATES=1 xvfb-run -a build/ArtFreqSnapshot_artefacts/Release/ArtFreqSnapshot after 2
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab after truth --before before   # truth-<state>.png, metrics.txt
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --bench                        # the previews' cost
+xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --drag                         # ... per drag step
+xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --scenarios scenarios          # other songs, rates, tempos
+xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --scenarios standin --standin  # ArtFreq FX before a pass
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --marketing docs/marketing
 ```
 

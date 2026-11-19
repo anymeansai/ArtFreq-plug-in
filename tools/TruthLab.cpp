@@ -1327,7 +1327,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
             stripFfts.push_back (n);
 
     const auto stripPanels = static_cast<int> (stripFfts.size()) + (effect ? 2 : 0);
-    const auto tableH = f * 1.55f * 14.0f;
+    const auto tableH = f * 1.55f * (effect ? 22.0f : 14.0f);   // ArtFreq FX: a stand-in line under each
     const auto height = juce::roundToInt (f * 6.5f + ph + f * 3.2f + (stripPanels > 0 ? ph + f * 3.2f : 0.0f) + tableH);
 
     juce::Image sheet (juce::Image::RGB, width, height, true);

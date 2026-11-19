@@ -11,16 +11,18 @@
 //    highs show scan lines one pixel tall with dark gaps, and the lows are blurred and thick;
 //  - in time, each line's loudness is blurred by the analyser's window (fftSize samples);
 //  - the rising comb (Smooth lows) is drawn as a filled band at the brightness the analyser shows
-//    it (its energy spreads along its glide: about 3 dB darker per doubling of the FFT);
-//  - under a shape in the comb's band, the faint haze its gliding sines leave below it (45 dB
-//    under the shape: measured, 40 to 55);
+//    it (its energy spreads along its glide: about 3 dB darker per doubling of the FFT), each grid
+//    line with a lobe as wide as the sines glide through in a window and a skirt beyond it, and
+//    the rising stripes its sines make;
+//  - around a shape in the comb's band, the faint haze its gliding sines leave: below it, falling
+//    away with distance and in streaks, and beside it in time (as measured: see renderGeometry);
 //  - colours are absolute levels, dBFS at the output Level with the analyser's slope, over the
 //    analyser's range from Settings, as the measured preview and the live view colour them.
 //
-// What it leaves out, and only the measured preview shows: the comb's shimmer, the energy spilled
-// where shapes start and stop elsewhere, lines beating against each other. (Truth lab, against the
-// real output: correlation 0.76 - 0.98 by band, the drawing standing out at most 9 dB more than in
-// reality, but in the few rows of a linear scale's lows, where it leaves out a haze.)
+// What it leaves out, and only the measured preview shows: energy spilled where shapes start and
+// stop elsewhere, lines beating against each other; in the lows, low shapes still stand out 6 - 17
+// dB more than in the sound (docs/ACCURACY.md). So the canvas shows it only where the drawing
+// changed since the last measurement, and that measurement elsewhere (FastPreview.h).
 
 #include "core/ArtPlan.h"
 #include "dsp/SpectrumAnalysis.h"

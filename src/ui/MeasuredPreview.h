@@ -8,7 +8,8 @@
 // the carver really leaves in a hole. So, once the drawing and the settings have stayed the same
 // for a moment, one pass of the real output is rendered in the background with the same code as
 // playback and Bounce WAV (PassRenderer: the engine, Level, the safety clipper; ArtFreq FX: the
-// real carver over the stand-in song, Carve + Draw's halo, the sines, the latency taken out) and
+// real carver over the user's song as it came in during the last pass, dsp/SongCapture.h, or
+// before any pass the stand-in, Carve + Draw's halo, the sines, the latency taken out) and
 // analysed as a spectrogram analyser does (SpectrumAnalyser: Hann, the FFT size and levels from
 // Settings), one analysis per canvas pixel column at most. The canvas cross-fades to that
 // picture.

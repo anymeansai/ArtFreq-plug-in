@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -338,7 +339,7 @@ ARTFREQ_TEST (canvasRemembersItsMeasurementAcrossWindows)
             {
                 std::printf ("    %s, opened again: the measured preview after %.0f ms\n", variant == ArtFreqProcessor::Variant::effect ? "ArtFreq FX" : "ArtFreq",
                              took * 1000.0);
-                CHECK_LESS (took, 0.2);   // the first render waits 0.5 s after opening
+                CHECK_LESS (took, 0.45);   // a first render waits 0.5 s after opening, then 0.2 s more, then renders
             }
 
             editor->removeFromDesktop();
@@ -367,8 +368,9 @@ ARTFREQ_TEST (fastPreviewLeavesTheMessageThreadFree)
 
         processor.rebuildPlanIfNeeded();
 
-        for (const auto& [width, height] : { std::pair<int, int> { 1528, 924 }, { 3056, 1848 } })
+        for (const auto& size : { std::pair<int, int> { 1528, 924 }, { 3056, 1848 } })
         {
+            const auto width = size.first, height = size.second;
             ui::FastPreview fast (nullptr);
             const auto requestNow = [&]
             {
