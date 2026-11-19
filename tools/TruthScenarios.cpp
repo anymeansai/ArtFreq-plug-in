@@ -7,6 +7,7 @@
 // (what shows while dragging). Writes scenario-<name>.png (measured | fast | real, and the
 // differences) and scenarios.txt. First written by a review of the measured preview, to attack it.
 
+#include "DenseProject.h"
 #include "LicenseTestSupport.h"
 #include "Parameters.h"
 #include "PluginProcessor.h"
@@ -17,6 +18,7 @@
 #include "dsp/StandInSong.h"
 #include "ui/CanvasPlanImage.h"
 #include "ui/EffectPreview.h"
+#include "ui/FastPreview.h"
 #include "ui/MeasuredPreview.h"
 #include "ui/Theme.h"
 
@@ -556,7 +558,74 @@ bool run (const Scenario& sc, const juce::File& outDir)
              << " darker% " << fmt (f.darker10) << " excess " << fmt (f.excess) << "\n";
     }
 
+    // The swap: the drawing's first object moved a little (as a drag step does), and the fast
+    // preview of that, first as its model alone, then as the canvas shows it (the last
+    // measurement where the drawing did not change near, FastPreview::makePatch), each against
+    // the new drawing's measured preview (which is the real output: see MEASURED above).
+    if (! p.getDocument().objects.empty())
+    {
+        p.editDocument ([] (ArtDocument& d) { d.objects.front().startTime = juce::jlimit (0.0f, 0.9f, d.objects.front().startTime + 0.02f);
+                                              d.objects.front().endTime = juce::jlimit (0.1f, 1.0f, d.objects.front().endTime + 0.02f); });
+        p.rebuildPlanIfNeeded();
+        auto moved = ui::MeasureRequest::forProcessor (p, w, h);
+        const auto after = ui::MeasuredPreview::renderNow (moved);
+
+        ui::FastRequest fr;
+        fr.effect = sc.effect;
+        fr.plan = p.getCurrentPlan();
+        fr.model = model;
+        fr.width = w;
+        fr.height = h;
+
+        if (sc.effect)
+        {
+            fr.settings.mode = p.getEffectMode();
+            fr.settings.depthDb = moved.depthDb;
+            fr.settings.view = view;
+            fr.settings.sampleRate = moved.sampleRate;
+            fr.settings.passSeconds = moved.passSeconds;
+            fr.masks = p.getCurrentMasks();
+            fr.song = result->analysis;
+        }
+
+        ui::FastPreview modelOnly (nullptr), patched (nullptr);
+        const auto modelDb = dbOfImage (modelOnly.get (fr, true), view.floorDb, view.ceilingDb);
+        fr.measured = result->analysis;
+        fr.measuredRequest = request;
+        const auto patchedDb = dbOfImage (patched.get (fr, true), view.floorDb, view.ceilingDb);
+
+        if (after != nullptr)
+        {
+            const auto truth = dbOfAnalysis (*after->analysis, w, h);
+            const auto movedDrawing = drawingGrid (p, w, h);
+            line << "   after a drag step, against the new measurement:\n";
+
+            for (const auto& band : bands)
+            {
+                const auto a = compare (modelDb, truth, movedDrawing, scale, w, h, band, view.floorDb, view.ceilingDb);
+                const auto b = compare (patchedDb, truth, movedDrawing, scale, w, h, band, view.floorDb, view.ceilingDb);
+                line << "   " << juce::String (band.name).paddedRight (' ', 8) << "SWAP model r " << fmt (a.r, 3) << " |d| " << fmt (a.absMean)
+                     << " excess " << fmt (a.excess) << "   | shown r " << fmt (b.r, 3) << " |d| " << fmt (b.absMean) << " excess " << fmt (b.excess) << "\n";
+            }
+        }
+    }
+
     std::cout << line << std::flush;
+
+    // TRUTH_DUMP=1: the pictures as raw floats (dB, row by row, w x h), for analysis elsewhere.
+    if (juce::SystemStats::getEnvironmentVariable ("TRUTH_DUMP", {}).isNotEmpty())
+    {
+        const auto dump = [&] (const std::vector<float>& values, const juce::String& what)
+        {
+            outDir.getChildFile (sc.name + "-" + what + "-" + juce::String (w) + "x" + juce::String (h) + ".f32")
+                .replaceWithData (values.data(), values.size() * sizeof (float));
+        };
+
+        dump (measuredDb, "measured");
+        dump (fastDb, "fast");
+        dump (realDb, "real");
+        dump (drawing, "drawing");
+    }
     outDir.getChildFile ("scenarios.txt").appendText (line);
 
     // measured | fast | real, and the measured - real difference under them
@@ -680,6 +749,8 @@ std::vector<Scenario> scenarios()
                       [lowText] (ArtFreqProcessor& p) { lowText (p); setParameter (p, params::id::level, 0.0f); } });
     list.push_back ({ "i-32bars-60bpm", false, 48000.0, 512, 60.0, 1, Song::none, 1200, 560,
                       [dots] (ArtFreqProcessor& p) { dots (p); setParameter (p, params::id::length, 7.0f); } });
+    list.push_back ({ "i-dense", false, 48000.0, 512, 120.0, 1, Song::none, 1200, 560,
+                      [] (ArtFreqProcessor& p) { testutil::makeDenseProject (p); setParameter (p, params::id::density, 384.0f); } });
     list.push_back ({ "i-manual-tempo-90", false, 48000.0, 512, 120.0, 1, Song::none, 1200, 560,
                       [lowText] (ArtFreqProcessor& p) { lowText (p); setParameter (p, params::id::tempoSource, 1.0f); setParameter (p, params::id::bpm, 90.0f); } });
 
@@ -713,6 +784,10 @@ std::vector<Scenario> scenarios()
                           setParameter (p, params::id::length, 2.0f);
                           setParameter (p, params::id::analyserFft, 2.0f);
                       } });
+    list.push_back ({ "fx-dense-carvedraw", true, 48000.0, 512, 120.0, 1, Song::standIn, 1200, 560,
+                      [] (ArtFreqProcessor& p) { testutil::makeDenseProject (p); setParameter (p, params::id::mode, 1.0f); } });
+    list.push_back ({ "fx-dense-carve", true, 48000.0, 512, 120.0, 1, Song::standIn, 1200, 560,
+                      [] (ArtFreqProcessor& p) { testutil::makeDenseProject (p); setParameter (p, params::id::mode, 0.0f); } });
     list.push_back ({ "fx-carve-basssong", true, 48000.0, 512, 120.0, 1, Song::bassHeavy, 1200, 560, fx (0, -80.0f, lowText) });
     list.push_back ({ "fx-carve-bassonly", true, 48000.0, 512, 120.0, 1, Song::bassOnly, 1200, 560, fx (0, -80.0f, lowText) });
     list.push_back ({ "fx-carve-quietsong", true, 48000.0, 512, 120.0, 1, Song::quiet, 1200, 560, fx (0, -80.0f, lowText) });

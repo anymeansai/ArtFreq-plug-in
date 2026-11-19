@@ -13,6 +13,10 @@
 // the canvas on top as they move, so they follow the mouse exactly; only the picture under them
 // trails by a frame. Asked for a picture when it has none (the first paint), it makes it at once.
 //
+// Where the drawing has not changed near a column since the last measurement (MeasuredPreview.h)
+// the sound there is what was measured, so that column shows the measurement, not the model: the
+// picture changes only where the drawing does, and the swap to the measured preview is gentle.
+//
 // Nothing runs while nothing changes; the thread starts with the first picture asked for
 // asynchronously (an editor opened and closed at once starts none).
 
@@ -40,11 +44,11 @@ struct FastRequest
     std::shared_ptr<const MaskPlanSet> masks;          // ArtFreq FX
     std::shared_ptr<const MeasuredSpectrogram> song;   // ArtFreq FX: the song as last measured (null: the stand-in's texture)
 
-    // The last measured preview, when it was made with this request's analyser, length and size:
-    // its lows are shown where the drawing's lows are as they were (CanvasPlanImage::setMeasuredLows).
+    // The last measured preview and what it was of, when it was made with this request's scale,
+    // slope, FFT, rate, length and height: shown where the drawing did not change near since
+    // (makePatch), so the picture changes only where the drawing does.
     std::shared_ptr<const MeasuredSpectrogram> measured;
-    std::shared_ptr<const ArtPlan> measuredPlan;
-    float measuredGain = 1.0f;
+    MeasureRequest measuredRequest;
 
     int width = 0, height = 0;
 
@@ -76,11 +80,15 @@ private:
     void handleAsyncUpdate() override;
     juce::Image make (const FastRequest& request);
 
+    /** Where `request`'s picture may show its measurement (false: nowhere). */
+    static bool makePatch (const FastRequest& request, MeasuredPatch& patch);
+
     std::function<void()> onNewPicture;
 
     std::mutex makers;                     // the renderers below, used by one picture at a time
     CanvasPlanImage planImage;
     EffectPreviewImage effectImage;
+    MeasuredPatch patch;
 
     juce::CriticalSection lock;            // the hand-over
     FastRequest wanted;                    // the newest asked for, for the thread

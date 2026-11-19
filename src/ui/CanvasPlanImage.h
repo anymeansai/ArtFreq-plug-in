@@ -59,23 +59,39 @@ struct AnalyserModel
     bool operator!= (const AnalyserModel& other) const noexcept { return ! operator== (other); }
 };
 
+/** Where the fast preview shows the last measurement rather than its model (see FastPreview.h):
+    the columns of the picture the drawing did not change near since it was measured. Their sound
+    is exactly what was measured (moved by `shiftDb`: Level, or the drawing's loudness scaled as a
+    whole), so the picture there is the measured one, haze, blur and the comb's texture included. */
+struct MeasuredPatch
+{
+    const MeasuredSpectrogram* analysis = nullptr;  // its output levels, rows as the picture's
+    std::vector<float> weight;                      // per picture column: 1 the measurement, 0 the model, between: blended
+    float shiftDb = 0.0f;
+
+    /** Each picture pixel's level, blended: `modelDb` the model's, at pixel (x, y). */
+    float blend (float modelDb, int x, int y, int height) const noexcept;
+
+    /** Prepares the columns' frames for a picture `width` wide (call once before blend). */
+    void prepare (int width);
+
+private:
+    std::vector<int> frame0, frame1;
+    std::vector<float> fraction;
+};
+
 class CanvasPlanImage
 {
 public:
     /** The picture of `plan` (null: silence), `width` x `height` image pixels. Rebuilt only when
-        something changed; a change of Level or of the colours' range only recolours it. */
-    juce::Image get (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
+        something changed; a change of Level or of the colours' range only recolours it. With a
+        `patch`, the columns it covers show the measurement (always recoloured). */
+    juce::Image get (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height,
+                     const MeasuredPatch* patch = nullptr);
 
     /** Works out what get() would, without making the picture: the levels alone
         (getPixelDbBeforeLevel), for ArtFreq FX, which makes its own picture from them. */
     void prepareLevels (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
-
-    /** The last measured preview (null: none) and the plan and Level it was made with: where the
-        lows of the plan drawn are those of `plan` (the same lines, the same amplitudes up to one
-        factor), the picture shows the measurement there instead of a model, as it is exactly
-        what the analyser shows (see renderGeometry). Only an analysis made with the scale, slope,
-        FFT, rate, length and height of the pictures asked for may be given. */
-    void setMeasuredLows (std::shared_ptr<const MeasuredSpectrogram> analysis, std::shared_ptr<const ArtPlan> plan, float gain);
 
     /** Forgets the cached picture (the next get() rebuilds it). */
     void invalidate() noexcept { image = {}; geometryValid = false; }
@@ -112,16 +128,10 @@ public:
 private:
     void updateAmplitudes (const ArtPlan& plan, const AnalyserModel& model);
     void renderGeometry (const ArtPlan* plan, const AnalyserModel& model, int width, int height);
-    void colour (const AnalyserModel& model, int width, int height);
+    void colour (const AnalyserModel& model, int width, int height, const MeasuredPatch* patch);
     bool updateGeometry (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height);
 
     juce::Image image;
-
-    // The measured lows (setMeasuredLows)
-    std::shared_ptr<const MeasuredSpectrogram> measuredLows;
-    std::shared_ptr<const ArtPlan> measuredLowsPlan;
-    float measuredLowsGain = 1.0f;
-    bool measuredLowsChanged = false;
 
     // What the geometry (pixelDb before Level) was worked out for
     bool geometryValid = false;
@@ -132,6 +142,7 @@ private:
 
     // ... and the picture's colours
     AnalyserModel imageModel;
+    bool imagePatched = false;
     std::vector<float> geometryDb; // geometryWorkWidth x height, without Level (silence: -200)
     int geometryWorkWidth = 1;
     float levelDb = 0.0f;

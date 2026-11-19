@@ -4,6 +4,7 @@
 #include "Theme.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 
@@ -36,8 +37,45 @@ namespace
         show. Lobes fainter than the floor are left out anyway. */
     constexpr double minLobeReachBins = 4.0, maxLobeReachBins = 32.0, lobeReachRows = 24.0;
 
-    /** How far under a shape in the comb's band its haze lies (see renderGeometry). */
-    constexpr float combHazeDb = 45.0f;
+    /** The faint haze under a shape in the comb's band (see renderGeometry): how far under the
+        shape it lies, by how far below the shape's lowest edge, in octaves. Measured (the truth
+        lab's scenarios, the median below the default drawing at FFT 8192): 52 dB a quarter of an
+        octave down, 62 at half an octave, 70 at one, 77 from two on. */
+    float combHazeDropDb (float octaves) noexcept
+    {
+        constexpr float at[] { 46.0f, 52.0f, 62.0f, 66.0f, 70.0f, 73.5f, 77.0f };   // 0, 0.25, 0.5, 0.75, 1, 1.5, 2
+        constexpr float octave[] { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f };
+
+        if (octaves >= 2.0f)
+            return at[6];
+
+        auto i = 0;
+
+        while (i < 5 && octaves > octave[i + 1])
+            ++i;
+
+        const auto t = juce::jlimit (0.0f, 1.0f, (octaves - octave[i]) / (octave[i + 1] - octave[i]));
+        return at[i] + (at[i + 1] - at[i]) * t;
+    }
+
+    /** ... and its streaks: the haze is not even but streaks in time, here a fixed pattern of
+        them (+-12 dB, a new value every 25 ms of the pass, the same from one picture to the next,
+        so it does not shimmer while dragging). */
+    float hazeStreakDb (double seconds) noexcept
+    {
+        auto bits = static_cast<uint32_t> (static_cast<int64_t> (std::floor (seconds / 0.025)) & 0xffffffff);
+        bits ^= bits >> 16;
+        bits *= 0x7feb352du;
+        bits ^= bits >> 15;
+        bits *= 0x846ca68bu;
+        bits ^= bits >> 16;
+        return 24.0f * static_cast<float> (bits & 0xffff) / 65535.0f - 12.0f;
+    }
+
+    /** The comb's texture: its sines, combSpacingHz apart and gliding up together, show on an
+        analyser as stripes rising across the shape, about this many dB either way (the truth
+        lab: 6 to 8 dB between the 10th and 90th percentile inside low shapes). */
+    constexpr float combRippleDb = 3.5f;
 
     /** A box blur of `width` columns over `values` (zero beyond its ends), into `out`; `early`
         puts an even width's extra column before the centre rather than after it. */
@@ -119,15 +157,30 @@ float CanvasPlanImage::combBrightness (int fftSize) noexcept
     return std::sqrt (8192.0f / static_cast<float> (std::max (256, fftSize))) / combGain;
 }
 
-void CanvasPlanImage::setMeasuredLows (std::shared_ptr<const MeasuredSpectrogram> analysis, std::shared_ptr<const ArtPlan> plan, float gain)
+void MeasuredPatch::prepare (int width)
 {
-    if (analysis == measuredLows && plan == measuredLowsPlan && juce::exactlyEqual (gain, measuredLowsGain))
-        return;
+    frame0.resize (static_cast<size_t> (width));
+    frame1.resize (static_cast<size_t> (width));
+    fraction.resize (static_cast<size_t> (width));
 
-    measuredLows = std::move (analysis);
-    measuredLowsPlan = std::move (plan);
-    measuredLowsGain = gain;
-    measuredLowsChanged = true;
+    if (analysis != nullptr)
+        for (int x = 0; x < width; ++x)
+            MeasuredSpectrogram::columnPosition (x, width, analysis->frames, frame0[static_cast<size_t> (x)], frame1[static_cast<size_t> (x)],
+                                                 fraction[static_cast<size_t> (x)]);
+}
+
+float MeasuredPatch::blend (float modelDb, int x, int y, int height) const noexcept
+{
+    const auto w = weight[static_cast<size_t> (x)];
+
+    if (w <= 0.0f || analysis == nullptr)
+        return modelDb;
+
+    const auto row = juce::jlimit (0, analysis->rows - 1, static_cast<int> ((y + 0.5) * analysis->rows / height));
+    const auto a = analysis->outputDb (row, frame0[static_cast<size_t> (x)]);
+    const auto b = analysis->outputDb (row, frame1[static_cast<size_t> (x)]);
+    const auto measured = a + (b - a) * fraction[static_cast<size_t> (x)] + shiftDb;
+    return modelDb + (measured - modelDb) * w;
 }
 
 bool CanvasPlanImage::updateGeometry (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& model, int width, int height)
@@ -146,10 +199,8 @@ bool CanvasPlanImage::updateGeometry (const std::shared_ptr<const ArtPlan>& plan
                            && juce::exactlyEqual (geometryModel.sampleRate, model.sampleRate)
                            && juce::exactlyEqual (geometryModel.passSeconds, model.passSeconds);
 
-    if (sameGeometry && ! measuredLowsChanged)
+    if (sameGeometry)
         return false;
-
-    measuredLowsChanged = false;
 
     if (plan != nullptr && (amplitudesPlan != plan || amplitudesVersion != version
                             || ! juce::exactlyEqual (amplitudesPassSeconds, model.passSeconds)
@@ -189,7 +240,7 @@ void CanvasPlanImage::prepareLevels (const std::shared_ptr<const ArtPlan>& plan,
 }
 
 juce::Image CanvasPlanImage::get (const std::shared_ptr<const ArtPlan>& plan, const AnalyserModel& modelIn,
-                                  int width, int height)
+                                  int width, int height, const MeasuredPatch* patch)
 {
     width = juce::jmax (1, width);
     height = juce::jmax (1, height);
@@ -200,10 +251,12 @@ juce::Image CanvasPlanImage::get (const std::shared_ptr<const ArtPlan>& plan, co
 
     const auto rebuilt = updateGeometry (plan, model, width, height);
 
-    if (! rebuilt && image.isValid() && image.getWidth() == width && image.getHeight() == height && imageModel == model)
+    if (! rebuilt && patch == nullptr && ! imagePatched && image.isValid() && image.getWidth() == width && image.getHeight() == height
+        && imageModel == model)
         return image;
 
-    colour (model, width, height);
+    colour (model, width, height, patch);
+    imagePatched = patch != nullptr;
     imageModel = model;
     return image;
 }
@@ -224,13 +277,28 @@ void CanvasPlanImage::updateAmplitudes (const ArtPlan& plan, const AnalyserModel
     const auto combLines = juce::jlimit (0, numLines, plan.combLines);
     const auto comb = combBrightness (model.view.fftSize);
 
-    for (int column = 0; column < numColumns; ++column)
-    {
-        const auto* a = plan.amplitudes.data() + static_cast<size_t> (column) * static_cast<size_t> (numLines);
+    // The plan is column by column, the blur below runs along each line: turned round in tiles,
+    // so both sides stay in the cache (column by column, every write missed it: 1024 lines x 1024
+    // columns took 12 ms).
+    constexpr int tile = 64;
 
-        for (int line = 0; line < numLines; ++line)
-            amplitudes[static_cast<size_t> (line) * static_cast<size_t> (numColumns) + static_cast<size_t> (column)]
-                = line < combLines ? a[line] * comb : a[line];
+    for (int column0 = 0; column0 < numColumns; column0 += tile)
+    {
+        const auto columnEnd = std::min (numColumns, column0 + tile);
+
+        for (int line0 = 0; line0 < numLines; line0 += tile)
+        {
+            const auto lineEnd = std::min (numLines, line0 + tile);
+
+            for (int column = column0; column < columnEnd; ++column)
+            {
+                const auto* a = plan.amplitudes.data() + static_cast<size_t> (column) * static_cast<size_t> (numLines);
+
+                for (int line = line0; line < lineEnd; ++line)
+                    amplitudes[static_cast<size_t> (line) * static_cast<size_t> (numColumns) + static_cast<size_t> (column)]
+                        = line < combLines ? a[line] * comb : a[line];
+            }
+        }
     }
 
     // In time, the analyser's window averages the sound over fftSize samples: a sine's loudness
@@ -316,6 +384,13 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         int line, firstRow, lastRow;
     };
 
+    // The comb's sines glide (combSlope Hz a second) while the analyser's window looks at them:
+    // each is smeared over the Hz it glides through, so the comb's grid is drawn with a lobe
+    // that much wider (at 8192 points 1.8 times, at 16384 6 times: a soft fill, as measured).
+    const auto combGridLinesForReach = juce::jlimit (0, numLines, plan->combLines);
+    const auto glideInWindowHz = static_cast<double> (plan->combSlope) * model.view.fftSize / model.sampleRate;
+    const auto combWiden = std::sqrt (1.0 + std::pow (0.5 * glideInWindowHz / (2.0 * binHz), 2.0));
+
     std::vector<Reach> reaches;
     reaches.reserve (static_cast<size_t> (numLines));
     rowStart.assign (static_cast<size_t> (height) + 1, 0);
@@ -330,8 +405,9 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
 
         const auto hzPerRow = std::max (1.0e-6, rowHigh[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]
                                                   - rowLow[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]);
+        const auto widen = line < combGridLinesForReach ? combWiden : 1.0;
         const auto reachBins = juce::jlimit (minLobeReachBins, maxLobeReachBins, lobeReachRows * hzPerRow / binHz);
-        const auto reachHz = reachBins * binHz;
+        const auto reachHz = reachBins * binHz * widen;
         const auto first = juce::jmax (0, static_cast<int> (std::floor (rowAt (hz + reachHz))));
         const auto last = juce::jmin (height - 1, static_cast<int> (std::floor (rowAt (std::max (s.minHz * 0.5, hz - reachHz)))));
 
@@ -355,15 +431,26 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         const auto hz = static_cast<double> (plan->frequencies[static_cast<size_t> (r.line)]);
         const auto loudest = lineLoudest[static_cast<size_t> (r.line)];
 
+        const auto lobeHz = binHz * (r.line < combGridLinesForReach ? combWiden : 1.0);
+
         for (auto y = r.firstRow; y <= r.lastRow; ++y)
         {
             const auto outside = std::max (0.0, std::max (rowLow[static_cast<size_t> (y)] - hz, hz - rowHigh[static_cast<size_t> (y)]));
-            const auto weight = lobe (static_cast<float> (outside / binHz));
+            const auto weight = lobe (static_cast<float> (outside / lobeHz));
 
             if (weight * loudest > faintest)
                 contributions[static_cast<size_t> (fill[static_cast<size_t> (y)]++)] = { r.line, weight };
         }
     }
+
+    constexpr int rippleSteps = 64;
+    std::array<float, rippleSteps> ripple {};
+
+    for (int i = 0; i < rippleSteps; ++i)
+        ripple[static_cast<size_t> (i)] = std::pow (10.0f, combRippleDb / 20.0f * std::cos (juce::MathConstants<float>::twoPi * static_cast<float> (i) / rippleSteps));
+
+    const auto combGlideHz = plan->combLines > 1 ? (plan->combLines - 1) * static_cast<double> (plan->combGridHz) + 2.0 * plan->combEdgeHz : 1.0;
+    const auto combBaseHz = static_cast<double> (plan->combGridLowHz) - plan->combEdgeHz;
 
     // Pixels: each row shows the loudest of what reaches it (an analyser's row shows the loudest
     // bin inside it).
@@ -417,6 +504,27 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         auto* rowDb = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
         const auto offset = rowOffset[static_cast<size_t> (y)];
 
+        // The comb's stripes: sine j is at base + (j L / sines + slope t) mod L, so at this
+        // row's Hz the phase among them moves on by slope t (the measured preview starts the
+        // pass at t = 0, as here).
+        if (combGridLines > 0 && plan->combSines > 0)
+        {
+            const auto rowHz = 0.5 * (rowLow[static_cast<size_t> (y)] + rowHigh[static_cast<size_t> (y)]);
+            const auto spacing = combGlideHz / plan->combSines;
+            const auto atStart = (rowHz - combBaseHz) / spacing;
+            const auto perColumn = static_cast<double> (plan->combSlope) * model.passSeconds / width / spacing;
+
+            for (int x = 0; x < width; ++x)
+            {
+                if (combAcc[x] <= 0.0f)
+                    continue;
+
+                const auto phase = atStart - perColumn * (x + 0.5);
+                const auto index = static_cast<int> ((phase - std::floor (phase)) * static_cast<double> (rippleSteps)) & (rippleSteps - 1);
+                combAcc[x] *= ripple[static_cast<size_t> (index)];
+            }
+        }
+
         for (int x = 0; x < width; ++x)
         {
             const auto value = std::max (acc[x], combAcc[x]);
@@ -433,32 +541,44 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
     }
 
     // The haze under the comb's shapes: its sines glide up into a shape from below and spill
-    // energy as they enter it, so an analyser shows a dim fill under a bright shape in the lows,
-    // down to the bottom of the comb's band (measured: 40 to 55 dB under the shape at 8192). Each
-    // column of the band, from the top down, is lit at least combHazeDb under the brightest of
-    // the band above it.
+    // energy as they enter it, so an analyser shows a faint haze under a bright shape in the
+    // lows, falling away below the shape (combHazeDropDb: about 52 dB under it a quarter of an
+    // octave down, 77 from two octaves on) and in streaks (hazeStreakDb). Each column of the
+    // band is followed from the top down: the brightest of the comb above, and the lowest row
+    // where it was about that bright (the shape's lowest edge).
     if (combGridLines > 0)
     {
         const auto combTopHz = static_cast<double> (plan->frequencies[static_cast<size_t> (combGridLines - 1)]) + 0.5 * plan->combGridHz;
         const auto topRow = juce::jlimit (0, height, static_cast<int> (std::floor (rowAt (combTopHz))));
-        std::vector<float> brightest (static_cast<size_t> (width), silentDb);
+        std::vector<float> brightest (static_cast<size_t> (width), silentDb), edgeOctave (static_cast<size_t> (width), 0.0f), streak (static_cast<size_t> (width));
+
+        for (int x = 0; x < width; ++x)
+            streak[static_cast<size_t> (x)] = hazeStreakDb ((x + 0.5) / width * model.passSeconds);
 
         for (int y = topRow; y < height; ++y)
         {
             auto* rowDb = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
             const auto* combRow = combDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
+            const auto octave = static_cast<float> (std::log2 (std::max (1.0, 0.5 * (rowLow[static_cast<size_t> (y)] + rowHigh[static_cast<size_t> (y)]))));
 
             for (int x = 0; x < width; ++x)
             {
                 auto& above = brightest[static_cast<size_t> (x)];
-                rowDb[x] = std::max (rowDb[x], above - combHazeDb);
-                above = std::max (above, combRow[x]);
+
+                if (above > silentDb + 1.0f)
+                    rowDb[x] = std::max (rowDb[x], above - combHazeDropDb (edgeOctave[static_cast<size_t> (x)] - octave) + streak[static_cast<size_t> (x)]);
+
+                if (combRow[x] > above - 6.0f)
+                {
+                    above = std::max (above, combRow[x]);
+                    edgeOctave[static_cast<size_t> (x)] = octave;
+                }
             }
         }
     }
 }
 
-void CanvasPlanImage::colour (const AnalyserModel& model, int width, int height)
+void CanvasPlanImage::colour (const AnalyserModel& model, int width, int height, const MeasuredPatch* patch)
 {
     // Opaque RGB: drawn with a straight copy rather than blended pixel by pixel. A picture still
     // held elsewhere (the canvas draws the last one while this one is made on another thread) is
@@ -484,6 +604,22 @@ void CanvasPlanImage::colour (const AnalyserModel& model, int width, int height)
     for (int y = 0; y < height; ++y)
     {
         const auto* row = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (work);
+
+        if (patch != nullptr)
+        {
+            // The model where the drawing changed, the measurement elsewhere, blended between.
+            for (int x = 0; x < width; ++x)
+            {
+                const auto b = static_cast<size_t> (stretchBefore[static_cast<size_t> (x)]);
+                const auto d0 = row[b], d1 = row[std::min (static_cast<size_t> (work - 1), b + 1)];
+                const auto level = patch->blend (d0 + (d1 - d0) * stretchFraction[static_cast<size_t> (x)] + gainDb, x, y, height);
+                const auto index = (level - floorDb) * perDb + 0.5f;
+                rowPixels[static_cast<size_t> (x)] = table[static_cast<size_t> (index <= 0.0f ? 0 : index >= 255.0f ? 255 : static_cast<int> (index))];
+            }
+
+            writePixelRow (data, y, rowPixels.data(), width);
+            continue;
+        }
 
         for (int x = 0; x < work; ++x)
             rowIndex[static_cast<size_t> (x)] = row[x] * perDb + from;

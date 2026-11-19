@@ -21,6 +21,7 @@
 // shows them), added to the stand-in as powers, as in an analyser's cell. Colours: the analyser's
 // range from Settings, as everywhere. Nothing drawn (or everything hidden) carves nothing.
 
+#include "CanvasPlanImage.h"
 #include "MeasuredPreview.h"
 #include "Parameters.h"
 #include "core/MaskPlan.h"
@@ -63,7 +64,8 @@ public:
         stretched across the width. Rebuilt only when something changed; otherwise the cached image
         is returned. */
     juce::Image get (const std::vector<float>& sinesDb, float levelDb, uint64_t sinesKey, const Settings& settings,
-                     const std::shared_ptr<const MaskPlanSet>& masks, const FrequencyScale& scale, int width, int height);
+                     const std::shared_ptr<const MaskPlanSet>& masks, const FrequencyScale& scale, int width, int height,
+                     const MeasuredPatch* patch = nullptr);
 
     /** The stand-in as the measured preview analysed it (its `input`), to draw instead of its
         texture; null to go back to the texture. The caller passes only an analysis made with the
@@ -85,6 +87,7 @@ private:
     Settings imageSettings;
     FrequencyScale imageScale;
     std::shared_ptr<const MaskPlanSet> imageMasks;
+    bool imagePatched = false;
 
     // The stand-in at the picture's size, dB
     std::vector<float> song;
@@ -93,6 +96,7 @@ private:
     bool songMeasured = false;
     std::shared_ptr<const MeasuredSpectrogram> measuredSong;
     bool songDirty = true;
+    uint64_t songVersion = 0;      // counts the songs made (the carve reads the song)
 
     // What carving leaves of the song, as dB to add, at the picture's size
     std::vector<float> carve;
@@ -102,8 +106,12 @@ private:
     FrequencyScale carveScale;
     int carveWidth = 0, carveHeight = 0;
     bool carveValid = false;
+    uint64_t carveSongVersion = 0;
 
-    std::vector<double> runningSums;
+    std::vector<double> runningSums, binEdgeRows;
+    std::vector<float> songBinPower;   // the song's power at the analyser's bins in the lows, [column * bins + bin]
+    uint64_t songBinVersion = 0;
+    int songBinWidth = 0, songBinHeight = 0, songBinCount = 0;
     std::vector<float> carveScratch, rowLevels;
     std::vector<int> stretchBefore;
     std::vector<float> stretchFraction;

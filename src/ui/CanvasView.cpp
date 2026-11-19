@@ -641,10 +641,12 @@ struct CanvasView::Impl
             request.song = fastSong;
         }
 
-        // The last measurement's lows, where the drawing's lows are as they were.
-        request.measured = fastLows;
-        request.measuredPlan = fastLows != nullptr ? measuredRequest.plan : nullptr;
-        request.measuredGain = measuredRequest.outputGain;
+        // The last measurement, shown where the drawing did not change near since.
+        request.measured = fastMeasured;
+
+        if (fastMeasured != nullptr)
+            request.measuredRequest = measuredRequest;
+
         return request;
     }
 
@@ -777,9 +779,10 @@ struct CanvasView::Impl
         return measuredAnalysis != nullptr && canRelevel (*measuredAnalysis, measuredRequest, sameSize);
     }
 
-    /** The fast preview borrows from the last measurement made with the scale, slope, FFT, rate,
-        length and height it draws now: ArtFreq FX the song as analysed (instead of the stand-in's
-        texture), ArtFreq the lows (where the drawing's lows are as they were). */
+    /** The fast preview borrows from the last measurement made with the scale, slope, FFT, rate
+        and length it draws now: ArtFreq FX the song as analysed (instead of the stand-in's
+        texture), and, at the same height, the picture itself where the drawing did not change
+        near since (FastPreview::makePatch). */
     void updateMeasuredSong()
     {
         const auto& r = measuredRequest;
@@ -787,10 +790,10 @@ struct CanvasView::Impl
                              && juce::exactlyEqual (r.sampleRate, sampleRate) && juce::exactlyEqual (r.passSeconds, passSeconds)
                              && juce::exactlyEqual (r.slopeDbPerOctave, slope);
 
+        fastMeasured = compatible && r.height == pictureHeight ? measuredAnalysis : nullptr;
+
         if (processor.isEffect())
             fastSong = compatible ? measuredAnalysis : nullptr;
-        else
-            fastLows = compatible ? measuredAnalysis : nullptr;
     }
 
     void startFade (Shown target, bool fromFast, juce::Image fromImage, double seconds)
@@ -1321,7 +1324,7 @@ struct CanvasView::Impl
 
     // The fast preview, made on its own thread; the canvas repaints when a new picture is in.
     FastPreview fast { [this] { owner.repaint (area().getSmallestIntegerContainer()); } };
-    std::shared_ptr<const MeasuredSpectrogram> fastSong, fastLows;   // see updateMeasuredSong
+    std::shared_ptr<const MeasuredSpectrogram> fastSong, fastMeasured;   // see updateMeasuredSong
     bool fastAtOnce = false;              // the snapshot tool: made while painting
     std::shared_ptr<const ArtPlan> plan;  // kept alive while it is shown
     FrequencyScale scale;
