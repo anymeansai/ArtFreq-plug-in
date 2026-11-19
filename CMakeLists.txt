@@ -268,6 +268,32 @@ if(ARTFREQ_BUILD_TOOLS)
         PUBLIC
             ArtFreqBuildFlags)
 
+    # The demo reel: films the real editor while the real processor plays (the instrument, and
+    # ArtFreq FX carving a synthetic song), offline and frame by frame, and encodes the short
+    # clips for the website with ffmpeg (tools/DemoReel.cpp, docs/marketing/README.md). Built
+    # only when asked for (--target ArtFreqDemoReel): it needs ffmpeg, and CI has no use for it.
+    juce_add_console_app(ArtFreqDemoReel PRODUCT_NAME "ArtFreqDemoReel")
+    set_target_properties(ArtFreqDemoReel PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources(ArtFreqDemoReel PRIVATE
+        tools/DemoReel.cpp
+        ${ARTFREQ_PLUGIN_SOURCES}
+        ${ARTFREQ_CORE_SOURCES}
+        ${ARTFREQ_DSP_SOURCES}
+        ${ARTFREQ_UI_SOURCES})
+    # tests/ for LicenseTestSupport.h: every instance is activated against a fake server, so the
+    # licence screen never shows and nothing reaches the real one.
+    target_include_directories(ArtFreqDemoReel PRIVATE src tests)
+    target_compile_definitions(ArtFreqDemoReel PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        ${ARTFREQ_STANDALONE_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(ArtFreqDemoReel
+        PRIVATE
+            ArtFreqAssets
+            ${ARTFREQ_JUCE_MODULES}
+        PUBLIC
+            ArtFreqBuildFlags)
+
     # The emblem lab: renders the emblem (src/ui/Emblem.h) and the header lockup to PNG files.
     juce_add_console_app(ArtFreqEmblemLab PRODUCT_NAME "ArtFreqEmblemLab")
     target_sources(ArtFreqEmblemLab PRIVATE
