@@ -129,6 +129,11 @@
 // and settings while locked, and that the settings with the card fit the window.
 //
 // On Linux run it under a virtual display:  xvfb-run -a ArtFreqSnapshot out
+//
+// With ARTFREQ_SNAPSHOT_STATES=1 in the environment it also writes, beside each PNG, the
+// processor's state (<name>.state) and where the canvas's drawing lies in the PNG (<name>.json),
+// for ArtFreqTruthLab, which plays each state through the processor and puts what an analyser
+// shows of the real output beside the canvas.
 
 #include "LicenseTestSupport.h"
 #include "Parameters.h"
@@ -218,6 +223,38 @@ void setWindowScale (artfreq::ArtFreqEditor& editor, float scale)
 {
     editor.setSize (juce::roundToInt (static_cast<float> (editor.getBaseWidth()) * scale),
                     juce::roundToInt (static_cast<float> (editor.getBaseHeight()) * scale));
+}
+
+/** With the environment variable ARTFREQ_SNAPSHOT_STATES set (to anything), each PNG gets two
+    files beside it: <name>.state, the processor's state as a host saves it, and <name>.json, the
+    plug-in and where the canvas's drawing lies in the PNG (image pixels). ArtFreqTruthLab plays
+    those states through the processor and compares what an analyser shows with the canvas. */
+void saveStateBeside (const juce::File& png, artfreq::ArtFreqProcessor& processor, juce::Component& editor, float scale)
+{
+    if (juce::SystemStats::getEnvironmentVariable ("ARTFREQ_SNAPSHOT_STATES", {}).isEmpty())
+        return;
+
+    juce::MemoryBlock state;
+    processor.getStateInformation (state);
+    png.withFileExtension ("state").replaceWithData (state.getData(), state.getSize());
+
+    auto* object = new juce::DynamicObject();
+    object->setProperty ("plugin", processor.isEffect() ? "effect" : "instrument");
+    object->setProperty ("pixelScale", scale);
+
+    if (auto* canvas = dynamic_cast<artfreq::ui::CanvasView*> (findComponentWithId (editor, "canvas")))
+    {
+        if (canvas->isShowing() || canvas->isVisible())
+        {
+            const auto area = editor.getLocalArea (canvas, canvas->getDrawingArea()) * scale;
+            object->setProperty ("plotX", area.getX());
+            object->setProperty ("plotY", area.getY());
+            object->setProperty ("plotWidth", area.getWidth());
+            object->setProperty ("plotHeight", area.getHeight());
+        }
+    }
+
+    png.withFileExtension ("json").replaceWithText (juce::JSON::toString (juce::var (object)));
 }
 
 /** A stand-in for an imported picture: a shaded disc and a frame on a white background, the
@@ -1596,6 +1633,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
             std::cout << file.getFullPathName() << std::endl;
         else
             check (false, "write " + file.getFullPathName());
+
+        saveStateBeside (file, processor, *editor, scale);
     };
 
     pump (150);
@@ -3511,6 +3550,8 @@ int main (int argc, char* argv[])
                 std::cout << file.getFullPathName() << std::endl;
             else
                 check (false, "write " + file.getFullPathName());
+
+            saveStateBeside (file, processor, *editor, scale);
         };
 
         auto* content = findComponentWithId (*editor, "content");

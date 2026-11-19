@@ -250,6 +250,29 @@ if(ARTFREQ_BUILD_TOOLS)
         PUBLIC
             ArtFreqBuildFlags)
 
+    # The truth lab: plays the screenshots' states (ArtFreqSnapshot with ARTFREQ_SNAPSHOT_STATES=1)
+    # through the activated processor and puts what an analyser shows of the real output beside
+    # each screenshot's canvas, with numbers per band; also renders real-output images for the
+    # website (tools/TruthLab.cpp).
+    juce_add_console_app(ArtFreqTruthLab PRODUCT_NAME "ArtFreqTruthLab")
+    target_sources(ArtFreqTruthLab PRIVATE
+        tools/TruthLab.cpp
+        ${ARTFREQ_PLUGIN_SOURCES}
+        ${ARTFREQ_CORE_SOURCES}
+        ${ARTFREQ_DSP_SOURCES}
+        ${ARTFREQ_UI_SOURCES})
+    target_include_directories(ArtFreqTruthLab PRIVATE src tests)
+    target_compile_definitions(ArtFreqTruthLab PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        ${ARTFREQ_STANDALONE_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(ArtFreqTruthLab
+        PRIVATE
+            ArtFreqAssets
+            ${ARTFREQ_JUCE_MODULES}
+        PUBLIC
+            ArtFreqBuildFlags)
+
     # The carving lab: plays songs through a spectral carving engine with ArtFreq drawings and
     # measures what an analyser shows (tools/CarveLab.cpp). Needs no processor or editor.
     juce_add_console_app(ArtFreqCarveLab PRODUCT_NAME "ArtFreqCarveLab")
