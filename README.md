@@ -325,6 +325,10 @@ or run `build/ArtFreqTests_artefacts/Release/ArtFreqTests [filter]` to run only 
 
 The canvas is a preview. `ArtFreqTruthLab <snapshot-folder> <out>` plays each screenshot's saved state through the real (activated, test-licensed) plug-in, ArtFreq FX on a dense synthetic song, analyses the output as an FFT spectrogram such as MiniMeters' does (Hann, FFT 4096, 8192 and 16384, log scale; MiniMeters' own settings are assumed, not measured) and puts it beside the screenshot's canvas, with numbers per band (`metrics.txt`). `ArtFreqTruthLab --marketing <out>` renders real-output images for the website. The findings, and what they mean for the screenshots: [docs/ACCURACY.md](docs/ACCURACY.md).
 
+### Demo reel
+
+`ArtFreqDemoReel <folder> [--work <folder>] [--clips artfreq,fx,fx-carve-draw]` makes the short clips for the website in `docs/marketing/` (MP4 with sound, a looping GIF and a poster for each; see `docs/marketing/README.md`): it films the real editor while the real processor plays, offline and frame by frame, with a song of its own for ArtFreq FX, and checks that the live view in every frame shows the sound of that frame. It is built only when asked for (`cmake --build build --target ArtFreqDemoReel`) and needs ffmpeg and ffprobe; on Linux run it under a virtual display (`xvfb-run -a -s "-screen 0 2400x1600x24" ArtFreqDemoReel docs/marketing`).
+
 ### Continuous integration
 
 Every push builds both platforms on GitHub Actions (`.github/workflows/build.yml`). Nothing there reaches the licence server or activates anything: the tests and snapshots use a fake server, and pluginval validates the plug-ins as they are on a computer that is not activated (the instrument silent, ArtFreq FX passing audio through):
@@ -346,7 +350,7 @@ When every build succeeds, all the downloads are published as the release `v<ver
 | `src/license/` | Activation and the signed licence, shared with the other AnyMeans plug-ins (see `src/license/README.md`). The activation screen and the Licence card are `src/ui/Licensing.*`. |
 | `src/plugin/` | One entry point per plug-in target (`createPluginFilter`): the only code that differs between ArtFreq and ArtFreq FX. |
 | `tests/` | `ArtFreqTests`. |
-| `tools/` | The interface snapshot tool, the lows lab (`ArtFreqLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage) the carving lab (`ArtFreqCarveLab`: plays songs through a carving engine with test drawings and measures what an analyser shows) and the accuracy check (`ArtFreqTruthLab`: the screenshots' states played through the real plug-in and compared with their canvas). |
+| `tools/` | The interface snapshot tool, the lows lab (`ArtFreqLab`: renders test drawings with Smooth or Stripes lows, analyses them like a spectrogram at several FFT sizes and measures fill, fidelity, flicker and leakage), the carving lab (`ArtFreqCarveLab`: plays songs through a carving engine with test drawings and measures what an analyser shows), the accuracy check (`ArtFreqTruthLab`: the screenshots' states played through the real plug-in and compared with their canvas) and the demo reel (`ArtFreqDemoReel`: the clips in `docs/marketing/`). |
 | `assets/fonts/` | The embedded fonts and their licences. |
 | `installer/macos/` | The macOS installer (both plug-ins): `build-pkg.sh`, its distribution file, pages and postinstall script. |
 | `installer/windows/` | `How to install.txt`, which goes into the Windows zip (there is no Windows installer yet). |
