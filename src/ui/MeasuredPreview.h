@@ -30,8 +30,19 @@
 #include <memory>
 #include <vector>
 
+namespace artfreq
+{
+class ArtFreqProcessor;
+}
+
 namespace artfreq::ui
 {
+
+/** Level, Depth and the pass's length as the previews use them: a host's tempo that wobbles in its
+    last digits, or automation moving Level by a hair, does not start a new render. */
+float previewGain (float gain) noexcept;          // to a quarter dB
+float previewDepthDb (float depthDb) noexcept;    // to half a dB
+double previewSeconds (double seconds) noexcept;  // to a millisecond
 
 /** Everything the measured preview depends on: what is heard, and how it is analysed and drawn. */
 struct MeasureRequest
@@ -60,6 +71,10 @@ struct MeasureRequest
 
     /** Whether there is anything to render (a picture size, a plan or masks). */
     bool isValid() const noexcept;
+
+    /** What the canvas asks for a picture of `width` x `height` pixels for the processor's drawing
+        and settings now (the snapshot tool and the truth lab ask the same). */
+    static MeasureRequest forProcessor (const ArtFreqProcessor& processor, int width, int height);
 };
 
 /** One analysed pass: `frames` analyses evenly across it (frame k centred at (k + 0.5) / frames of

@@ -166,6 +166,31 @@ SettingsPanel::SettingsPanel (ArtFreqProcessor& p)
     slopeAttachment = std::make_unique<ChoiceSegments> (slope, *state.getParameter (params::id::slope));
     addAndMakeVisible (slope);
 
+    // How the analyser draws: the canvas shows the sound as an analyser with this FFT size and
+    // these colours shows it (the lows' blur, the scan lines, the colours).
+    fftSize.setTitle ("Analyser FFT size");
+    fftSize.setComponentID ("analyser-fft");
+    fftAttachment = std::make_unique<ChoiceSegments> (fftSize, *state.getParameter (params::id::analyserFft));
+    addAndMakeVisible (fftSize);
+
+    NumberField::Options dbOptions;
+    dbOptions.format = [] (double v) { return formatNumber (v, 0); };
+    dbOptions.dragUnitsPerPixel = 0.5;
+    dbOptions.snap = 1.0;
+    dbOptions.editOnSingleClick = true;
+    dbOptions.unit = "dB";
+
+    floorDb = std::make_unique<NumberField> (*state.getParameter (params::id::analyserFloor), dbOptions);
+    ceilingDb = std::make_unique<NumberField> (*state.getParameter (params::id::analyserCeiling), dbOptions);
+    floorDb->setTitle ("Analyser floor");
+    ceilingDb->setTitle ("Analyser top");
+    floorDb->setComponentID ("analyser-floor");
+    ceilingDb->setComponentID ("analyser-top");
+    floorDb->setTooltip ("The level your analyser shows as its darkest colour (dBFS): drag, or click to type");
+    ceilingDb->setTooltip ("The level your analyser shows as its brightest colour (dBFS): drag, or click to type");
+    addAndMakeVisible (*floorDb);
+    addAndMakeVisible (*ceilingDb);
+
     windowSize.setTitle ("Window size");
     windowSize.setComponentID ("window-size");
     windowSize.onChange = [this] (int index)
@@ -364,10 +389,15 @@ void SettingsPanel::paint (juce::Graphics& g)
         g.drawText (row.label, row.x, row.y, labelWidth, metrics::controlHeight, juce::Justification::centredLeft, false);
     }
 
+    // The hairline between the two columns.
+    drawVerticalDivider (g, columnDividerX, (effect ? effectTitleRowHeight + 14 : titleRowHeight + 18), columnsBottom);
+
+    if (! windowCaptionArea.isEmpty())
+        drawCaps (g, "Window", windowCaptionArea, juce::Justification::centredRight, theme::textDim);
+
     if (effect)
     {
-        // The hairline between the two columns, and what the timing rows say in words.
-        drawVerticalDivider (g, columnDividerX, effectTitleRowHeight + 14, columnsBottom);
+        // What the timing rows say in words.
         wrappedText (midiNoteText(), static_cast<float> (midiNoteArea.getWidth())).draw (g, midiNoteArea.toFloat());
 
         g.setFont (fonts::ui (12.0f));
@@ -379,6 +409,7 @@ void SettingsPanel::paint (juce::Graphics& g)
 
     g.setColour (theme::textFaint);
     g.drawText (dash(), rangeDashArea, juce::Justification::centred, false);
+    g.drawText (dash(), levelsDashArea, juce::Justification::centred, false);
 
     g.setFont (fonts::ui (theme::labelSize, fonts::UiWeight::medium));
     g.drawText ("dB/oct", slopeUnitArea, juce::Justification::centredLeft, false);
@@ -401,10 +432,10 @@ void SettingsPanel::paint (juce::Graphics& g)
         confirmText.append ("Back to the default drawing.", fonts::ui (12.0f), theme::textDim);
     }
 
-    // (ArtFreq FX's narrower column: the line has the room up to the button it describes.)
+    // (The narrow column: the line has the room up to the button it describes.)
     auto confirmArea = confirmTextArea;
 
-    if (effect && ! confirmingReset)
+    if (! confirmingReset)
         confirmArea.setRight (resetButton.getX() - 12);
 
     const auto layout = wrappedText (confirmText, static_cast<float> (confirmArea.getWidth()));
@@ -414,9 +445,44 @@ void SettingsPanel::paint (juce::Graphics& g)
 
 juce::AttributedString SettingsPanel::noteText()
 {
-    return plainText ("MiniMeters: Log, 20 Hz " + dash() + " 20 kHz. Set Slope to match the Slope setting "
-                      "of your analyser.",
+    // Short: in ArtFreq FX's window it has two lines. The help says what the settings do.
+    return plainText ("As your analyser is set. MiniMeters: Log, 20 Hz " + dash() + " 20 kHz.",
                       fonts::ui (12.0f), theme::textFaint, 2.0f);
+}
+
+/** The analyser's rows (Scale, Range, Slope, FFT, Levels) from `y`, in a column at `x`; returns the
+    y under them. */
+int SettingsPanel::layoutAnalyser (int x, int y, int controlWidth, int gap)
+{
+    const auto h = metrics::controlHeight;
+    const auto controlX = x + labelWidth;
+
+    rows.push_back ({ "Scale", y, x });
+    scale.setBounds (controlX, y, controlWidth, h);
+    y += h + gap;
+
+    rows.push_back ({ "Range", y, x });
+    const auto fieldWidth = (controlWidth - 24) / 2;
+    lowHz->setBounds (controlX, y, fieldWidth, h);
+    highHz->setBounds (controlX + controlWidth - fieldWidth, y, fieldWidth, h);
+    rangeDashArea = { lowHz->getRight(), y, highHz->getX() - lowHz->getRight(), h };
+    y += h + gap;
+
+    rows.push_back ({ "Slope", y, x });
+    const auto unitWidth = 48;
+    slope.setBounds (controlX, y, controlWidth - unitWidth, h);
+    slopeUnitArea = { slope.getRight() + 10, y, unitWidth - 10, h };
+    y += h + gap;
+
+    rows.push_back ({ "FFT", y, x });
+    fftSize.setBounds (controlX, y, controlWidth, h);
+    y += h + gap;
+
+    rows.push_back ({ "Levels", y, x });
+    floorDb->setBounds (controlX, y, fieldWidth, h);
+    ceilingDb->setBounds (controlX + controlWidth - fieldWidth, y, fieldWidth, h);
+    levelsDashArea = { floorDb->getRight(), y, ceilingDb->getX() - floorDb->getRight(), h };
+    return y + h;
 }
 
 juce::AttributedString SettingsPanel::midiNoteText()
@@ -426,85 +492,90 @@ juce::AttributedString SettingsPanel::midiNoteText()
                       fonts::ui (12.0f), theme::textFaint, 2.0f);
 }
 
-/** ArtFreq FX: two columns. Left, the analyser match and the window; right, how it plays
-    (Trigger, Start, Tempo) and the drawing. */
-void SettingsPanel::layoutEffect()
+/** Two columns. Left, the analyser match; right, ArtFreq FX's timing (which its small window has
+    no bar for) or the instrument's window size, then the drawing; across the foot, the licence.
+    ArtFreq FX's window size sits in the title row: its window is too small for a third row of
+    sections. */
+void SettingsPanel::resized()
 {
-    placeCloseButton (closeButton, getWidth(), effectTitleRowHeight);
+    rows.clear();
+    sectionCaptions.clear();
+    dividers.clear();
+
+    const auto titleHeight = effect ? effectTitleRowHeight : titleRowHeight;
+    const auto gap = effect ? effectRowGap - 2 : rowGap - 2;
+    placeCloseButton (closeButton, getWidth(), titleHeight);
 
     const auto h = metrics::controlHeight;
     const auto controlWidth = effectColumnWidth - labelWidth;
-    const auto top = effectTitleRowHeight + 14;
+    const auto top = titleHeight + (effect ? 14 : 18);
     const auto caption = [&] (const juce::String& text, int x, int& y)
     {
         sectionCaptions.push_back ({ text, y, x });
-        y += 12 + effectRowGap + 2;
+        y += 12 + gap + 2;
     };
 
-    // ---- left: match your analyser, the window ----
+    // ---- left: match your analyser ----
     auto x = cardPad;
     auto controlX = x + labelWidth;
     auto y = top;
 
     caption ("Match your analyser", x, y);
-
-    rows.push_back ({ "Scale", y, x });
-    scale.setBounds (controlX, y, controlWidth, h);
-    y += h + effectRowGap;
-
-    rows.push_back ({ "Range", y, x });
-    const auto fieldWidth = (controlWidth - 24) / 2;
-    lowHz->setBounds (controlX, y, fieldWidth, h);
-    highHz->setBounds (controlX + controlWidth - fieldWidth, y, fieldWidth, h);
-    rangeDashArea = { lowHz->getRight(), y, highHz->getX() - lowHz->getRight(), h };
-    y += h + effectRowGap;
-
-    rows.push_back ({ "Slope", y, x });
-    const auto unitWidth = 48;
-    slope.setBounds (controlX, y, controlWidth - unitWidth, h);
-    slopeUnitArea = { slope.getRight() + 10, y, unitWidth - 10, h };
-    y += h + 6;
+    y = layoutAnalyser (x, y, controlWidth, gap) + 6;
 
     const auto noteHeight = static_cast<int> (std::ceil (wrappedText (noteText(), static_cast<float> (controlWidth)).getHeight()));
     noteArea = { controlX, y, controlWidth, noteHeight };
-    y = noteArea.getBottom() + 12;
+    const auto leftBottom = noteArea.getBottom();
 
-    caption ("Window", x, y);
-    rows.push_back ({ "Size", y, x });
-    windowSize.setBounds (controlX, y, controlWidth, h);
-    const auto leftBottom = y + h;
-
-    // ---- right: playing, the drawing ----
+    // ---- right ----
     x = cardPad + effectColumnWidth + effectColumnGap;
     controlX = x + labelWidth;
     columnDividerX = x - effectColumnGap / 2;
     y = top;
 
-    caption ("Playing", x, y);
+    if (effect)
+    {
+        // The window's size, in the title row.
+        constexpr int sizeWidth = 220, sizeHeight = 24;
+        windowSize.setBounds (closeButton.getX() - 16 - sizeWidth, (titleHeight - sizeHeight) / 2, sizeWidth, sizeHeight);
+        windowCaptionArea = { windowSize.getX() - 72, windowSize.getY(), 64, sizeHeight };
 
-    rows.push_back ({ "Trigger", y, x });
-    trigger->setBounds (controlX, y, 168, h);
-    y += h + 6;
+        caption ("Playing", x, y);
 
-    const auto midiHeight = static_cast<int> (std::ceil (wrappedText (midiNoteText(), static_cast<float> (controlWidth)).getHeight()));
-    midiNoteArea = { controlX, y, controlWidth, midiHeight };
-    y = midiNoteArea.getBottom() + effectRowGap + 2;
+        rows.push_back ({ "Trigger", y, x });
+        trigger->setBounds (controlX, y, 168, h);
+        y += h + 6;
 
-    rows.push_back ({ "Start", y, x });
-    startAt->setBounds (controlX, y, 148, h);
-    startBar->setBounds (startAt->getRight() + 8, y, 56, h);
-    startTextArea = { controlX, y, controlWidth, h };
-    y += h + effectRowGap;
+        const auto midiHeight = static_cast<int> (std::ceil (wrappedText (midiNoteText(), static_cast<float> (controlWidth)).getHeight()));
+        midiNoteArea = { controlX, y, controlWidth, midiHeight };
+        y = midiNoteArea.getBottom() + gap + 2;
 
-    rows.push_back ({ "Tempo", y, x });
-    tempoSource->setBounds (controlX, y, 116, h);
-    bpm->setBounds (tempoSource->getRight() + 8, y, controlWidth - 116 - 8, h);
-    tempoTextArea = { bpm->getX() + 2, y, bpm->getWidth() - 2, h };
-    auto rightBottom = y + h;
+        rows.push_back ({ "Start", y, x });
+        startAt->setBounds (controlX, y, 148, h);
+        startBar->setBounds (startAt->getRight() + 8, y, 56, h);
+        startTextArea = { controlX, y, controlWidth, h };
+        y += h + gap;
+
+        rows.push_back ({ "Tempo", y, x });
+        tempoSource->setBounds (controlX, y, 116, h);
+        bpm->setBounds (tempoSource->getRight() + 8, y, controlWidth - 116 - 8, h);
+        tempoTextArea = { bpm->getX() + 2, y, bpm->getWidth() - 2, h };
+        y += h;
+    }
+    else
+    {
+        windowCaptionArea = {};
+        caption ("Window", x, y);
+        rows.push_back ({ "Size", y, x });
+        windowSize.setBounds (controlX, y, controlWidth, h);
+        y += h;
+    }
+
+    auto rightBottom = y;
 
     if (drawingResettable)
     {
-        y += h + 12;
+        y += 12;
         caption ("Drawing", x, y);
 
         const auto right = x + effectColumnWidth;
@@ -524,93 +595,6 @@ void SettingsPanel::layoutEffect()
     const auto cardWidth = getWidth() - 2 * cardPad;
     licence->setBounds (cardPad, y, cardWidth, licence->getIdealHeight (cardWidth));
     idealHeight = licence->getBottom() + effectBottomPad;
-}
-
-void SettingsPanel::resized()
-{
-    rows.clear();
-    sectionCaptions.clear();
-    dividers.clear();
-
-    if (effect)
-    {
-        layoutEffect();
-        return;
-    }
-
-    placeCloseButton (closeButton, getWidth());
-
-    const auto controlX = cardPad + labelWidth;
-    const auto controlWidth = getWidth() - cardPad - controlX;
-    const auto h = metrics::controlHeight;
-    auto y = titleRowHeight + sectionGap;
-
-    // Match your analyser
-    sectionCaptions.push_back ({ "Match your analyser", y, cardPad });
-    y += 12 + rowGap + 4;
-
-    rows.push_back ({ "Scale", y, cardPad });
-    scale.setBounds (controlX, y, controlWidth, h);
-    y += h + rowGap;
-
-    rows.push_back ({ "Range", y, cardPad });
-    const auto fieldWidth = (controlWidth - 24) / 2;
-    lowHz->setBounds (controlX, y, fieldWidth, h);
-    highHz->setBounds (controlX + controlWidth - fieldWidth, y, fieldWidth, h);
-    rangeDashArea = { lowHz->getRight(), y, highHz->getX() - lowHz->getRight(), h };
-    y += h + rowGap;
-
-    rows.push_back ({ "Slope", y, cardPad });
-    const auto unitWidth = 48;
-    slope.setBounds (controlX, y, controlWidth - unitWidth, h);
-    slopeUnitArea = { slope.getRight() + 10, y, unitWidth - 10, h };
-    y += h + 10;
-
-    const auto noteHeight = static_cast<int> (std::ceil (wrappedText (noteText(), static_cast<float> (controlWidth)).getHeight()));
-    noteArea = { controlX, y, controlWidth, noteHeight };
-    y = noteArea.getBottom() + sectionGap - 4;
-
-    dividers.push_back (y);
-    y += sectionGap;
-
-    // Window
-    sectionCaptions.push_back ({ "Window", y, cardPad });
-    y += 12 + rowGap + 4;
-
-    rows.push_back ({ "Size", y, cardPad });
-    windowSize.setBounds (controlX, y, controlWidth, h);
-    y += h + sectionGap;
-
-    dividers.push_back (y);
-    y += sectionGap;
-
-    // Drawing (not while the plug-in is locked: the drawing is out of reach then)
-    if (drawingResettable)
-    {
-        sectionCaptions.push_back ({ "Drawing", y, cardPad });
-        y += 12 + rowGap + 4;
-
-        const auto right = getWidth() - cardPad;
-        resetButton.setBounds (right - resetButton.getIdealWidth(), y, resetButton.getIdealWidth(), h);
-        confirmButton.setBounds (right - confirmButton.getIdealWidth(), y, confirmButton.getIdealWidth(), h);
-        cancelButton.setBounds (confirmButton.getX() - 8 - cancelButton.getIdealWidth(), y, cancelButton.getIdealWidth(), h);
-        confirmTextArea = { cardPad, y, cancelButton.getX() - 12 - cardPad, h };
-        y += h + sectionGap - 4;
-
-        dividers.push_back (y);
-        y += sectionGap - 4;
-    }
-
-    // Licence (a little tighter: with a message of why a deactivation failed, the panel still
-    // has to fit the window)
-    sectionCaptions.push_back ({ "Licence", y, cardPad });
-    y += 12 + rowGap + 4;
-
-    const auto cardWidth = getWidth() - 2 * cardPad;
-    licence->setBounds (cardPad, y, cardWidth, licence->getIdealHeight (cardWidth));
-    y = licence->getBottom() + sectionGap - 4;
-
-    idealHeight = y;
 }
 
 //==============================================================================

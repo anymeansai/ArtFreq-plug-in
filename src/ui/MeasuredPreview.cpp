@@ -173,7 +173,7 @@ namespace
         // history is the song, not silence.
         const auto firstOut = output.firstNeeded();
         const auto firstIn = firstOut - 2 * static_cast<int64_t> (latency);
-        StandInSong song (request.scale, sampleRate, passSamples, firstIn);
+        StandInSong song (sampleRate, passSamples, firstIn);
 
         std::unique_ptr<PassRenderer> sines;
 
@@ -270,6 +270,52 @@ namespace
 } // namespace
 
 //==============================================================================
+float previewGain (float gain) noexcept
+{
+    if (! (gain > 0.0f))
+        return 0.0f;
+
+    return juce::Decibels::decibelsToGain (std::round (juce::Decibels::gainToDecibels (gain, -200.0f) * 4.0f) / 4.0f, -200.0f);
+}
+
+float previewDepthDb (float depthDb) noexcept
+{
+    return std::round (depthDb * 2.0f) / 2.0f;
+}
+
+double previewSeconds (double seconds) noexcept
+{
+    return std::round (seconds * 1000.0) / 1000.0;
+}
+
+MeasureRequest MeasureRequest::forProcessor (const ArtFreqProcessor& processor, int width, int height)
+{
+    MeasureRequest request;
+    request.effect = processor.isEffect();
+    request.plan = processor.getCurrentPlan();
+    request.masks = request.effect ? processor.getCurrentMasks() : nullptr;
+    request.mode = processor.getEffectMode();
+    request.depthDb = previewDepthDb (processor.getDepthDb());
+    request.outputGain = previewGain (processor.getOutputGain());
+
+    // ArtFreq FX's Carve and Stencil play no sines: neither the plan nor Level changes their sound.
+    if (request.effect && ! playsSines (request.mode))
+    {
+        request.plan = nullptr;
+        request.outputGain = 1.0f;
+    }
+
+    request.passSeconds = previewSeconds (processor.getLengthSeconds());
+    request.sampleRate = processor.getCurrentSampleRate();
+    request.scale = processor.getScale();
+    request.slopeDbPerOctave = processor.getPlanSettings().slopeDbPerOctave;
+    request.view = processor.getAnalyserView();
+    request.width = width;
+    request.height = height;
+    request.documentRevision = processor.getDocumentRevision();
+    return request;
+}
+
 bool MeasureRequest::sameAnalysis (const MeasureRequest& other) const noexcept
 {
     return effect == other.effect && plan == other.plan && masks == other.masks && mode == other.mode

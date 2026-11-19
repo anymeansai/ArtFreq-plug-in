@@ -41,17 +41,6 @@ namespace
 
     double nowSeconds() { return juce::Time::getMillisecondCounterHiRes() * 0.001; }
 
-    /** Level, Depth and the pass's length as the previews use them: a host's tempo that wobbles in
-        its last digits, or automation of Level moving by a hair, does not start a new render. */
-    float quantisedGain (float gain)
-    {
-        if (! (gain > 0.0f))
-            return 0.0f;
-
-        return juce::Decibels::decibelsToGain (std::round (juce::Decibels::gainToDecibels (gain, -200.0f) * 4.0f) / 4.0f, -200.0f);
-    }
-
-    double quantisedSeconds (double seconds) { return std::round (seconds * 1000.0) / 1000.0; }
 
     enum Edge
     {
@@ -129,12 +118,12 @@ struct CanvasView::Impl
         timeSignature = processor.getTimeSignature();
         firstBar = processor.getSinglePassStartBar();
         effectMode = processor.getEffectMode();
-        depthDb = std::round (processor.getDepthDb() * 2.0f) / 2.0f;
-        outputGain = quantisedGain (processor.getOutputGain());
+        depthDb = previewDepthDb (processor.getDepthDb());
+        outputGain = previewGain (processor.getOutputGain());
         view = processor.getAnalyserView();
         slope = processor.getPlanSettings().slopeDbPerOctave;
         sampleRate = processor.getCurrentSampleRate();
-        passSeconds = quantisedSeconds (processor.getLengthSeconds());
+        passSeconds = previewSeconds (processor.getLengthSeconds());
         shownStatus = statusText();
     }
 
@@ -567,12 +556,12 @@ struct CanvasView::Impl
         // window blurs a shorter pass more), the analyser's settings and the sample rate; and in
         // ArtFreq FX on the mode and the depth.
         const auto newMode = processor.getEffectMode();
-        const auto newDepth = std::round (processor.getDepthDb() * 2.0f) / 2.0f;
-        const auto newGain = quantisedGain (processor.getOutputGain());
+        const auto newDepth = previewDepthDb (processor.getDepthDb());
+        const auto newGain = previewGain (processor.getOutputGain());
         const auto newView = processor.getAnalyserView();
         const auto newSlope = processor.getPlanSettings().slopeDbPerOctave;
         const auto newRate = processor.getCurrentSampleRate();
-        const auto newPass = quantisedSeconds (processor.getLengthSeconds());
+        const auto newPass = previewSeconds (processor.getLengthSeconds());
 
         if (newLength != lengthIndex || newScale != scale || newSignature != timeSignature || newFirstBar != firstBar
             || newMode != effectMode || ! juce::exactlyEqual (newDepth, depthDb) || ! juce::exactlyEqual (newGain, outputGain)

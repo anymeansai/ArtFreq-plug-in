@@ -257,6 +257,33 @@ void saveStateBeside (const juce::File& png, artfreq::ArtFreqProcessor& processo
     png.withFileExtension ("json").replaceWithText (juce::JSON::toString (juce::var (object)));
 }
 
+/** The canvas shows the measured preview (the real sound, as an analyser with the plug-in's
+    Settings shows it) once the drawing has stayed still for a moment: the screenshots show that,
+    as a user sees it, except those caught in the middle of a drag or a brush stroke, which show
+    the fast preview and "Updating...". Checks that the canvas then says which it shows. */
+void settleCanvas (juce::Component& editor, float scale, const juce::String& name)
+{
+    auto* canvas = dynamic_cast<artfreq::ui::CanvasView*> (findComponentWithId (editor, "canvas"));
+
+    if (canvas == nullptr || ! canvas->isVisible())
+        return;
+
+    if (name.contains ("dragging") || name.contains ("painting"))
+    {
+        check (! canvas->getPreviewStatus().current && canvas->getPreviewStatus().text.startsWith ("Updating"),
+               name + ": mid-drag the canvas shows the fast preview and says it is updating");
+        return;
+    }
+
+    canvas->settleMeasuredPreview (scale);
+    const auto status = canvas->getPreviewStatus();
+    check (status.measuredShown && status.current && ! status.fading, name + ": the canvas shows the measured preview");
+    const auto* processor = dynamic_cast<artfreq::ArtFreqProcessor*> (dynamic_cast<juce::AudioProcessorEditor&> (editor).getAudioProcessor());
+    const auto effect = processor != nullptr && processor->isEffect();
+    check (status.text == (effect ? "Real output, on a stand-in song" : "Preview of the real sound"),
+           name + ": the canvas says it shows the real sound");
+}
+
 /** A stand-in for an imported picture: a shaded disc and a frame on a white background, the
     kind of logo Auto turns into its negative. */
 juce::Image makeTestPicture()
@@ -1308,13 +1335,16 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     content.keyPressed (juce::KeyPress ('v', juce::ModifierKeys(), 'v'));
     pump (30);
 
-    // Stripes: lines, which the canvas shows as scan lines in the lows.
+    // Stripes: lines, which the canvas shows as scan lines in the lows (once the measured preview
+    // of the new sound is in: settled here rather than waited for).
+    canvas->settleMeasuredPreview (1.0f);
     const auto smoothCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
     clickOn (*lows, at (0.75f));
     pump (60);
     check (juce::exactlyEqual (value(), 1.0f) && lows->getSelectedIndex() == 1 && ! planHasComb(),
            "clicking Stripes plays the lows as separate lines");
     pump (60);
+    canvas->settleMeasuredPreview (1.0f);
     const auto stripesCanvas = canvas->createComponentSnapshot (canvas->getLocalBounds());
     check (countDifferentPixels (smoothCanvas, stripesCanvas) > 2000, "... and the canvas shows them as stripes");
     save ("lows-stripes", true);
@@ -1332,6 +1362,7 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     pump (60);
     check (lows->getSelectedIndex() == 0 && planHasComb(), "Lows follows the parameter back to Smooth");
     pump (60);
+    canvas->settleMeasuredPreview (1.0f);
     check (countDifferentPixels (smoothCanvas, canvas->createComponentSnapshot (canvas->getLocalBounds())) == 0,
            "... and the canvas shows the filled band again");
 }
@@ -1624,7 +1655,10 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         processor.rebuildPlanIfNeeded();
 
         if (settle)
+        {
             pump (60);
+            settleCanvas (*editor, scale, name);
+        }
 
         const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
         const auto file = outputDir.getChildFile ("artfreq-fx-" + name + ".png");
@@ -1791,9 +1825,11 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     check (processor.getEffectMode() == EffectMode::carve, "clicking Carve chooses it");
 
     {
+        canvas->settleMeasuredPreview (1.0f);
         const auto carved = canvas->createComponentSnapshot (canvas->getLocalBounds());
         setParameter (processor, params::id::mode, 2.0f);
         pump (80);
+        canvas->settleMeasuredPreview (1.0f);
         const auto stencilled = canvas->createComponentSnapshot (canvas->getLocalBounds());
         check (countDifferentPixels (carved, stencilled) > 20000, "the canvas shows Carve and Stencil differently");
         setParameter (processor, params::id::mode, 0.0f);
@@ -3541,7 +3577,10 @@ int main (int argc, char* argv[])
             processor.rebuildPlanIfNeeded();
 
             if (settle)
+            {
                 pump (60);
+                settleCanvas (*editor, scale, name);
+            }
 
             const auto image = editor->createComponentSnapshot (editor->getLocalBounds(), true, scale);
             const auto file = outputDir.getChildFile ("artfreq-" + name + ".png");

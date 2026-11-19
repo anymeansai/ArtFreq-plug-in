@@ -42,8 +42,8 @@ private:
 class SettingsPanel final : public juce::Component
 {
 public:
-    static constexpr int width = 376;
-    static constexpr int effectWidth = 672;   // ArtFreq FX: two columns
+    static constexpr int width = 672;         // two columns
+    static constexpr int effectWidth = 672;
 
     /** The window sizes offered (fractions of the window at 100 %). */
     static constexpr float windowScales[] = { 0.75f, 1.0f, 1.25f, 1.5f, 2.0f };
@@ -93,7 +93,7 @@ public:
 
 private:
     void showResetConfirmation (bool shouldShow);
-    void layoutEffect();
+    int layoutAnalyser (int x, int y, int controlWidth, int gap);
     static juce::AttributedString noteText();
     static juce::AttributedString midiNoteText();
 
@@ -103,11 +103,13 @@ private:
     SegmentedControl scale { { "Log", "Linear", "Mel" } };
     std::unique_ptr<NumberField> lowHz, highHz;
     SegmentedControl slope { { "0", "3", "4.5", "6" } };
+    SegmentedControl fftSize { { "4096", "8192", "16384" } };
+    std::unique_ptr<NumberField> floorDb, ceilingDb;
     SegmentedControl windowSize { { "75%", "100%", "125%", "150%", "200%" } };
     ShellButton resetButton { "Reset drawing" };
     ShellButton cancelButton { "Cancel" };
     ShellButton confirmButton { "Reset", ShellButton::Kind::danger };
-    std::unique_ptr<ChoiceSegments> scaleAttachment, slopeAttachment;
+    std::unique_ptr<ChoiceSegments> scaleAttachment, slopeAttachment, fftAttachment;
     std::unique_ptr<LicenceCard> licence;
     bool confirmingReset = false;
     bool drawingResettable = true;
@@ -132,7 +134,7 @@ private:
     std::vector<Row> rows;
     std::vector<Row> sectionCaptions;
     std::vector<int> dividers;
-    juce::Rectangle<int> noteArea, slopeUnitArea, rangeDashArea, confirmTextArea;
+    juce::Rectangle<int> noteArea, slopeUnitArea, rangeDashArea, levelsDashArea, confirmTextArea, windowCaptionArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SettingsPanel)
 };

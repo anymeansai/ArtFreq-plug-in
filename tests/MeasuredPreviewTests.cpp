@@ -91,13 +91,15 @@ ARTFREQ_TEST (standInSongHasTheTexturesLevels)
     constexpr int size = 4096;
     const FrequencyScale scale;
     const auto passSamples = static_cast<int64_t> (8.0 * rate);
-    StandInSong song (scale, rate, passSamples, 0);
+    StandInSong song (rate, passSamples, 0);
     std::vector<float> audio (static_cast<size_t> (4.0 * rate));
     song.render (audio.data(), static_cast<int> (audio.size()));
 
     SpectrumAnalyser analyser (size);
     std::vector<float> bins (static_cast<size_t> (analyser.getNumBins()));
     std::vector<double> differences, lows, highs;
+    constexpr double edges[] { 20.0, 60.0, 120.0, 250.0, 500.0, 1000.0, 2000.0 };
+    std::vector<double> byRegion[6];
 
     for (int start = 0; start + size <= static_cast<int> (audio.size()); start += 777)
     {
@@ -111,21 +113,29 @@ ARTFREQ_TEST (standInSongHasTheTexturesLevels)
             if (hz < scale.minHz || hz > scale.maxHz)
                 continue;
 
-            const auto y = scale.toNorm (hz);
-            const auto d = static_cast<double> (bins[static_cast<size_t> (bin)]) - standInSongTextureDb (x, y);
+            const auto d = static_cast<double> (bins[static_cast<size_t> (bin)]) - standInSongTextureDb (x, hz);
             differences.push_back (d);
-            (y < 0.4 ? lows : highs).push_back (d);
+            (hz < 300.0 ? lows : highs).push_back (d);
+
+            for (size_t r = 0; r < 6; ++r)
+                if (hz >= edges[r] && hz < edges[r + 1])
+                    byRegion[r].push_back (d);
         }
     }
 
-    std::printf ("    stand-in at FFT 4096, measured - texture: median %.2f dB (lows %.2f, highs %.2f)\n",
+    std::printf ("    stand-in at FFT 4096, measured - texture: median %.2f dB (lows %.2f, highs %.2f); 20-60-120-250-500-1k-2k Hz:",
                  median (differences), median (lows), median (highs));
+
+    for (const auto& region : byRegion)
+        std::printf (" %.1f", median (region));
+
+    std::printf ("\n");
     CHECK_NEAR (median (differences), 0.0, 1.0);
     CHECK_NEAR (median (lows), 0.0, 2.0);
     CHECK_NEAR (median (highs), 0.0, 2.0);
 
     // The same timeline gives the same noise, wherever the render starts.
-    StandInSong later (scale, rate, passSamples, 12345);
+    StandInSong later (rate, passSamples, 12345);
     std::vector<float> part (2000);
     later.render (part.data(), static_cast<int> (part.size()));
     auto same = true;

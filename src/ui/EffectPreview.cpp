@@ -73,9 +73,9 @@ namespace
     }
 } // namespace
 
-float EffectPreviewImage::songDb (double x, double y) noexcept
+float EffectPreviewImage::songDb (double x, double hz) noexcept
 {
-    return standInSongDb (x, y);
+    return standInSongDb (x, hz);
 }
 
 void EffectPreviewImage::setMeasuredSong (std::shared_ptr<const MeasuredSpectrogram> newSong)
@@ -90,16 +90,17 @@ void EffectPreviewImage::setMeasuredSong (std::shared_ptr<const MeasuredSpectrog
     songDirty = true;
 }
 
-void EffectPreviewImage::makeSong (const Settings& settings, int width, int height)
+void EffectPreviewImage::makeSong (const Settings& settings, const FrequencyScale& scale, int width, int height)
 {
     if (! songDirty && width == songWidth && height == songHeight && songFft == settings.view.fftSize
-        && songMeasured == (measuredSong != nullptr))
+        && songMeasured == (measuredSong != nullptr) && songScale == scale)
         return;
 
     songDirty = false;
     songWidth = width;
     songHeight = height;
     songFft = settings.view.fftSize;
+    songScale = scale;
     songMeasured = measuredSong != nullptr;
     song.resize (static_cast<size_t> (width) * static_cast<size_t> (height));
 
@@ -149,7 +150,17 @@ void EffectPreviewImage::makeSong (const Settings& settings, int width, int heig
     };
 
     steps (width, standInTextureWidth, columns, columnFractions);
-    steps (height, standInTextureHeight, rows, rowFractions);
+
+    // The texture's rows run in log frequency: each canvas row reads the one at its height.
+    const auto s = scale.sanitised();
+
+    for (int y = 0; y < height; ++y)
+    {
+        const auto at = standInTextureRow (s.toHz (1.0 - (y + 0.5) / height));
+        const auto before = juce::jmin (standInTextureHeight - 2, static_cast<int> (at));
+        rows[static_cast<size_t> (y)] = before;
+        rowFractions[static_cast<size_t> (y)] = static_cast<float> (juce::jlimit (0.0, 1.0, at - before));
+    }
 
     for (int y = 0; y < height; ++y)
     {
@@ -293,7 +304,7 @@ juce::Image EffectPreviewImage::get (const std::vector<float>& sinesDb, float le
     imageScale = scale;
     imageMasks = masks;
 
-    makeSong (settings, width, height);
+    makeSong (settings, scale, width, height);
 
     // The mask this mode carves with (Carve + Draw's is wider), or none.
     const MaskPlan* mask = nullptr;

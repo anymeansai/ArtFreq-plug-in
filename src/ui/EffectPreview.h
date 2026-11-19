@@ -69,12 +69,12 @@ public:
     void setMeasuredSong (std::shared_ptr<const MeasuredSpectrogram> song);
     bool hasMeasuredSong() const noexcept { return measuredSong != nullptr; }
 
-    /** The stand-in song's level at a place on the canvas, in dB of an analyser cell at FFT 4096
-        (x 0..1 along the length, y 0..1 from the bottom of the scale to the top). */
-    static float songDb (double x, double y) noexcept;
+    /** The stand-in song's level in dB of an analyser cell at FFT 4096 (x 0..1 along the length,
+        at `hz`): dsp/StandInSong.h. */
+    static float songDb (double x, double hz) noexcept;
 
 private:
-    void makeSong (const Settings& settings, int width, int height);
+    void makeSong (const Settings& settings, const FrequencyScale& scale, int width, int height);
     void makeCarve (const MaskPlan* mask, const Settings& settings, const FrequencyScale& scale, int width, int height);
 
     juce::Image image;
@@ -87,6 +87,7 @@ private:
     // The stand-in at the picture's size, dB
     std::vector<float> song;
     int songWidth = 0, songHeight = 0, songFft = 0;
+    FrequencyScale songScale;
     bool songMeasured = false;
     std::shared_ptr<const MeasuredSpectrogram> measuredSong;
     bool songDirty = true;

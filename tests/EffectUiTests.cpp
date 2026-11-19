@@ -939,7 +939,8 @@ ARTFREQ_TEST (uiEffectCanvasShowsEachMode)
     CHECK (levelOf (image, outside.x, outside.y) == colourLevelFor (-50.0f, -100.0f, 0.0f));
     preview.setMeasuredSong (nullptr);
 
-    // The stand-in song is louder in the lows than in the highs, and never above the top.
-    CHECK_GREATER (ui::EffectPreviewImage::songDb (0.3, 0.1), ui::EffectPreviewImage::songDb (0.3, 0.9));
-    CHECK_LESS (ui::EffectPreviewImage::songDb (0.0, 0.0), 0.001f);
+    // The stand-in song falls towards the highs as a master does (4.5 dB an octave, give or take
+    // its beat, chords and grain), and is never above full scale.
+    CHECK_GREATER (ui::EffectPreviewImage::songDb (0.3, 100.0), ui::EffectPreviewImage::songDb (0.3, 8000.0) + 20.0f);
+    CHECK_LESS (ui::EffectPreviewImage::songDb (0.0, 20.0), 0.001f);
 }

@@ -1,10 +1,11 @@
-// The truth lab: are the screenshots honest? It plays the exact drawing and settings of a
-// screenshot through the real plug-in (ArtFreqProcessor, activated against the test licensing
-// environment, as a buyer's activated copy) and shows what an analyser such as MiniMeters makes
-// of the sound, beside the canvas the screenshot shows.
+// The truth lab: is the canvas honest? It plays the exact drawing and settings of a screenshot
+// through the real plug-in (ArtFreqProcessor, activated against the test licensing environment,
+// as a buyer's activated copy) and compares what an analyser such as MiniMeters makes of the
+// sound with what the canvas shows: the canvas before the measured preview (--before: screenshots
+// of an older build) and the canvas now.
 //
-//   ArtFreqTruthLab <snapshot-dir> <output-dir> [--states default,rich,...] [--range -100,0]
-//                   [--ffts 4096,8192,16384] [--wav]
+//   ArtFreqTruthLab <snapshot-dir> <output-dir> [--before <old-snapshot-dir>] [--states default,rich,...]
+//                   [--range -100,0] [--ffts 4096,8192,16384] [--wav]
 //   ArtFreqTruthLab --marketing <output-dir> [--range -100,0]
 //
 // <snapshot-dir> is a run of ArtFreqSnapshot with ARTFREQ_SNAPSHOT_STATES=1: for each state
@@ -21,27 +22,23 @@
 //      a bed of noise, mastered to -10 dBFS RMS), from the moment the transport starts; its output
 //      is moved back by the latency it reports, as the DAW's delay compensation does;
 //   2. analyses the output (the mean of the channels) as an FFT spectrogram such as MiniMeters'
-//      does (its settings assumed, not looked up): Hann window, FFT 4096, 8192 and 16384
-//      points, dB of the magnitude (a full-scale sine reads 0 dB), one analysis per pixel
-//      column of the canvas (a hop of 1/W of the pass: about 5 ms, a smoothly scrolling
-//      display), frequency on the state's own scale (log 20 Hz - 20 kHz for
-//      all but the linear screenshot), each pixel row reading the dB interpolated between the bin
-//      centres around it, or the loudest bin inside it where it spans several; coloured with the
-//      canvas's own colour map over a fixed range (default -100 to 0 dBFS);
-//   3. measures, per band (lows < 250 Hz, low mids 250 Hz - 2 kHz, highs > 2 kHz), how the real
-//      display compares with the canvas the screenshot shows (see BandResult);
-//   4. writes <output-dir>/truth-<name>.png: the screenshot's canvas, cut out of the PNG, beside
-//      the real display at 8192 points, the same size and frequency axis; under them a strip with
-//      4096 and 16384 points, the same sound in the canvas's own colours (the instrument's loudest
-//      at white over 60 dB; ArtFreq FX's -60 to 0 dB at 4096 points), and for ArtFreq FX the song
-//      going in; and the numbers. Also
-//      truth-<name>-fft<N>.png (each real display alone), metrics.txt and metrics.json, and with
-//      --wav the rendered output, truth-<name>.wav.
+//      does (its settings assumed, not looked up; written here on its own, not with the plug-in's
+//      analysis code): Hann window, FFT 4096, 8192 and 16384 points, dB of the magnitude (a
+//      full-scale sine reads 0 dB), one analysis per pixel column of the canvas, frequency on the
+//      state's own scale, each pixel row reading the dB interpolated between the bin centres
+//      around it, or the loudest bin inside it where it spans several; coloured with the canvas's
+//      own colour map over a fixed range (default -100 to 0 dBFS);
+//   3. renders the new canvas the way the editor does (MeasuredPreview at each FFT size, at the
+//      screenshot's size) and the new fast preview, reads the old screenshot's canvas, and
+//      measures each against the real display per band (lows < 250 Hz, low mids 250 Hz - 2 kHz,
+//      highs > 2 kHz): see BandCompare;
+//   4. writes <output-dir>/truth-<name>.png: the old canvas, the new canvas and the real display
+//      side by side (the same size and frequency axis), the real display at the other FFT sizes,
+//      for ArtFreq FX the song going in, and the numbers; also truth-<name>-fft<N>.png (each real
+//      display alone), metrics.txt and metrics.json, and with --wav the rendered output.
 //
 // --marketing renders a few drawings for the website (the instrument and the effect), each as a
-// real measurement of the plug-in's output (FFT 8192), at 2x (2400 x 1280), captioned as such:
-// ArtFreq's default drawing, ARTFREQ over ANYMEANS at Density 1024, and ArtFreq FX carving its
-// default drawing into the test song from bar 2 (so the song plays either side of the pass).
+// real measurement of the plug-in's output (FFT 8192), at 2x (2400 x 1280), captioned as such.
 //
 // On Linux run it under a virtual display (it renders text):  xvfb-run -a ArtFreqTruthLab ...
 
@@ -54,6 +51,7 @@
 #include "core/ImageProcessing.h"
 #include "ui/CanvasPlanImage.h"
 #include "ui/EffectPreview.h"
+#include "ui/MeasuredPreview.h"
 #include "ui/Theme.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -677,36 +675,30 @@ struct BandDef
 
 constexpr std::array<BandDef, 3> bands { { { "lows", 0.0, 250.0 }, { "low-mids", 250.0, 2000.0 }, { "highs", 2000.0, 1.0e9 } } };
 
-/** One band of one display against the canvas. Levels are in dB: the real display's own, and
-    the canvas's colour level turned back into dB (CanvasPlanImage: 60 dB below its top; the
-    instrument's top is the plan's loudest, ArtFreq FX's a full-scale sine in a cell at FFT 4096).
+/** One band of a canvas against the real display, both in dB as the analyser's colour key reads
+    them (a canvas's colour level read with the range's key: what a buyer compares by eye), both
+    clipped to the range (an analyser shows nothing beyond it).
+
     "Drawn" cells: the drawing covers at least half of the cell; "around": the drawing covers
     nothing there, in a column where the band has drawn cells, and the nearest drawn cell is more
     than 3 % of the height away (so edges count for neither). NaN: nothing to measure. */
-struct BandResult
+struct BandCompare
 {
-    int drawn = 0, around = 0;
-    double r = nan;              // shape: Pearson r over the band's cells. Instrument: the real display (60 dB
-                                 // under its top, clipped) against the canvas. ArtFreq FX, whose canvas stands
-                                 // in for a song it does not have: the drawing (0..1) against what the effect
-                                 // did to the real song there (song - output in Carve, clipped to 0..80 dB;
-                                 // the same against 1 - drawing in Stencil; output - song, -40..40 dB, in the
-                                 // Draw modes)
-    double insideDb = nan;       // median real dB of the drawn cells (dBFS in an analyser cell)
-    double aroundDb = nan;       // ... of the cells around
-    double contrastDb = nan;     // inside - around (instrument: how far shapes stand out; FX Carve: negative)
-    double canvasContrastDb = nan;  // the same on the canvas (capped by its 60 dB window)
-    double canvasAroundDb = nan;    // the canvas's level around the drawing (ArtFreq FX: its stand-in song,
-                                    // in dB of a cell at FFT 4096, against aroundDb: the real song there)
-    double songMedianDb = nan;      // FX: the song going in over the band, median and 95th percentile
-    double songP95Db = nan;
-    double kept = nan;           // instrument: share of drawn cells no more than 12 dB darker than the canvas
-                                 // shows (each relative to its own top); FX: see below
-    double stray = nan;          // share of "around" cells the real display shows within 30 dB of its top
-                                 // (instrument) / of the drawn level (FX), where the canvas shows them dark
-    double attenuationDb = nan;  // FX: median (song - output) dB over the drawn cells
-    double darkShare = nan;      // FX Carve / Carve + Draw's hole: share of drawn cells 30 dB or more below the song
-    double songKept = nan;       // FX Stencil: share of drawn cells within 6 dB of the song
+    int cells = 0, drawn = 0, around = 0;
+    double r = nan;                 // shape: Pearson r of the canvas's dB with the real dB over the band's cells
+    double meanDiffDb = nan;        // canvas - real over all cells (positive: the canvas brighter)
+    double meanAbsDiffDb = nan;     // |canvas - real|
+    double insideDiffDb = nan;      // canvas - real, median over drawn cells
+    double aroundDiffDb = nan;      // ... over the cells around (negative: the canvas cleaner than reality)
+    double canvasContrastDb = nan;  // median drawn - median around, on the canvas
+    double realContrastDb = nan;    // ... in reality
+    double songDb = nan;            // ArtFreq FX: the median level of the song going in over the band: the
+    double standInDb = nan;         // test master's, and the stand-in's on the canvas
+    double songP95Db = nan;         // ... and the 95th percentile (the brightest lines: kick, bass, hats)
+    double standInP95Db = nan;
+    double excessContrastDb = nan;  // |canvas contrast| - |real contrast|: how much more the canvas
+                                    // makes of the drawing than reality does (brighter shapes over a
+                                    // cleaner background, or deeper carves); > 0 looks better than it is
 };
 
 double median (std::vector<double> v)
@@ -751,29 +743,16 @@ double pearson (const std::vector<double>& a, const std::vector<double>& b)
     return aa > 0 && bb > 0 ? ab / std::sqrt (aa * bb) : nan;
 }
 
-struct Comparison
-{
-    std::array<BandResult, bands.size()> band;
-    double topDb = nan;  // the real display's top (99.9th percentile)
-};
+using BandCompares = std::array<BandCompare, bands.size()>;
 
-Comparison compare (const Display& real, const Display* song, const std::vector<uint8_t>& canvasLevels,
-                    const std::vector<float>& drawing, const FrequencyScale& scale, bool effect, EffectMode mode)
+/** `canvasDb`: the canvas as dB on the real display's grid (W x H, row 0 at the top). */
+BandCompares compareCanvas (const Display& real, const std::vector<float>& canvasDb, const std::vector<float>& drawing,
+                            const FrequencyScale& scale, float lowDb, float highDb)
 {
-    Comparison c;
+    BandCompares result;
     const auto w = real.width, h = real.height;
     const auto s = scale.sanitised();
-
-    {
-        std::vector<double> all (real.db.begin(), real.db.end());
-        c.topDb = percentile (all, 0.999);
-    }
-
-    const auto canvasDb = [&] (int x, int y)
-    {
-        return static_cast<double> (canvasLevels[idx (y) * idx (w) + idx (x)]) / 255.0 * 60.0 - 60.0;
-    };
-
+    const auto clip = [lowDb, highDb] (double v) { return juce::jlimit (static_cast<double> (lowDb), static_cast<double> (highDb), v); };
     const auto drawnAt = [&] (int x, int y) { return drawing[idx (y) * idx (w) + idx (x)] >= 0.5f; };
     const auto clearAt = [&] (int x, int y) { return drawing[idx (y) * idx (w) + idx (x)] <= 0.02f; };
     const auto gap = std::max (2, static_cast<int> (0.03 * h));
@@ -807,9 +786,9 @@ Comparison compare (const Display& real, const Display* song, const std::vector<
 
     for (size_t b = 0; b < bands.size(); ++b)
     {
-        auto& result = c.band[b];
-        std::vector<double> realValues, canvasValues, inside, around, canvasInside, canvasAround, attenuation, shapeX, shapeY, songCells;
-        int kept = 0, dark = 0, songKept = 0;
+        auto& m = result[b];
+        std::vector<double> canvasValues, realValues, insideDiff, aroundDiff, canvasInside, canvasAround, realInside, realAround;
+        double sumDiff = 0.0, sumAbs = 0.0;
 
         for (int y = 0; y < h; ++y)
         {
@@ -820,88 +799,83 @@ Comparison compare (const Display& real, const Display* song, const std::vector<
 
             for (int x = 0; x < w; ++x)
             {
-                const auto realDb = static_cast<double> (real.at (x, y));
-                const auto relative = std::max (-60.0, realDb - c.topDb);
-                const auto cDb = canvasDb (x, y);
-
-                // The instrument's canvas is relative to its loudest; ArtFreq FX's is in dB of a
-                // cell (at FFT 4096), as the real display is.
-                if (! effect)
-                {
-                    realValues.push_back (relative);
-                    canvasValues.push_back (cDb);
-                }
-                else if (song != nullptr)
-                {
-                    songCells.push_back (static_cast<double> (song->at (x, y)));
-                    const auto change = static_cast<double> (song->at (x, y)) - realDb;
-                    const auto value = static_cast<double> (drawing[idx (y) * idx (w) + idx (x)]);
-
-                    if (mode == EffectMode::carve)
-                        shapeX.push_back (value), shapeY.push_back (juce::jlimit (0.0, 80.0, change));
-                    else if (mode == EffectMode::stencil)
-                        shapeX.push_back (1.0 - value), shapeY.push_back (juce::jlimit (0.0, 80.0, change));
-                    else
-                        shapeX.push_back (value), shapeY.push_back (juce::jlimit (-40.0, 40.0, -change));
-                }
+                const auto c = clip (canvasDb[idx (y) * idx (w) + idx (x)]);
+                const auto r = clip (real.at (x, y));
+                canvasValues.push_back (c);
+                realValues.push_back (r);
+                sumDiff += c - r;
+                sumAbs += std::abs (c - r);
 
                 if (drawnAt (x, y))
                 {
-                    ++result.drawn;
-                    inside.push_back (realDb);
-                    canvasInside.push_back (cDb);
-
-                    if (! effect && relative >= cDb - 12.0)
-                        ++kept;
-
-                    if (song != nullptr)
-                    {
-                        const auto a = static_cast<double> (song->at (x, y)) - realDb;
-                        attenuation.push_back (a);
-                        dark += a >= 30.0 ? 1 : 0;
-                        songKept += std::abs (a) <= 6.0 ? 1 : 0;
-                    }
+                    insideDiff.push_back (c - r);
+                    canvasInside.push_back (c);
+                    realInside.push_back (r);
                 }
                 else if (clearAt (x, y) && distance[idx (y) * idx (w) + idx (x)] > gap)
                 {
-                    around.push_back (realDb);
-                    canvasAround.push_back (cDb);
-                    ++result.around;
+                    aroundDiff.push_back (c - r);
+                    canvasAround.push_back (c);
+                    realAround.push_back (r);
                 }
             }
         }
 
-        if (result.drawn < 50)
+        m.cells = static_cast<int> (canvasValues.size());
+        m.drawn = static_cast<int> (insideDiff.size());
+        m.around = static_cast<int> (aroundDiff.size());
+
+        if (m.cells == 0)
             continue;
 
-        result.r = effect ? pearson (shapeX, shapeY) : pearson (realValues, canvasValues);
-        result.insideDb = median (inside);
-        result.aroundDb = median (around);
-        result.contrastDb = result.insideDb - result.aroundDb;
-        result.canvasContrastDb = median (canvasInside) - median (canvasAround);
-        result.canvasAroundDb = median (canvasAround);
-        result.songMedianDb = median (songCells);
-        result.songP95Db = percentile (songCells, 0.95);
+        m.meanDiffDb = sumDiff / m.cells;
+        m.meanAbsDiffDb = sumAbs / m.cells;
 
-        if (! effect)
+        if (m.drawn < 50)
+            continue;   // nothing drawn here: the shape and the contrast mean nothing
+
+        m.r = pearson (canvasValues, realValues);
+        m.insideDiffDb = median (insideDiff);
+        m.aroundDiffDb = median (aroundDiff);
+        m.canvasContrastDb = median (canvasInside) - median (canvasAround);
+        m.realContrastDb = median (realInside) - median (realAround);
+        m.excessContrastDb = std::abs (m.canvasContrastDb) - std::abs (m.realContrastDb);
+    }
+
+    return result;
+}
+
+/** The dB a canvas's colours stand for, read with the analyser's colour key (lowDb .. highDb). */
+std::vector<float> dbOfLevels (const std::vector<uint8_t>& levels, float lowDb, float highDb)
+{
+    std::vector<float> db (levels.size());
+
+    for (size_t i = 0; i < levels.size(); ++i)
+        db[i] = lowDb + static_cast<float> (levels[i]) / 255.0f * (highDb - lowDb);
+
+    return db;
+}
+
+/** A measured analysis on the display's grid: its frames interpolated across the columns, its rows
+    stretched to the height. */
+std::vector<float> dbOfAnalysis (const ui::MeasuredSpectrogram& a, int width, int height)
+{
+    std::vector<float> db (idx (width) * idx (height));
+
+    for (int x = 0; x < width; ++x)
+    {
+        int f0 = 0, f1 = 0;
+        float t = 0.0f;
+        ui::MeasuredSpectrogram::columnPosition (x, width, a.frames, f0, f1, t);
+
+        for (int y = 0; y < height; ++y)
         {
-            result.kept = static_cast<double> (kept) / result.drawn;
-            int bright = 0;
-
-            for (const auto v : around)
-                bright += v - c.topDb > -30.0 ? 1 : 0;
-
-            result.stray = around.empty() ? nan : static_cast<double> (bright) / static_cast<double> (around.size());
-        }
-        else if (song != nullptr)
-        {
-            result.attenuationDb = median (attenuation);
-            result.darkShare = static_cast<double> (dark) / result.drawn;
-            result.songKept = static_cast<double> (songKept) / result.drawn;
+            const auto row = juce::jlimit (0, a.rows - 1, static_cast<int> ((y + 0.5) * a.rows / height));
+            db[idx (y) * idx (width) + idx (x)] = a.outputDb (row, f0) + (a.outputDb (row, f1) - a.outputDb (row, f0)) * t;
         }
     }
 
-    return c;
+    return db;
 }
 
 // ================================================================================================
@@ -973,11 +947,6 @@ juce::String num (double v, int decimals = 0, const char* unit = "")
     return (decimals == 0 ? juce::String (juce::roundToInt (v)) : juce::String (v, decimals)) + unit;
 }
 
-juce::String pct (double v)
-{
-    return std::isfinite (v) ? juce::String (juce::roundToInt (v * 100.0)) + " %" : "-";
-}
-
 // ================================================================================================
 // One state
 // ================================================================================================
@@ -985,7 +954,8 @@ juce::String pct (double v)
 struct Options
 {
     juce::File snapshotDir, outputDir;
-    juce::StringArray states { "default", "rich", "layers", "on-play", "linear", "150",
+    juce::File beforeDir;   // a run of the snapshot tool with the old canvas (--before)
+    juce::StringArray states { "default", "rich", "layers", "linear",
                                "fx-default", "fx-carve", "fx-carve-draw", "fx-stencil" };
     std::vector<int> ffts { 4096, 8192, 16384 };
     float lowDb = -100.0f, highDb = 0.0f;
@@ -1026,13 +996,22 @@ juce::String settingsLine (ArtFreqProcessor& p)
     return line;
 }
 
+/** Old canvas, new canvas (and the new fast preview, alone), each against the real output, per FFT
+    size and band. */
+struct CanvasCompare
+{
+    BandCompares before, after, fast;
+};
+
 struct StateResult
 {
     juce::String name, settings;
     bool effect = false;
     EffectMode mode = EffectMode::carve;
-    std::map<int, Comparison> byFft;
+    std::map<int, CanvasCompare> byFft;
     double outputRmsDb = nan, outputPeakDb = nan, songRmsDb = nan;
+    double measureMilliseconds = nan;   // the measured preview's render at the screenshot's size, FFT 8192
+    double screenshotAgreementDb = nan; // the new screenshot's canvas against a direct render, mean |dB|
 };
 
 double rmsDb (const std::vector<float>& v, int from, int to)
@@ -1090,6 +1069,20 @@ std::unique_ptr<ArtFreqProcessor> makeProcessor (bool effect, const juce::Memory
     return p;
 }
 
+/** The canvas cut out of a screenshot, as dB read with the analyser's key. */
+bool canvasFromScreenshot (const juce::File& base, juce::Rectangle<int> plot, float lowDb, float highDb,
+                           juce::Image& crop, std::vector<float>& db)
+{
+    const auto screenshot = juce::ImageFileFormat::loadFrom (base.withFileExtension ("png"));
+
+    if (! screenshot.isValid())
+        return false;
+
+    crop = screenshot.getClippedImage (plot);
+    db = dbOfLevels (levelsOf (crop), lowDb, highDb);
+    return true;
+}
+
 bool runState (const Options& options, const juce::String& name, const Stereo& song, StateResult& result, juce::String& error)
 {
     const auto base = options.snapshotDir.getChildFile ("artfreq-" + name);
@@ -1102,17 +1095,24 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         return false;
     }
 
-    const auto screenshot = juce::ImageFileFormat::loadFrom (base.withFileExtension ("png"));
     const auto effect = json["plugin"].toString() == "effect";
-    const auto pixelScale = static_cast<float> (static_cast<double> (json["pixelScale"]));
-    const auto plot = juce::Rectangle<double> (json["plotX"], json["plotY"], json["plotWidth"], json["plotHeight"]);
-    const auto w = juce::roundToInt (plot.getWidth()), h = juce::roundToInt (plot.getHeight());
+    const auto plot = juce::Rectangle<double> (json["plotX"], json["plotY"], json["plotWidth"], json["plotHeight"]).toNearestInt();
+    const auto w = plot.getWidth(), h = plot.getHeight();
 
-    if (! screenshot.isValid() || w < 16 || h < 16)
+    // The screenshots: the new canvas (this build) and the old one (--before).
+    juce::Image afterCrop, beforeCrop;
+    std::vector<float> afterShotDb, beforeDb;
+
+    if (! canvasFromScreenshot (base, plot, options.lowDb, options.highDb, afterCrop, afterShotDb) || w < 16 || h < 16)
     {
         error = "no screenshot or canvas for " + name;
         return false;
     }
+
+    const auto haveBefore = options.beforeDir != juce::File()
+                         && canvasFromScreenshot (options.beforeDir.getChildFile ("artfreq-" + name), plot, options.lowDb, options.highDb,
+                                                  beforeCrop, beforeDb)
+                         && beforeCrop.getWidth() == w && beforeCrop.getHeight() == h;
 
     auto processor = makeProcessor (effect, state);
     auto& p = *processor;
@@ -1129,21 +1129,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
     result.settings = settingsLine (p);
 
     const auto scale = p.getScale();
-    const auto plan = p.getCurrentPlan();
-
-    // ---- what the canvas shows, as levels, at the screenshot's size ----------------------------
-    ui::CanvasPlanImage planImage;
-    auto picture = planImage.get (plan, scale, w, h, pixelScale);
-    std::vector<uint8_t> canvasLevels = planImage.getPixelLevels();
-
-    if (effect)
-    {
-        ui::EffectPreviewImage preview;
-        picture = preview.get (planImage.getPixelLevels(), planImage.getRenderCount(), p.getEffectMode(), p.getDepthDb(),
-                               ui::EffectPreviewImage::sinesDbFor (planImage.getLoudestAmplitude(), p.getOutputGain()),
-                               p.getCurrentMasks(), w, h);
-        canvasLevels = levelsOf (picture);
-    }
+    const auto view = p.getAnalyserView();
 
     Canvas canvas;
     Compositor compositor;
@@ -1164,6 +1150,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         writeWav (rendered.stereo, options.outputDir.getChildFile ("truth-" + name + ".wav"));
 
     std::map<int, Display> displays, songs;
+    std::map<int, std::vector<float>> afterDbs;
 
     for (const auto n : options.ffts)
     {
@@ -1172,29 +1159,126 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         if (effect)
             songs[n] = analyse (rendered.input, from, to, n, scale, w, h);
 
-        result.byFft[n] = compare (displays[n], effect ? &songs[n] : nullptr, canvasLevels, drawing, scale, effect, p.getEffectMode());
+        // The new canvas at this FFT size: what the editor renders and shows with Settings at it
+        // (the same code: MeasuredPreview), at the screenshot's size.
+        auto request = ui::MeasureRequest::forProcessor (p, w, h);
+        request.view.fftSize = n;
+        const auto started = juce::Time::getMillisecondCounterHiRes();
+        const auto measuredResult = ui::MeasuredPreview::renderNow (request);
+        const auto milliseconds = juce::Time::getMillisecondCounterHiRes() - started;
+
+        if (measuredResult == nullptr)
+        {
+            error = "the measured preview rendered nothing for " + name;
+            return false;
+        }
+
+        if (n == view.fftSize)
+            result.measureMilliseconds = milliseconds;
+
+        afterDbs[n] = dbOfAnalysis (*measuredResult->analysis, w, h);
+
+        // The new fast preview alone (what shows while dragging), at the same size.
+        std::vector<float> fastDb (idx (w) * idx (h));
+        {
+            ui::AnalyserModel model;
+            model.scale = scale;
+            model.slopeDbPerOctave = request.slopeDbPerOctave;
+            model.view = request.view;
+            model.sampleRate = request.sampleRate;
+            model.passSeconds = request.passSeconds;
+            model.outputGain = ui::previewGain (p.getOutputGain());
+            ui::CanvasPlanImage planImage;
+            auto picture = planImage.get (p.getCurrentPlan(), model, w, h);
+
+            if (effect)
+            {
+                ui::EffectPreviewImage preview;
+                ui::EffectPreviewImage::Settings settings;
+                settings.mode = request.mode;
+                settings.depthDb = request.depthDb;
+                settings.view = request.view;
+                settings.sampleRate = request.sampleRate;
+                settings.passSeconds = request.passSeconds;
+                picture = preview.get (planImage.getPixelDbBeforeLevel(), planImage.getLevelDb(), 1, settings,
+                                       p.getCurrentMasks(), scale, w, h);
+            }
+
+            fastDb = dbOfLevels (levelsOf (picture), request.view.floorDb, request.view.ceilingDb);
+        }
+
+        auto& c = result.byFft[n];
+        c.after = compareCanvas (displays[n], afterDbs[n], drawing, scale, options.lowDb, options.highDb);
+
+        // The songs going in: the test master, and the stand-in the canvas carves.
+        if (effect)
+        {
+            const auto& a = *measuredResult->analysis;
+            const auto s = scale.sanitised();
+
+            for (size_t b = 0; b < bands.size(); ++b)
+            {
+                std::vector<double> master, standIn;
+
+                for (int y = 0; y < h; ++y)
+                {
+                    const auto hz = s.toHz (1.0 - (y + 0.5) / h);
+
+                    if (hz < bands[b].lowHz || hz >= bands[b].highHz)
+                        continue;
+
+                    const auto row = juce::jlimit (0, a.rows - 1, static_cast<int> ((y + 0.5) * a.rows / h));
+
+                    for (int x = 0; x < w; x += 4)
+                        master.push_back (songs[n].at (x, y));
+
+                    for (int frame = 0; frame < a.frames; ++frame)
+                        standIn.push_back (a.inputDb (row, frame));
+                }
+
+                c.after[b].songDb = median (master);
+                c.after[b].standInDb = median (standIn);
+                c.after[b].songP95Db = percentile (master, 0.95);
+                c.after[b].standInP95Db = percentile (standIn, 0.95);
+            }
+        }
+        c.fast = compareCanvas (displays[n], fastDb, drawing, scale, options.lowDb, options.highDb);
+
+        if (haveBefore)
+            c.before = compareCanvas (displays[n], beforeDb, drawing, scale, options.lowDb, options.highDb);
+
         writePng (displayImage (displays[n], options.lowDb, options.highDb),
                   options.outputDir.getChildFile ("truth-" + name + "-fft" + juce::String (n) + ".png"));
     }
 
-    // ---- the side by side ----------------------------------------------------------------------
-    const auto crop = screenshot.getClippedImage (plot.toNearestInt());
-    const auto mainFft = displays.count (8192) != 0 ? 8192 : options.ffts.front();
-    const auto f = 13.0f * pixelScale / 2.0f * 2.0f;   // label size, image pixels
-    const auto margin = f * 5.0f;
-    const auto stripW = static_cast<float> (w) * 0.5f, stripH = static_cast<float> (h) * 0.5f;
-    const auto pw = static_cast<float> (w), ph = static_cast<float> (h);
-    const auto width = juce::roundToInt (margin + pw + margin + pw + f * 2.0f);
+    // The screenshot shows what the direct render shows (grid lines and outlines aside).
+    if (afterDbs.count (view.fftSize) != 0)
+    {
+        std::vector<double> diffs;
+        const auto& direct = afterDbs[view.fftSize];
+
+        for (size_t i = 0; i < direct.size(); ++i)
+            diffs.push_back (std::abs (juce::jlimit (options.lowDb, options.highDb, direct[i]) - afterShotDb[i]));
+
+        result.screenshotAgreementDb = median (diffs);
+    }
+
+    // ---- the side by side: old canvas | new canvas | real --------------------------------------
+    const auto mainFft = displays.count (view.fftSize) != 0 ? view.fftSize : options.ffts.front();
+    const auto f = 13.0f;                     // label size, image pixels
+    const auto pw = static_cast<float> (w) * 0.5f, ph = static_cast<float> (h) * 0.5f;
+    const auto margin = f * 4.5f;
+    const auto columns = 3;
+    const auto width = juce::roundToInt (margin + columns * (pw + margin));
     std::vector<int> stripFfts;
 
     for (const auto n : options.ffts)
         if (n != mainFft)
             stripFfts.push_back (n);
 
-    const auto stripPanels = static_cast<int> (stripFfts.size()) + 1 + (effect ? 1 : 0);
-    const auto stripRows = (stripPanels + 2) / 3;
-    const auto tableH = f * 1.7f * 7.0f;
-    const auto height = juce::roundToInt (f * 6.5f + ph + f * 3.2f + static_cast<float> (stripRows) * (stripH + f * 3.2f) + tableH + f * 2.0f);
+    const auto stripPanels = static_cast<int> (stripFfts.size()) + (effect ? 1 : 0);
+    const auto tableH = f * 1.55f * 14.0f;
+    const auto height = juce::roundToInt (f * 6.5f + ph + f * 3.2f + (stripPanels > 0 ? ph + f * 3.2f : 0.0f) + tableH);
 
     juce::Image sheet (juce::Image::RGB, width, height, true);
     juce::Graphics g (sheet);
@@ -1202,7 +1286,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
 
     g.setColour (ink());
     g.setFont (fonts::ui (f * 1.5f, fonts::UiWeight::semiBold));
-    g.drawText ("artfreq-" + name + ".png: the screenshot's canvas beside the plug-in's real output",
+    g.drawText ("artfreq-" + name + ": the old canvas, the new canvas and the plug-in's real output",
                 juce::Rectangle<float> (f, f * 0.6f, static_cast<float> (width) - 2.0f * f, f * 2.0f), juce::Justification::left, true);
     g.setColour (dim());
     g.setFont (fonts::ui (f * 1.05f));
@@ -1215,49 +1299,38 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
                 juce::Rectangle<float> (f, f * 4.0f, static_cast<float> (width) - 2.0f * f, f * 1.5f), juce::Justification::left, true);
 
     auto top = f * 6.5f + f * 1.2f;
-    drawPanel (g, crop, { margin, top, pw, ph }, "Screenshot (the canvas: a preview)", scale, f, true);
-    drawPanel (g, displayImage (displays[mainFft], options.lowDb, options.highDb), { margin + pw + margin, top, pw, ph },
-               "Real output, FFT " + juce::String (mainFft), scale, f, true);
+    auto x = margin;
+
+    if (haveBefore)
+        drawPanel (g, beforeCrop, { x, top, pw, ph }, "Old canvas (the screenshot before)", scale, f, true);
+
+    x += pw + margin;
+    drawPanel (g, afterCrop, { x, top, pw, ph }, effect ? "New canvas (real carve, stand-in song)" : "New canvas (the real sound, measured)",
+               scale, f, true);
+    x += pw + margin;
+    drawPanel (g, displayImage (displays[mainFft], options.lowDb, options.highDb), { x, top, pw, ph },
+               "Real output, FFT " + juce::String (mainFft) + (effect ? " (test master)" : ""), scale, f, true);
     top += ph + f * 3.2f;
 
+    if (stripPanels > 0)
     {
-        auto column = 0;
-        auto x = margin;
-        const auto addStrip = [&] (const juce::Image& image, const juce::String& title)
-        {
-            drawPanel (g, image, { x, top + f * 0.4f, stripW, stripH }, title, scale, f * 0.85f, true);
-            x += stripW + margin * 0.8f;
-
-            if (++column == 3)
-            {
-                column = 0;
-                x = margin;
-                top += stripH + f * 3.2f;
-            }
-        };
+        x = margin;
 
         for (const auto n : stripFfts)
-            addStrip (displayImage (displays[n], options.lowDb, options.highDb), "Real output, FFT " + juce::String (n));
-
-        // The same sound in the canvas's own colours: the instrument's canvas puts its loudest at the
-        // top of a 60 dB window, ArtFreq FX's a full-scale sine in a cell at FFT 4096 (-60 to 0 dB).
-        // What differs from the screenshot here is the sound; what differs only above is the range.
-        if (effect)
-            addStrip (displayImage (displays[options.ffts.front()], -60.0f, 0.0f),
-                      "FFT " + juce::String (options.ffts.front()) + ", the canvas's colours (-60 to 0 dB)");
-        else
-            addStrip (displayImage (displays[mainFft], static_cast<float> (result.byFft[mainFft].topDb) - 60.0f,
-                                    static_cast<float> (result.byFft[mainFft].topDb)),
-                      "FFT " + juce::String (mainFft) + ", the canvas's colours (loudest = white)");
+        {
+            drawPanel (g, displayImage (displays[n], options.lowDb, options.highDb), { x, top, pw, ph },
+                       "Real output, FFT " + juce::String (n), scale, f * 0.9f, true);
+            x += pw + margin;
+        }
 
         if (effect)
-            addStrip (displayImage (songs[mainFft], options.lowDb, options.highDb), "The song going in, FFT " + juce::String (mainFft));
+            drawPanel (g, displayImage (songs[mainFft], options.lowDb, options.highDb), { x, top, pw, ph },
+                       "The test master going in, FFT " + juce::String (mainFft), scale, f * 0.9f, true);
 
-        if (column != 0)
-            top += stripH + f * 3.2f;
+        top += ph + f * 3.2f;
     }
 
-    // The numbers, per band, at each FFT size.
+    // The numbers, per band, at each FFT size: before -> after.
     g.setFont (fonts::mono (f * 0.95f));
     const auto lineH = f * 1.55f;
     auto y = top;
@@ -1268,37 +1341,21 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
         y += lineH;
     };
 
-    writeLine (effect ? "band       FFT    r     inside  around  contrast real/canvas   carved by   >=30 dB dark   stencil kept"
-                      : "band       FFT    r     inside  around  contrast real/canvas   kept    stray",
-               dim());
+    writeLine ("band       FFT   r old -> new     mean dB old -> new    excess contrast old -> new (> 0: canvas promises more)", dim());
 
     for (size_t b = 0; b < bands.size(); ++b)
     {
         for (const auto n : options.ffts)
         {
-            const auto& m = result.byFft[n].band[b];
-
-            if (m.drawn < 50)
-            {
-                if (n == options.ffts.front())
-                    writeLine (juce::String (bands[b].name).paddedRight (' ', 10) + " (nothing drawn)", faint());
-
-                continue;
-            }
-
+            const auto& c = result.byFft[n];
+            const auto& before = c.before[b];
+            const auto& after = c.after[b];
             juce::String line;
             line << juce::String (bands[b].name).paddedRight (' ', 10) << juce::String (n).paddedLeft (' ', 6)
-                 << num (m.r, 2).paddedLeft (' ', 6) << num (m.insideDb, 0, " dB").paddedLeft (' ', 9)
-                 << num (m.aroundDb, 0, " dB").paddedLeft (' ', 8)
-                 << (num (m.contrastDb, 0) + " / " + num (m.canvasContrastDb, 0) + " dB").paddedLeft (' ', 20);
-
-            if (effect)
-                line << num (m.attenuationDb, 0, " dB").paddedLeft (' ', 13) << pct (m.darkShare).paddedLeft (' ', 15)
-                     << pct (m.songKept).paddedLeft (' ', 15);
-            else
-                line << pct (m.kept).paddedLeft (' ', 8) << pct (m.stray).paddedLeft (' ', 9);
-
-            writeLine (line, ink());
+                 << (num (before.r, 2) + " -> " + num (after.r, 2)).paddedLeft (' ', 16)
+                 << (num (before.meanDiffDb, 1) + " -> " + num (after.meanDiffDb, 1)).paddedLeft (' ', 20)
+                 << (num (before.excessContrastDb, 1) + " -> " + num (after.excessContrastDb, 1)).paddedLeft (' ', 24);
+            writeLine (line, after.drawn < 50 ? faint() : ink());
         }
     }
 
@@ -1314,20 +1371,34 @@ juce::var toVar (double v)
     return std::isfinite (v) ? juce::var (std::round (v * 1000.0) / 1000.0) : juce::var();
 }
 
+juce::String bandLine (const char* label, const BandCompare& m)
+{
+    juce::String line;
+    line << juce::String (label).paddedRight (' ', 7) << "r " << num (m.r, 2).paddedLeft (' ', 5) << "  mean " << num (m.meanDiffDb, 1).paddedLeft (' ', 6)
+         << "  |mean| " << num (m.meanAbsDiffDb, 1).paddedLeft (' ', 5) << "  inside " << num (m.insideDiffDb, 1).paddedLeft (' ', 6)
+         << "  around " << num (m.aroundDiffDb, 1).paddedLeft (' ', 6) << "  contrast canvas/real " << num (m.canvasContrastDb, 1).paddedLeft (' ', 6)
+         << " / " << num (m.realContrastDb, 1).paddedLeft (' ', 6) << "  excess " << num (m.excessContrastDb, 1).paddedLeft (' ', 6);
+
+    if (std::isfinite (m.songDb))
+        line << "  song median: master " << num (m.songDb, 1) << " / stand-in " << num (m.standInDb, 1)
+             << ", p95 " << num (m.songP95Db, 1) << " / " << num (m.standInP95Db, 1);
+
+    return line;
+}
+
 juce::String report (const std::vector<StateResult>& results, const Options& options)
 {
     juce::String text;
-    text << "ArtFreqTruthLab: each screenshot's exact state played through the activated processor and analysed\n"
-         << "like MiniMeters (Hann, log scale of the state, colours " << num (options.lowDb) << " to " << num (options.highDb) << " dBFS).\n"
-         << "Bands by row: lows < 250 Hz, low-mids 250 Hz - 2 kHz, highs > 2 kHz.\n"
-         << "r: ArtFreq, correlation of the real display (60 dB under its top) with the canvas; ArtFreq FX, of the\n"
-         << "drawing with what the effect did to the song there (see BandResult::r); inside / around: median dB of\n"
-         << "drawn cells / of undrawn cells around them; contrast: inside - around, real / on the canvas;\n"
-         << "kept: drawn cells no more than 12 dB darker than the canvas shows (each relative to its top);\n"
-         << "stray: undrawn cells around the drawing shown within 30 dB of the top (bright where the canvas is dark);\n"
-         << "FX: carved by = median (song - output) over drawn cells; dark = share carved 30 dB or more; stencil kept =\n"
-         << "share of drawn cells within 6 dB of the song; song median / p95: the song going in over the band; stand-in\n"
-         << "around: the canvas's stand-in song around the drawing (dB of a cell at FFT 4096, as the real 'around').\n\n";
+    text << "ArtFreqTruthLab: each screenshot's state played through the activated processor and analysed like MiniMeters\n"
+         << "(Hann, the state's scale, colours " << num (options.lowDb) << " to " << num (options.highDb) << " dBFS), against the old canvas\n"
+         << "(--before: the screenshots before), the new canvas (the measured preview, as the editor renders it at each FFT size)\n"
+         << "and the new fast preview alone (what shows while dragging). Bands: lows < 250 Hz, low-mids 250 Hz - 2 kHz,\n"
+         << "highs > 2 kHz. All in dB as the analyser's colour key reads them, clipped to its range.\n"
+         << "r: correlation of canvas and real over the band; mean: canvas - real (> 0: canvas brighter); |mean|: mean\n"
+         << "absolute difference; inside / around: median canvas - real over drawn cells / cells around the drawing; contrast:\n"
+         << "median drawn - median around; excess: |canvas contrast| - |real contrast| (> 0: the canvas makes more of the\n"
+         << "drawing than reality does: brighter shapes, a cleaner background, deeper carves).\n"
+         << "ArtFreq FX: the new canvas carves a stand-in song, the real output a dense synthetic master: the songs differ.\n\n";
 
     for (const auto& r : results)
     {
@@ -1337,37 +1408,68 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
         if (r.effect)
             text << "; song in " << num (r.songRmsDb, 1) << " dBFS RMS";
 
-        text << "\n";
+        text << "; measured preview " << num (r.measureMilliseconds, 0) << " ms; screenshot vs direct render median |dB| "
+             << num (r.screenshotAgreementDb, 1) << "\n";
 
         for (size_t b = 0; b < bands.size(); ++b)
         {
             for (const auto& [n, c] : r.byFft)
             {
-                const auto& m = c.band[b];
-
-                if (m.drawn < 50)
-                    continue;
-
-                text << "   " << juce::String (bands[b].name).paddedRight (' ', 9) << juce::String (n).paddedLeft (' ', 6)
-                     << "  r " << num (m.r, 2).paddedLeft (' ', 5) << "  inside " << num (m.insideDb, 1).paddedLeft (' ', 6)
-                     << "  around " << num (m.aroundDb, 1).paddedLeft (' ', 6) << "  contrast " << num (m.contrastDb, 1).paddedLeft (' ', 6)
-                     << " / canvas " << num (m.canvasContrastDb, 1).paddedLeft (' ', 6);
-
-                if (r.effect)
-                    text << "  carved " << num (m.attenuationDb, 1).paddedLeft (' ', 6) << "  dark " << pct (m.darkShare).paddedLeft (' ', 5)
-                         << "  stencilKept " << pct (m.songKept).paddedLeft (' ', 5) << "  song median/p95 "
-                         << num (m.songMedianDb, 1) << " / " << num (m.songP95Db, 1) << "  stand-in around " << num (m.canvasAroundDb, 1);
-                else
-                    text << "  kept " << pct (m.kept).paddedLeft (' ', 5) << "  stray " << pct (m.stray).paddedLeft (' ', 5);
-
-                text << "\n";
+                text << "   " << juce::String (bands[b].name).paddedRight (' ', 9) << juce::String (n).paddedLeft (' ', 6) << "  "
+                     << bandLine ("old", c.before[b]) << "\n";
+                text << "   " << juce::String().paddedRight (' ', 17) << bandLine ("new", c.after[b]) << "\n";
+                text << "   " << juce::String().paddedRight (' ', 17) << bandLine ("fast", c.fast[b]) << "\n";
             }
         }
 
         text << "\n";
     }
 
+    // The summary: at each state's analyser FFT (8192), old -> new.
+    text << "Summary at FFT 8192 (old -> new): r, mean dB, excess contrast dB\n";
+    text << "state            band        r                mean dB              excess dB\n";
+
+    for (const auto& r : results)
+    {
+        const auto found = r.byFft.find (8192);
+
+        if (found == r.byFft.end())
+            continue;
+
+        for (size_t b = 0; b < bands.size(); ++b)
+        {
+            const auto& before = found->second.before[b];
+            const auto& after = found->second.after[b];
+            text << juce::String (r.name).paddedRight (' ', 17) << juce::String (bands[b].name).paddedRight (' ', 10)
+                 << (num (before.r, 2) + " -> " + num (after.r, 2)).paddedLeft (' ', 14)
+                 << (num (before.meanDiffDb, 1) + " -> " + num (after.meanDiffDb, 1)).paddedLeft (' ', 20)
+                 << (num (before.excessContrastDb, 1) + " -> " + num (after.excessContrastDb, 1)).paddedLeft (' ', 20)
+                 << (after.drawn < 50 ? "   (nothing drawn)" : "") << "\n";
+        }
+    }
+
     return text;
+}
+
+juce::var bandVar (const BandCompare& m)
+{
+    auto* o = new juce::DynamicObject();
+    o->setProperty ("cells", m.cells);
+    o->setProperty ("drawnCells", m.drawn);
+    o->setProperty ("aroundCells", m.around);
+    o->setProperty ("r", toVar (m.r));
+    o->setProperty ("meanDiffDb", toVar (m.meanDiffDb));
+    o->setProperty ("meanAbsDiffDb", toVar (m.meanAbsDiffDb));
+    o->setProperty ("insideDiffDb", toVar (m.insideDiffDb));
+    o->setProperty ("aroundDiffDb", toVar (m.aroundDiffDb));
+    o->setProperty ("canvasContrastDb", toVar (m.canvasContrastDb));
+    o->setProperty ("realContrastDb", toVar (m.realContrastDb));
+    o->setProperty ("excessContrastDb", toVar (m.excessContrastDb));
+    o->setProperty ("songDb", toVar (m.songDb));
+    o->setProperty ("standInDb", toVar (m.standInDb));
+    o->setProperty ("songP95Db", toVar (m.songP95Db));
+    o->setProperty ("standInP95Db", toVar (m.standInP95Db));
+    return juce::var (o);
 }
 
 juce::var toJson (const std::vector<StateResult>& results)
@@ -1382,6 +1484,8 @@ juce::var toJson (const std::vector<StateResult>& results)
         object->setProperty ("outputRmsDb", toVar (r.outputRmsDb));
         object->setProperty ("outputPeakDb", toVar (r.outputPeakDb));
         object->setProperty ("songRmsDb", toVar (r.songRmsDb));
+        object->setProperty ("measureMilliseconds", toVar (r.measureMilliseconds));
+        object->setProperty ("screenshotAgreementDb", toVar (r.screenshotAgreementDb));
 
         auto* ffts = new juce::DynamicObject();
 
@@ -1391,26 +1495,13 @@ juce::var toJson (const std::vector<StateResult>& results)
 
             for (size_t b = 0; b < bands.size(); ++b)
             {
-                const auto& m = c.band[b];
-                auto* o = new juce::DynamicObject();
-                o->setProperty ("drawnCells", m.drawn);
-                o->setProperty ("r", toVar (m.r));
-                o->setProperty ("insideDb", toVar (m.insideDb));
-                o->setProperty ("aroundDb", toVar (m.aroundDb));
-                o->setProperty ("contrastDb", toVar (m.contrastDb));
-                o->setProperty ("canvasContrastDb", toVar (m.canvasContrastDb));
-                o->setProperty ("kept", toVar (m.kept));
-                o->setProperty ("stray", toVar (m.stray));
-                o->setProperty ("attenuationDb", toVar (m.attenuationDb));
-                o->setProperty ("darkShare", toVar (m.darkShare));
-                o->setProperty ("stencilKept", toVar (m.songKept));
-                o->setProperty ("canvasAroundDb", toVar (m.canvasAroundDb));
-                o->setProperty ("songMedianDb", toVar (m.songMedianDb));
-                o->setProperty ("songP95Db", toVar (m.songP95Db));
-                perBand->setProperty (bands[b].name, juce::var (o));
+                auto* trio = new juce::DynamicObject();
+                trio->setProperty ("old", bandVar (c.before[b]));
+                trio->setProperty ("new", bandVar (c.after[b]));
+                trio->setProperty ("fast", bandVar (c.fast[b]));
+                perBand->setProperty (bands[b].name, juce::var (trio));
             }
 
-            perBand->setProperty ("topDb", toVar (c.topDb));
             ffts->setProperty (juce::String (n), juce::var (perBand));
         }
 
@@ -1550,6 +1641,7 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
         const auto value = i + 1 < args.size() ? args[i + 1] : juce::String();
 
         if (a == "--states") { options.states = juce::StringArray::fromTokens (value, ",", ""); ++i; }
+        else if (a == "--before") { options.beforeDir = juce::File::getCurrentWorkingDirectory().getChildFile (value); ++i; }
         else if (a == "--ffts")
         {
             options.ffts.clear();
@@ -1582,7 +1674,8 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
         options.outputDir = cwd.getChildFile (positional[1]);
     }
     else
-        error = "usage: ArtFreqTruthLab <snapshot-dir> <output-dir> [--states a,b] [--ffts 4096,8192,16384] [--range -100,0] [--wav]\n"
+        error = "usage: ArtFreqTruthLab <snapshot-dir> <output-dir> [--before <old-snapshot-dir>] [--states a,b] [--ffts 4096,8192,16384]\n"
+                "                       [--range -100,0] [--wav]\n"
                 "       ArtFreqTruthLab --marketing <output-dir> [--range -100,0]";
 
     for (const auto n : options.ffts)
