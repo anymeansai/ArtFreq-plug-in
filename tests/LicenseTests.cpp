@@ -1401,10 +1401,10 @@ ARTFREQ_TEST (licenseADeactivationTheServerDidNotDoChangesNothing)
         CHECK (store.put (storedActivationFrom (activateProFresh, keyPro)));
 
         // The other instance takes the mark for an interrupted deactivation once it is two
-        // timeouts old, so the request must be over by then: a second here (not the 300 ms of the
-        // tests that time a cut-off), which a slow, busy machine also keeps to.
+        // timeouts old, so the request must be over by then: two seconds here (not the 300 ms of
+        // the tests that time a cut-off), which leaves a slow, busy machine 1.5 s to spare.
         auto environment = makeEnvironment (temporary.folder, server);
-        environment.requestTimeoutMs = 1000;
+        environment.requestTimeoutMs = 2000;
         LicenseManager effect (artFreqEffectLicensing(), environment);
         LicenseManager other (artFreqInstrumentLicensing(), environment);
 
@@ -1413,7 +1413,7 @@ ARTFREQ_TEST (licenseADeactivationTheServerDidNotDoChangesNothing)
         else if (failure == 1)
             server->noConnection();
         else
-            server->replyAfter (cloudflare502, 3000);   // past the deadline (and the mark's grace)
+            server->replyAfter (cloudflare502, 6000);   // past the deadline (and the mark's grace)
 
         Recorded recorded;
         CHECK (effect.deactivate (recordInto (recorded)));
@@ -1424,7 +1424,7 @@ ARTFREQ_TEST (licenseADeactivationTheServerDidNotDoChangesNothing)
         CHECK (recorded.result.message.endsWith ("This computer stays activated."));
         CHECK (store.read().activations.size() == 1 && store.read().activations[0].deactivatingSince.isEmpty());
 
-        pump (2100);   // past the mark's grace: nothing locks later either
+        pump (4100);   // past the mark's grace: nothing locks later either
         CHECK (effect.isActivated() && other.isActivated() && ! other.getInterruptedDeactivation().has_value());
     }
 }

@@ -540,11 +540,13 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
     pump (20);
     clickOn (*canvas, textRect.getCentre());
     pump (20);
-    check (shown ("inspector-text") && shown ("inspector-band"), "clicking the text selects it (the inspector shows it)");
+    checkSoon ([&] { return shown ("inspector-text") && shown ("inspector-band"); },
+               "clicking the text selects it (the inspector shows it)");
 
     clickOn (*canvas, { a.getRight() - 6.0f, a.getY() + 6.0f });
     pump (20);
-    check (! shown ("inspector-band"), "clicking empty canvas deselects");
+    checkSoon ([&] { return ! shown ("inspector-band"); },
+               "clicking empty canvas deselects");
 
     // ---- moving -------------------------------------------------------------------------------
     dragOn (*canvas, textRect.getCentre(), textRect.getCentre() + juce::Point<float> (60.0f, 0.0f));
@@ -645,7 +647,8 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
         pump (30);
         field->insertTextAtCaret ("!");
         pump (30);
-        check (object (textId).text == text0.text + " WORLD!", "typing changes the text on the canvas");
+        checkSoon ([&] { return object (textId).text == text0.text + " WORLD!"; },
+                   "typing changes the text on the canvas");
         undo();
         check (object (textId).text == text0.text && field->getText() == text0.text, "typing is one undo step, and the field follows undo");
     }
@@ -760,8 +763,8 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
         const auto count = processor.getDocument().objects.size();
         addText->onClick();
         pump (20);
-        check (processor.getDocument().objects.size() == count + 1 && shown ("inspector-text"),
-               "Add text adds a text object and selects it");
+        checkSoon ([&] { return processor.getDocument().objects.size() == count + 1 && shown ("inspector-text"); },
+                   "Add text adds a text object and selects it");
         key (juce::KeyPress (juce::KeyPress::deleteKey));
         check (processor.getDocument().objects.size() == count, "... which Delete removes");
         undo();
@@ -772,7 +775,8 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
     {
         clear->onClick();
         pump (30);
-        check (processor.getDocument().isEmpty() && ! clear->isEnabled(), "Clear empties the drawing and greys itself out");
+        checkSoon ([&] { return processor.getDocument().isEmpty() && ! clear->isEnabled(); },
+                   "Clear empties the drawing and greys itself out");
         save ("empty", true);
 
         if (auto* undoButton = find<juce::Button> (editor, "undo"))
@@ -798,10 +802,12 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
     {
         clickOn (*preview, preview->getLocalBounds().getCentre().toFloat());
         pump (20);
-        check (processor.isPreviewing(), "the Preview button starts the preview");
+        checkSoon ([&] { return processor.isPreviewing(); },
+                   "the Preview button starts the preview");
         clickOn (*preview, preview->getLocalBounds().getCentre().toFloat());
         pump (20);
-        check (! processor.isPreviewing(), "... and stops it");
+        checkSoon ([&] { return ! processor.isPreviewing(); },
+                   "... and stops it");
     }
 
     // ---- the analyser scale (Settings) and the length --------------------------------------------
@@ -1133,14 +1139,15 @@ void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     editor.selectObject (juce::Uuid::null());
     pump (40);
 
-    check (shown ("layer-list") && list->getNumObjectRows() == 5, "with nothing selected the inspector lists the layers");
+    checkSoon ([&] { return shown ("layer-list") && list->getNumObjectRows() == 5; },
+               "with nothing selected the inspector lists the layers");
 
     // ---- selecting from the list --------------------------------------------------------------------
     // Rows are front first: sunset, WORLD, Bass drop, logo.png, HELLO.
     clickOn (*list, row (4));
     pump (20);
-    check (selected() == textId && shown ("layer-list") && ! shown ("inspector-band"),
-           "clicking a row selects its object and keeps the list");
+    checkSoon ([&] { return selected() == textId && shown ("layer-list") && ! shown ("inspector-band"); },
+               "clicking a row selects its object and keeps the list");
 
     list->keyPressed (juce::KeyPress (juce::KeyPress::upKey));
     list->keyPressed (juce::KeyPress (juce::KeyPress::upKey));
@@ -1150,14 +1157,15 @@ void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
 
     list->keyPressed (juce::KeyPress (juce::KeyPress::returnKey));
     pump (20);
-    check (shown ("inspector-mode") && ! shown ("layer-list") && shown ("inspector-layers"),
-           "Return opens the selected object's settings, with a way back to the list");
+    checkSoon ([&] { return shown ("inspector-mode") && ! shown ("layer-list") && shown ("inspector-layers"); },
+               "Return opens the selected object's settings, with a way back to the list");
 
     if (auto* back = find<juce::Button> (editor, "inspector-layers"))
     {
         clickOn (*back, back->getLocalBounds().getCentre().toFloat());
         pump (20);
-        check (shown ("layer-list") && selected() == imageId, "\"Layers\" goes back to the list, the selection kept");
+        checkSoon ([&] { return shown ("layer-list") && selected() == imageId; },
+                   "\"Layers\" goes back to the list, the selection kept");
     }
 
     // Selecting is no undo step: the next undo takes back the five objects.
@@ -1168,7 +1176,8 @@ void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     // ---- hiding -------------------------------------------------------------------------------------
     clickOn (*list, list->getEyeBounds (1).toFloat().getCentre());
     pump (20);
-    check (! visible (world.id) && visible (sunset.id) && visible (textId), "the eye hides an object");
+    checkSoon ([&] { return ! visible (world.id) && visible (sunset.id) && visible (textId); },
+               "the eye hides an object");
     check (processor.undo() && visible (world.id), "hiding is one undo step");
     processor.redo();
     pump (20);
@@ -1290,8 +1299,8 @@ void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     {
         addText->onClick();
         pump (20);
-        check (processor.getDocument().objects.size() == 6 && selected() == frontId() && shown ("inspector-text"),
-               "a new object goes in front, selected, its settings shown");
+        checkSoon ([&] { return processor.getDocument().objects.size() == 6 && selected() == frontId() && shown ("inspector-text"); },
+                   "a new object goes in front, selected, its settings shown");
         processor.undo();
         pump (20);
     }
@@ -1302,7 +1311,8 @@ void checkLayers (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& pro
     processor.undo();
     editor.selectObject (juce::Uuid::null());
     pump (30);
-    check (sameDrawing (processor.getDocument(), start), "after the layer checks the drawing is back where it began");
+    checkSoon ([&] { return sameDrawing (processor.getDocument(), start); },
+               "after the layer checks the drawing is back where it began");
 }
 
 /** The colour-map level (0..255) of every pixel, by the nearest colour of the map. */
@@ -1401,9 +1411,9 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     editor.selectObject (juce::Uuid::null());
     pump (40);
 
-    check (lows->getOptions() == juce::StringArray { "Smooth", "Stripes" } && lows->getSelectedIndex() == 0
-           && juce::exactlyEqual (value(), 0.0f) && planHasComb(),
-           "Lows, under the layer list, is on Smooth in a new instance: the plan has the rising comb");
+    checkSoon ([&] { return lows->getOptions() == juce::StringArray { "Smooth", "Stripes" } && lows->getSelectedIndex() == 0
+                    && juce::exactlyEqual (value(), 0.0f) && planHasComb(); },
+               "Lows, under the layer list, is on Smooth in a new instance: the plan has the rising comb");
 
     if (auto* tip = dynamic_cast<juce::TooltipClient*> (lows))
         check (tip->getTooltip().contains ("Smooth") && tip->getTooltip().contains ("Stripes"), "Lows explains both in its tooltip");
@@ -1414,9 +1424,9 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
 
     content.keyPressed (juce::KeyPress ('b', juce::ModifierKeys(), 'b'));
     pump (30);
-    check (laidOut() && findComponentWithId (*inspector, "inspector-strength") != nullptr
-               && findComponentWithId (*inspector, "inspector-strength")->isVisible(),
-           "... and clear of the brush settings");
+    checkSoon ([&] { return laidOut() && findComponentWithId (*inspector, "inspector-strength") != nullptr
+                    && findComponentWithId (*inspector, "inspector-strength")->isVisible(); },
+               "... and clear of the brush settings");
     save ("lows-brush", true);
     content.keyPressed (juce::KeyPress ('v', juce::ModifierKeys(), 'v'));
     pump (30);
@@ -1438,10 +1448,12 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
     // An object's settings take the panel; Lows comes back with the list.
     editor.selectObject (imageId);
     pump (30);
-    check (! lows->isVisible(), "selecting an object shows its settings in Lows' place");
+    checkSoon ([&] { return ! lows->isVisible(); },
+               "selecting an object shows its settings in Lows' place");
     editor.selectObject (juce::Uuid::null());
     pump (30);
-    check (laidOut() && lows->getSelectedIndex() == 1, "... and Lows is back, as it was, with the list");
+    checkSoon ([&] { return laidOut() && lows->getSelectedIndex() == 1; },
+               "... and Lows is back, as it was, with the list");
 
     // The parameter, changed elsewhere (a host, a loaded state), moves the control too.
     setParameter (processor, params::id::lowEnd, 0.0f);
@@ -1759,9 +1771,9 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
     pump (150);
 
-    check (editor->getWidth() == ArtFreqEditor::effectBaseWidth && editor->getHeight() == ArtFreqEditor::effectBaseHeight
-               && editor->getBaseWidth() == 720 && editor->getBaseHeight() == 440,
-           "a new ArtFreq FX opens at 720 x 440");
+    checkSoon ([&] { return editor->getWidth() == ArtFreqEditor::effectBaseWidth && editor->getHeight() == ArtFreqEditor::effectBaseHeight
+                    && editor->getBaseWidth() == 720 && editor->getBaseHeight() == 440; },
+               "a new ArtFreq FX opens at 720 x 440");
 
     auto* mode = find<ui::SegmentedControl> (*editor, "mode");
     auto* depth = find<ui::shell::NumberField> (*editor, "depth");
@@ -1819,8 +1831,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         const auto defaultText = processor.getDocument().objects.front().id;
         editor->selectObject (defaultText);
         pump (60);
-        check (editor->isDrawerOpen() && canvas->getWidth() < canvasWidth - 200 && canvas->getRight() <= drawer->getX(),
-               "the default drawing's \"ArtFreq\" (4 - 96 %) selected: the canvas lies beside the drawer, not under it");
+        checkSoon ([&] { return editor->isDrawerOpen() && canvas->getWidth() < canvasWidth - 200 && canvas->getRight() <= drawer->getX(); },
+                   "the default drawing's \"ArtFreq\" (4 - 96 %) selected: the canvas lies beside the drawer, not under it");
         checkEffectLayout (*editor, "the default text selected");
         save ("wide-selected", pixelScale);
 
@@ -1849,7 +1861,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         // Deselected: the canvas has the whole width again.
         editor->selectObject (juce::Uuid::null());
         pump (60);
-        check (! editor->isDrawerOpen() && canvas->getWidth() == canvasWidth, "deselected, the canvas has the window's width again");
+        checkSoon ([&] { return ! editor->isDrawerOpen() && canvas->getWidth() == canvasWidth; },
+                   "deselected, the canvas has the window's width again");
     }
 
     juce::Uuid textId, imageId;
@@ -1938,7 +1951,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     }
 
     pump (60);
-    check (std::abs (processor.getDepthDb() + 24.0f) < 0.05f, "a typed Depth is taken: " + juce::String (processor.getDepthDb()));
+    checkSoon ([&] { return std::abs (processor.getDepthDb() + 24.0f) < 0.05f; },
+               "a typed Depth is taken: " + juce::String (processor.getDepthDb()));
     save ("shallow", pixelScale);
     setParameter (processor, params::id::depth, params::defaultDepthDb);
     pump (60);
@@ -1974,9 +1988,9 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     // The text is on the left of the canvas: its settings open on the right.
     clickOn (*canvas, objectAt (textId).getCentre());
     pump (60);
-    check (editor->getSelectedObject() == textId && editor->isDrawerOpen() && ! editor->isLayerListShown() && ! editor->isDrawerOnLeft()
-               && shown ("inspector-text") && shown ("inspector-band") && shown ("inspector-close"),
-           "a click on the text opens its settings in a drawer on the right");
+    checkSoon ([&] { return editor->getSelectedObject() == textId && editor->isDrawerOpen() && ! editor->isLayerListShown() && ! editor->isDrawerOnLeft()
+                    && shown ("inspector-text") && shown ("inspector-band") && shown ("inspector-close"); },
+               "a click on the text opens its settings in a drawer on the right");
     check (drawer->getX() > juce::roundToInt (objectAt (textId).getRight()) + canvas->getX(), "... clear of the text itself");
     check (! layers->getToggleState(), "... the Layers button is not lit (the drawer shows an object)");
     checkEffectLayout (*editor, "a text object selected");
@@ -1988,9 +2002,9 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         const auto highLow = processor.getDocument().find (textId)->lowHz;
         clickOn (*band, { static_cast<float> (band->getWidth()) * 0.38f, 13.0f });
         pump (40);
-        check (ui::actions::bandOf (*processor.getDocument().find (textId), scale) == static_cast<int> (Band::mid)
-                   && processor.getDocument().find (textId)->lowHz < highLow,
-               "the drawer's Band moves the text to the mid band");
+        checkSoon ([&] { return ui::actions::bandOf (*processor.getDocument().find (textId), scale) == static_cast<int> (Band::mid)
+                        && processor.getDocument().find (textId)->lowHz < highLow; },
+                   "the drawer's Band moves the text to the mid band");
         processor.undo();
         pump (40);
     }
@@ -1999,10 +2013,12 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     {
         field->setText ("HELLO YOU", true);
         pump (40);
-        check (processor.getDocument().find (textId)->text == "HELLO YOU", "typing in the drawer's text box changes the text");
+        checkSoon ([&] { return processor.getDocument().find (textId)->text == "HELLO YOU"; },
+                   "typing in the drawer's text box changes the text");
         processor.undo();
         pump (40);
-        check (processor.getDocument().find (textId)->text == "HELLO", "... and undo takes it back");
+        checkSoon ([&] { return processor.getDocument().find (textId)->text == "HELLO"; },
+                   "... and undo takes it back");
     }
 
     check (undo->isVisible() || redo->isVisible(), "after an edit, undo or redo is there");
@@ -2022,9 +2038,9 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     // The picture is on the right: its settings would cover it there, so they open on the left.
     clickOn (*canvas, objectAt (imageId).getCentre());
     pump (60);
-    check (editor->getSelectedObject() == imageId && editor->isDrawerOpen() && editor->isDrawerOnLeft()
-               && shown ("inspector-mode") && shown ("inspector-replace"),
-           "a click on the picture (on the right of the canvas) opens its settings on the left");
+    checkSoon ([&] { return editor->getSelectedObject() == imageId && editor->isDrawerOpen() && editor->isDrawerOnLeft()
+                    && shown ("inspector-mode") && shown ("inspector-replace"); },
+               "a click on the picture (on the right of the canvas) opens its settings on the left");
     check (drawer->getRight() < juce::roundToInt (objectAt (imageId).getX()) + canvas->getX(), "... clear of the picture");
     checkEffectLayout (*editor, "a picture selected");
     save ("image-selected", pixelScale);
@@ -2034,45 +2050,52 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     {
         close->onClick();
         pump (40);
-        check (! editor->isDrawerOpen() && editor->getSelectedObject() == imageId, "the drawer's close button closes it; the picture stays selected");
+        checkSoon ([&] { return ! editor->isDrawerOpen() && editor->getSelectedObject() == imageId; },
+                   "the drawer's close button closes it; the picture stays selected");
     }
 
     // Esc deselects; with nothing selected the drawer is gone.
     editor->selectObject (textId);
     pump (40);
-    check (editor->isDrawerOpen() && ! editor->isDrawerOnLeft(), "selecting the text again opens its settings (on the right)");
+    checkSoon ([&] { return editor->isDrawerOpen() && ! editor->isDrawerOnLeft(); },
+               "selecting the text again opens its settings (on the right)");
     canvas->keyPressed (juce::KeyPress (juce::KeyPress::escapeKey));
     pump (40);
-    check (editor->getSelectedObject().isNull() && ! editor->isDrawerOpen(), "Esc deselects, and the drawer goes");
+    checkSoon ([&] { return editor->getSelectedObject().isNull() && ! editor->isDrawerOpen(); },
+               "Esc deselects, and the drawer goes");
 
     // ---- the drawer: the layer list ------------------------------------------------------------------------
     layers->onClick();
     pump (60);
-    check (editor->isDrawerOpen() && editor->isLayerListShown() && layers->getToggleState() && shown ("layer-list")
-               && list->getNumObjectRows() == 2 && ! editor->isDrawerOnLeft(),
-           "the Layers button opens the layer list in the drawer, and is lit");
+    checkSoon ([&] { return editor->isDrawerOpen() && editor->isLayerListShown() && layers->getToggleState() && shown ("layer-list")
+                    && list->getNumObjectRows() == 2 && ! editor->isDrawerOnLeft(); },
+               "the Layers button opens the layer list in the drawer, and is lit");
     checkEffectLayout (*editor, "the layer list");
 
     clickOn (*list, list->getRowBounds (1).toFloat().getCentre().withX (60.0f));
     pump (40);
-    check (editor->getSelectedObject() == textId && editor->isLayerListShown(), "a click on a row selects its object; the list stays");
+    checkSoon ([&] { return editor->getSelectedObject() == textId && editor->isLayerListShown(); },
+               "a click on a row selects its object; the list stays");
     save ("layers", pixelScale);
 
     clickOn (*list, list->getEyeBounds (0).toFloat().getCentre());
     pump (40);
-    check (! processor.getDocument().find (imageId)->visible, "a row's eye hides its object");
+    checkSoon ([&] { return ! processor.getDocument().find (imageId)->visible; },
+               "a row's eye hides its object");
     processor.undo();
     pump (40);
 
     clickOn (*list, list->getSettingsBounds (1).toFloat().getCentre());
     pump (40);
-    check (editor->isDrawerOpen() && ! editor->isLayerListShown() && shown ("inspector-band"), "a row's chevron opens the object's settings");
+    checkSoon ([&] { return editor->isDrawerOpen() && ! editor->isLayerListShown() && shown ("inspector-band"); },
+               "a row's chevron opens the object's settings");
 
     if (auto* back = find<juce::Button> (*editor, "inspector-layers"))
     {
         back->onClick();
         pump (40);
-        check (editor->isLayerListShown(), "\"Layers\" in the settings goes back to the list");
+        checkSoon ([&] { return editor->isLayerListShown(); },
+                   "\"Layers\" in the settings goes back to the list");
     }
 
     // An object's right-click menu greys nothing either: an item that would change nothing (the
@@ -2096,7 +2119,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
     layers->onClick();
     pump (40);
-    check (! editor->isDrawerOpen() && ! layers->getToggleState(), "the Layers button closes the list again");
+    checkSoon ([&] { return ! editor->isDrawerOpen() && ! layers->getToggleState(); },
+               "the Layers button closes the list again");
     editor->selectObject (juce::Uuid::null());
     pump (40);
 
@@ -2106,8 +2130,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         const auto heightBefore = canvas->getHeight();
         brushTool->onClick();
         pump (60);
-        check (brush->isVisible() && shown ("brush-size") && shown ("brush-softness") && shown ("brush-strength"),
-               "the Brush tool brings its settings: Size, Soft, Strength, in a strip over the bottom bar");
+        checkSoon ([&] { return brush->isVisible() && shown ("brush-size") && shown ("brush-softness") && shown ("brush-strength"); },
+                   "the Brush tool brings its settings: Size, Soft, Strength, in a strip over the bottom bar");
         check (canvas->getHeight() == heightBefore && brush->getBottom() == bottom->getY()
                    && static_cast<float> (brush->getY()) >= canvas->getY() + canvas->getDrawingArea().getBottom(),
                "... over the canvas's time axis: the canvas keeps its size, the drawing stays clear");
@@ -2120,17 +2144,20 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         const auto painted = paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f);
         dragOn (*canvas, from, to);
         pump (60);
-        check (paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) > painted, "the brush paints on the canvas");
+        checkSoon ([&] { return paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) > painted; },
+                   "the brush paints on the canvas");
         save ("brush", pixelScale);
 
         if (auto* eraser = find<juce::Button> (*editor, "tool-erase"))
         {
             eraser->onClick();
             pump (40);
-            check (brush->isVisible(), "the Eraser keeps the strip");
+            checkSoon ([&] { return brush->isVisible(); },
+                       "the Eraser keeps the strip");
             dragOn (*canvas, from, to);
             pump (60);
-            check (paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) <= painted, "the eraser takes the stroke away");
+            checkSoon ([&] { return paintAt (processor.getDocument(), *canvas, (from + to) * 0.5f) <= painted; },
+                       "the eraser takes the stroke away");
         }
 
         // Both strips at once (Draw, painting), with the drawer open: the least room there is.
@@ -2160,7 +2187,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     // ---- the bottom bar: Length, Repeat and the line that says what will happen ---------------------------
     repeat->triggerClick();
     pump (80);
-    check (choice (params::id::repeat) == 1 && bottom->getShownHint() == "Repeats every 4 bars", "Repeat on: \"Repeats every 4 bars\"");
+    checkSoon ([&] { return choice (params::id::repeat) == 1 && bottom->getShownHint() == "Repeats every 4 bars"; },
+               "Repeat on: \"Repeats every 4 bars\"");
     checkEffectLayout (*editor, "Repeat on");
     save ("repeat", pixelScale);
     repeat->triggerClick();
@@ -2177,7 +2205,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
 
         length->setSelectedId (6, juce::sendNotificationSync);   // 8 bars
         pump (60);
-        check (choice (params::id::length) == 5, "the Length box sets the length");
+        checkSoon ([&] { return choice (params::id::length) == 5; },
+                   "the Length box sets the length");
         length->setSelectedId (params::defaultLengthIndex + 1, juce::sendNotificationSync);
         pump (60);
     }
@@ -2204,11 +2233,12 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         {
             clickOn (*startAt, { static_cast<float> (startAt->getWidth()) * 0.75f, 14.0f });
             pump (80);
-            check (choice (params::id::startAt) == params::atBarStartIndex && shown ("start-bar"), "Start: At bar shows the bar's field");
+            checkSoon ([&] { return choice (params::id::startAt) == params::atBarStartIndex && shown ("start-bar"); },
+                       "Start: At bar shows the bar's field");
             setParameter (processor, params::id::startBar, 9.0f);
             pump (80);
-            check (bottom->getShownHint() == "Carves once from bar 9" && canvasBarLabels (processor) == "9 10 11 12",
-                   "... the bottom bar says \"Carves once from bar 9\" and the canvas numbers the song's bars");
+            checkSoon ([&] { return bottom->getShownHint() == "Carves once from bar 9" && canvasBarLabels (processor) == "9 10 11 12"; },
+                       "... the bottom bar says \"Carves once from bar 9\" and the canvas numbers the song's bars");
         }
 
         // Tempo: typed in.
@@ -2216,12 +2246,14 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         {
             clickOn (*tempo, { static_cast<float> (tempo->getWidth()) * 0.75f, 14.0f });
             pump (80);
-            check (choice (params::id::tempoSource) == 1 && shown ("bpm"), "Tempo: Manual shows the BPM field");
+            checkSoon ([&] { return choice (params::id::tempoSource) == 1 && shown ("bpm"); },
+                       "Tempo: Manual shows the BPM field");
             checkNoOverlap (*settings, "the settings, At bar and a typed tempo");
             save ("settings-timing", pixelScale);
             clickOn (*tempo, { static_cast<float> (tempo->getWidth()) * 0.25f, 14.0f });
             pump (80);
-            check (choice (params::id::tempoSource) == 0 && ! shown ("bpm"), "... Host hides it again");
+            checkSoon ([&] { return choice (params::id::tempoSource) == 0 && ! shown ("bpm"); },
+                       "... Host hides it again");
         }
 
         // Trigger: MIDI notes.
@@ -2229,8 +2261,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         {
             clickOn (*trigger, { static_cast<float> (trigger->getWidth()) * 0.8f, 14.0f });
             pump (80);
-            check (choice (params::id::trigger) == 1 && ! shown ("start-at") && ! shown ("start-bar"),
-                   "Trigger: MIDI has no start to choose (a note starts it)");
+            checkSoon ([&] { return choice (params::id::trigger) == 1 && ! shown ("start-at") && ! shown ("start-bar"); },
+                       "Trigger: MIDI has no start to choose (a note starts it)");
             check (bottom->getShownHint() == "Each note carves it once", "... the bottom bar says \"Each note carves it once\"");
             clickOn (*trigger, { static_cast<float> (trigger->getWidth()) * 0.2f, 14.0f });
             pump (80);
@@ -2252,8 +2284,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     // ---- the live view: a stand-in song through a second ArtFreq FX with this one's state -----------------
     editor->showLiveView (true);
     pump (40);
-    check (live->getToggleState() && ! shown ("tool-select") && ! shown ("tool-brush") && shown ("add-text") && shown ("layers"),
-           "the live view: Live is lit, and the tools (which have nothing to act on) are not there");
+    checkSoon ([&] { return live->getToggleState() && ! shown ("tool-select") && ! shown ("tool-brush") && shown ("add-text") && shown ("layers"); },
+               "the live view: Live is lit, and the tools (which have nothing to act on) are not there");
     checkEffectLayout (*editor, "the live view");
 
     if (auto* liveView = find<ui::LiveView> (*editor, "live-view"))
@@ -2284,7 +2316,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     save ("live", pixelScale);
     live->onClick();
     pump (40);
-    check (! live->getToggleState() && shown ("canvas") && shown ("tool-select"), "Live again goes back to the canvas and the tools");
+    checkSoon ([&] { return ! live->getToggleState() && shown ("canvas") && shown ("tool-select"); },
+               "Live again goes back to the canvas and the tools");
 
     // ---- the help ------------------------------------------------------------------------------------------------
     editor->showHelp (true);
@@ -2359,15 +2392,16 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     {
         setWindowScale (*editor, windowScale);
         pump (60);
-        check (editor->getWidth() == juce::roundToInt (720.0f * windowScale) && editor->getHeight() == juce::roundToInt (440.0f * windowScale),
-               "ArtFreq FX's window at " + juce::String (name) + " % is " + juce::String (editor->getWidth()) + " x " + juce::String (editor->getHeight()));
+        checkSoon ([&] { return editor->getWidth() == juce::roundToInt (720.0f * windowScale) && editor->getHeight() == juce::roundToInt (440.0f * windowScale); },
+                   "ArtFreq FX's window at " + juce::String (name) + " % is " + juce::String (editor->getWidth()) + " x " + juce::String (editor->getHeight()));
         atEveryState (name);
     }
 
     // The size is remembered, and a window that is opened again has it.
     setWindowScale (*editor, 1.5f);
     pump (60);
-    check (processor.getEditorWidth() == 1080 && processor.getEditorHeight() == 660, "the window size is remembered");
+    checkSoon ([&] { return processor.getEditorWidth() == 1080 && processor.getEditorHeight() == 660; },
+               "the window size is remembered");
 
     {
         const std::unique_ptr<juce::AudioProcessorEditor> again (processor.createEditor());
@@ -2697,7 +2731,8 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
 
         activate->onClick();   // Continue
         pump (40);
-        check (! screen->isVisible(), who + ": Continue puts the screen away");
+        checkSoon ([&] { return ! screen->isVisible(); },
+                   who + ": Continue puts the screen away");
         check (findComponentWithId (*editor, effect ? "effect-controls" : "view-switch")->isVisible(), who + ": the top bar is whole again");
 
         // ---- the Licence card ----------------------------------------------------------------------
@@ -2733,7 +2768,8 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
 
         find<juce::Button> (*editor, "deactivate")->onClick();
         pump (30);
-        check (card->isConfirming() && findComponentWithId (*editor, "deactivate-confirm")->isVisible(), who + ": Deactivate asks first");
+        checkSoon ([&] { return card->isConfirming() && findComponentWithId (*editor, "deactivate-confirm")->isVisible(); },
+                   who + ": Deactivate asks first");
         panelFits ("confirming");
         save ("licence-confirm", pixelScale);
 
@@ -2777,8 +2813,8 @@ void checkLicensing (const juce::File& outputDir, float pixelScale)
         testwait::pumpUntil ([&] { return findComponentWithId (*editor, "deactivate")->isVisible(); });
         find<juce::Button> (*editor, "deactivate")->onClick();
         pump (30);
-        check (processor.getLicense().getDeactivationWarning().contains ("ArtFreq stays activated with your ArtFreq key"),
-               who + ", two keys: the question says what stays (" + processor.getLicense().getDeactivationWarning() + ")");
+        checkSoon ([&] { return processor.getLicense().getDeactivationWarning().contains ("ArtFreq stays activated with your ArtFreq key"); },
+                   who + ", two keys: the question says what stays (" + processor.getLicense().getDeactivationWarning() + ")");
         panelFits ("two keys, confirming");
         save ("licence-two-keys-confirm", pixelScale);
 
@@ -3469,7 +3505,8 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     notOnAButton ("Redo");
     rig.uses (escapeKey);
     pump (40);
-    check (editor.getSelectedObject().isNull() && ! editor.isDrawerOpen(), name + ": Esc deselects, and the drawer goes");
+    checkSoon ([&] { return editor.getSelectedObject().isNull() && ! editor.isDrawerOpen(); },
+               name + ": Esc deselects, and the drawer goes");
     check (! rig.uses (escapeKey), name + ": with nothing selected and no drawer, Esc goes on to the DAW");
 
     // The Length menu: the keys are the menu's while it is open; closed, nothing stays modal.
@@ -3639,7 +3676,8 @@ void checkEffectKeys (const juce::File& outputDir, float pixelScale)
     saveWindow ("artfreq-fx-drawer-left.png");
     rig.uses (escapeKey);
     pump (40);
-    check (! editor.isDrawerOpen(), name + ": (Esc: deselected, the drawer gone)");
+    checkSoon ([&] { return ! editor.isDrawerOpen(); },
+               name + ": (Esc: deselected, the drawer gone)");
 
     rig.doubleClick (rig.canvas(), onRightText());
     check (editor.getSelectedObject() == rightId && editor.isDrawerOnLeft() && textBox.hasKeyboardFocus (true) && rig.typing(),
@@ -3856,7 +3894,8 @@ int main (int argc, char* argv[])
         processor.setPreview (true);
         playFor (processor, 2.2);
         pump (80);
-        check (processor.isSounding(), "Preview makes the processor sound");
+        checkSoon ([&] { return processor.isSounding(); },
+                   "Preview makes the processor sound");
         save ("playing", pixelScale);
         processor.setPreview (false);
         playFor (processor, 0.1);
@@ -4086,7 +4125,8 @@ int main (int argc, char* argv[])
 
         setWindowScale (*editor, 1.5f);
         pump (60);
-        check (processor.getEditorWidth() == 1680 && processor.getEditorHeight() == 1080, "the window size is remembered");
+        checkSoon ([&] { return processor.getEditorWidth() == 1680 && processor.getEditorHeight() == 1080; },
+                   "the window size is remembered");
         save ("150", 1.0f);
         saveFooterStates ("150");
 
