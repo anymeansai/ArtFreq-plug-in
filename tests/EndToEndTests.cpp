@@ -488,8 +488,11 @@ ARTFREQ_TEST (endToEndSmoothLowsFillWhereStripesShowGaps)
         // worse in Stripes than in Smooth, which was the check here. Now its few lines trace the
         // block's outline as well as the comb fills it; the difference left is the fill, above,
         // and anything with detail, as the text shows. The gliding comb read the block at 0.79.)
+        // (Text: Stripes gained a little too, 0.67 to 0.71 at 8192 points, once a stroke between
+        // two of its lines was played by one of them instead of half by each; the bar here was
+        // 0.1 until then.)
         CHECK_GREATER (smoothBlock.fidelity, 0.8);
-        CHECK_GREATER (smoothText.fidelity, stripesText.fidelity + 0.1);
+        CHECK_GREATER (smoothText.fidelity, stripesText.fidelity + 0.05);
         CHECK_GREATER (smoothText.fill, stripesText.fill);
 
         // A solid block's level is steady: no regular pulse (the comb's lines beat five and ten

@@ -384,8 +384,8 @@ ARTFREQ_TEST (planPlaysEveryThinStrokeOnOneLine)
     // disappears), by lines no further from it than the lines stand apart, at the stroke's level,
     // and never by two lines alone. Two lines beat against each other: the comb's five times a
     // second, at full depth when a stroke that touches neither line's own row lies half in one
-    // line's span and half in the other's (at 60 Hz the comb's lines are 15 rows apart, so four
-    // in ten thin strokes do). Such a stroke goes to the line that has more of it.
+    // line's span and half in the other's (one in six of these strokes did, until such a stroke
+    // went to the line that has more of it).
     const FrequencyScale scale;
     constexpr int strokeColumns = 4;
     const auto firstTop = static_cast<int> (std::ceil ((1.0 - scale.toNorm (300.0)) * Canvas::height));
@@ -817,8 +817,8 @@ ARTFREQ_TEST (engineCombPlaysThinStrokesSteadily)
     };
 
     // (62.5 and 137.5 Hz lie half way between two of the comb's lines: strokes there touch
-    // neither line's row and straddle the place where their spans meet, which until 0.6.1 were
-    // played half by each line, beating)
+    // neither line's row and straddle the place where their spans meet; played half by each
+    // line they would beat)
     for (const auto& stroke : { Stroke { 100.0, 0.0, true }, Stroke { 100.0, 5.0, true }, Stroke { 102.5, 6.0, true },
                                 Stroke { 62.5, 2.0, true }, Stroke { 137.5, 3.0, true },
                                 Stroke { 400.0, 0.0, true }, Stroke { 400.0, 5.0, true },

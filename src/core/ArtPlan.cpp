@@ -114,8 +114,8 @@ constexpr int stripColumns = 16;   // buildPlan works through the canvas in stri
     halves (it straddles the place where the spans meet) is played by the line that has more of
     its rows, and by that line alone: played half by each, as the spans would have it, the two
     lines beat against each other, five times a second in the comb (a stroke that looks like a
-    row of beads and sounds like a tremolo; at 60 Hz the comb's lines are 15 canvas rows apart, so
-    four in ten of the thin strokes drawn there straddle).
+    row of beads and sounds like a tremolo; that was one in six of all strokes 2 to 6 rows thick
+    between 40 and 300 Hz, where the comb's lines stand 4 to 15 canvas rows apart).
 
     `comb`: the lines are the standing comb's, where two or three lines joined by drawn rows, and
     joined to no further line, are a thin stroke (see combThinEdge). */

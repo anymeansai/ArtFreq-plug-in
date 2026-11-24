@@ -250,7 +250,7 @@ std::vector<float> skepticRender (const ArtPlan& plan, const SkepticCase& c, flo
     const auto pass = static_cast<int> (std::lround (c.seconds * sampleRate));
     const auto total = pass + 2 * pad;
     std::vector<float> audio (idx (total), 0.0f);
-    msPerSecond = 1.0e9;
+    msPerSecond = 0.0;   // (a single pass is not timed)
 
     if (! c.repeat)
     {
@@ -271,6 +271,7 @@ std::vector<float> skepticRender (const ArtPlan& plan, const SkepticCase& c, flo
     }
 
     gain = 1.0f;
+    msPerSecond = 1.0e9;
 
     // (the quickest of three: the cost without whatever else the machine was doing)
     for (int attempt = 0; attempt < 3; ++attempt)
@@ -316,7 +317,7 @@ juce::String skepticStrokes (LowEnd lows, float contrastDb)
 {
     const FrequencyScale scale;
     juce::String table;
-    table << "THIN HORIZONTAL STROKES (" << lowsName (lows) << ", Density 256): every height from 40 to 300 Hz\n"
+    table << "THIN HORIZONTAL STROKES (" << lowsName (lows) << ", Density 256): every height from 40 Hz to 1.7 kHz\n"
           << "rows   strokes   lost   1 line   2 lines   3 lines   more   2 lines beating > 6 dB   lowest line below the stroke, worst (Hz, at Hz)\n";
 
     Canvas canvas;

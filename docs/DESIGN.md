@@ -296,7 +296,13 @@ streak under every step. Four causes, and what replaced each:
   The 40 ms take the streaks under mid text down by 4 dB below it and 11 dB above (25 ms: 1 and
   7 dB); they are shorter than any analyser's window, so the edges look as they did. With Repeat
   the smoothing runs round from the last column into the first; without, the pass is surrounded
-  by silence and the lines also reach silence at its two ends. The plan therefore knows how long
+  by silence and the lines also reach silence at its two ends. Long passes have long columns (31
+  ms at 16 bars and 120 BPM), and a fade two or three columns long is drawn with as many straight
+  strokes, whose corners spread a low line's energy again: a line whose 12 cycles are longer than
+  one column fades over four columns at least (`coarsestFadeColumns`; the low text at 16 bars:
+  2 dB less below the letters, 5 dB less above), and a line whose 12 cycles fit into one column
+  is left to the engine's glide from column to column, so the highs keep every column as drawn.
+  The plan therefore knows how long
   a pass takes (`PlanSettings::passSeconds`, from Length and the tempo to the nearest 3 %, so a
   tempo ramp rebuilds it now and then) and whether it repeats.
 - **Rows were played by the nearest line, wherever it was.** In the lows the nearest line can be
@@ -305,12 +311,18 @@ streak under every step. Four causes, and what replaced each:
   own frequency. Looked at between each pair of neighbouring lines: where one line's own row is
   drawn and the other's is not, and the drawing runs on unbroken from the drawn line to where
   their spans meet, it is a shape's edge: the drawn line plays all of it and the other stays
-  silent. A stroke that touches neither line's row is played by the nearer one, as before, so
-  nothing drawn disappears.
+  silent. A stroke that touches neither line's row is played by one line, so nothing drawn
+  disappears: the nearer one, and where the stroke straddles the place where the two lines'
+  spans meet, the line that has more of its rows. (Played half by each, as the spans would have
+  it, the two lines beat against each other at full depth: five times a second in the comb, a
+  stroke like a row of beads with a tremolo to it, which was one in six of all strokes 2 to 6
+  rows thick between 40 and 300 Hz. `ArtFreqLab --skeptic` builds a stroke at every height from
+  40 Hz to 1.7 kHz, 1 to 24 rows thick, and counts none on two lines and none lost.)
 - **Thin strokes.** Two of the comb's lines on their own would beat as one pulse, five or ten
   times a second (14 dB on an analyser of 4096 points). Where drawn rows join two lines and no
-  third, the louder plays for both, steadily; three lines play with the outer two at half level
-  (4 dB of shimmer at 4096 points, 3 dB at 8192). The narrowest runs played as they are (four or
+  third, the louder plays for both, steadily; three lines play with the outer two as if drawn at
+  half the value (20 dB down at the default contrast: nearly one line, with a hint of the
+  stroke's height; 4 dB of shimmer at 4096 points, 3 dB at 8192). The narrowest runs played as they are (four or
   five lines, 20 Hz) shimmer by 6 dB at 4096 and 3 dB at 8192, more than the gliding comb's did
   (4 and 2 dB: its sines were 20 Hz apart, exactly one in such a stroke at any time, which is
   also why it had to be switched); from six lines on, as any shape does.
@@ -343,10 +355,10 @@ brackets the loudest cell there against the loudest cell of the drawing):
 | --- | --- | --- | --- | --- |
 | one row at 100 Hz (a single tone) | -30.7 (-30.5) | -50.1 (-42.3) | -30.6 (-30.4) | -49.8 (-42.2) |
 | block 60 - 250 Hz | -32.8 (-19.0) | -77.3 (-64.2) | -42.6 (-33.4) | -75.7 (-70.1) |
-| LOW in the Low band | -24.2 (-12.7) | -57.6 (-39.9) | -26.7 (-20.9) | -40.9 (-28.7) |
-| thin wavy stroke 130 - 350 Hz | -28.5 (-27.6) | -45.6 (-43.3) | -30.0 (-29.9) | -48.5 (-37.1) |
-| dot 40 - 65 Hz | -15.6 (-18.7) | -67.0 (-63.0) | -22.8 (-25.9) | -57.2 (-59.0) |
-| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -69.6 (-60.8) | -9.9 (0.0) | -10.1 (0.0) |
+| LOW in the Low band | -24.2 (-12.7) | -57.6 (-39.9) | -26.7 (-20.9) | -40.5 (-28.6) |
+| thin wavy stroke 130 - 350 Hz | -28.5 (-27.6) | -45.6 (-43.3) | -30.0 (-29.9) | -46.0 (-35.4) |
+| dot 40 - 65 Hz | -15.6 (-18.7) | -67.0 (-63.0) | -22.8 (-25.9) | -56.9 (-59.0) |
+| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -69.6 (-60.8) | -9.9 (0.0) | -71.8 (-64.0) |
 | MID in the Mid band | -52.0 (-36.4) | -66.3 (-55.2) | -49.7 (-39.0) | -66.1 (-58.4) |
 | portrait 40 Hz - 2 kHz | -43.8 (-33.5) | -74.3 (-60.6) | -39.0 (-30.9) | -73.7 (-64.2) |
 
@@ -358,8 +370,9 @@ the fade is capped at 0.25 s). Above the drawing the same eight read -44 (the wa
 after another, each for a moment, and two fixed sines cannot hand over as one gliding sine would:
 faint arcs run off the stroke where it bends (-46 dB; the gliding comb played the same stroke as
 a staircase on Stripes' lines, with a streak under every step, -28 dB). Stripes' frame: its
-bottom bar, 80 - 90 Hz, lies between two of its lines (72 and 97 Hz) and is played by the lower,
-as a stroke between lines always was; Smooth has lines inside it.
+bottom bar, 80 - 90 Hz, lies between two of its lines (72 and 97 Hz) and is played by the upper,
+which has more of it (0.6 played it half on each, and the lower read as -10 dB "below the
+drawing"); Smooth has lines inside it.
 
 **Measured: the fill** (ArtFreqLab, Hann, interpolated, mean over four drawings and both
 densities; low = 30 - 250 Hz / mid = 250 Hz - 2 kHz):
@@ -1497,6 +1510,13 @@ on: it renders four drawings through the real plan and engine, analyses them lik
 and a comparison against an earlier run (`--baseline`). `ArtFreqLab <dir> --drip`
 (tools/DripLab.h) is the drip check: what sounds below, above and beside eight drawings with
 something low in them, with pictures as analysers show them (see [Smooth lows](#smooth-lows)).
+`ArtFreqLab <dir> --skeptic` (tools/SkepticLab.h) is the second opinion on that: it plays the
+drawings people make (the default text in the Low band, small and large low text, soft
+gradients, brush strokes, a full-height picture, text in the highs) at Density 64, 256 and 1024,
+over 1, 4 and 16 bars, looped and once, on the log and the linear scale, and writes each one's
+real output as raw floats with what was drawn where, for an analysis from outside; and it builds
+thin horizontal strokes at every height and counts the lines that play each (docs/ACCURACY.md
+has what it found).
 
 `ArtFreqTruthLab <snapshot-dir> <out>` (tools/TruthLab.cpp) checks the screenshots against the
 sound. The snapshot tool, run with `ARTFREQ_SNAPSHOT_STATES=1`, saves each state beside its PNG
