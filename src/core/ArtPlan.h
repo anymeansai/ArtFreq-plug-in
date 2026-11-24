@@ -105,16 +105,22 @@ constexpr float combGain = 1.5f;
 constexpr float combGainSpacingHz = 20.0f;
 
 /** Fades in time. A sine turned on or off between two columns (a few ms) is, for that moment, a
-    click: its energy spreads over about as many Hz as one over the time it took. At 5 kHz that is
-    out of sight; at 100 Hz it is an octave of "legs" under every edge of a low shape. So each
-    line's loudness is smoothed along time with a raised cosine as long as fadeCycles of its own
-    sine, at least a column (no change) and at most longestFadeSeconds and a sixteenth of the
-    pass: the lower the line, the gentler it comes and goes, and its energy stays within about a
-    sixth of its frequency (12 cycles, measured with ArtFreqLab --drip: 8 leave legs 15 dB
-    stronger, 20 gain little more and soften the letters of low text). With Repeat the smoothing runs round from the last column into the
-    first; without, the pass is surrounded by silence and the lines also reach silence at its two
-    ends. */
+    click: its energy spreads over about as many Hz as one over the time it took, and a little of
+    it much further. At 100 Hz that is an octave of "legs" under every edge of a low shape; under
+    text in the mids, faint streaks down to the bottom of an analyser's picture. So each line's
+    loudness is smoothed along time with a raised cosine as long as fadeCycles of its own sine:
+    the lower the line, the gentler it comes and goes, and its energy stays within about a sixth
+    of its frequency (12 cycles, measured with ArtFreqLab --drip: 8 leave legs 15 dB stronger, 20
+    gain little more and soften the letters of low text). No shorter than shortestFadeSeconds
+    where the columns are short enough to shape it (shortestFadeColumns of them at most: a short
+    drawing keeps its edges; 40 ms takes the streaks under mid text down by 4 dB below it and 11
+    dB above, and is still shorter than any analyser's window), no longer than longestFadeSeconds
+    and a sixteenth of the pass. With Repeat the smoothing runs round from the last column into
+    the first; without, the pass is surrounded by silence and the lines also reach silence at its
+    two ends. */
 constexpr float fadeCycles = 12.0f;
+constexpr float shortestFadeSeconds = 0.04f;
+constexpr float shortestFadeColumns = 5.0f;
 constexpr float longestFadeSeconds = 0.25f;
 constexpr float longestFadeOfPass = 1.0f / 16.0f;
 

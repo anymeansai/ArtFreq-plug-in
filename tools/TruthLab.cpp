@@ -25,7 +25,8 @@
 //      is moved back by the latency it reports, as the DAW's delay compensation does;
 //   2. analyses the output (the mean of the channels) as an FFT spectrogram such as MiniMeters'
 //      does (its settings assumed, not looked up; written here on its own, not with the plug-in's
-//      analysis code): Hann window, FFT 4096, 8192 and 16384 points, dB of the magnitude (a
+//      analysis code): the window the canvas uses (Blackman-Harris, four terms: a clean tone has
+//      no skirt), FFT 4096, 8192 and 16384 points, dB of the magnitude (a
 //      full-scale sine reads 0 dB), one analysis per pixel column of the canvas, frequency on the
 //      state's own scale, each pixel row reading the dB interpolated between the bin centres
 //      around it, or the loudest bin inside it where it spans several; coloured with the canvas's
@@ -512,7 +513,8 @@ Display analyse (const std::vector<float>& signal, double fromSample, double toS
 
     for (int n = 0; n < fftSize; ++n)
     {
-        window[idx (n)] = static_cast<float> (0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * n / fftSize));
+        const auto phase = juce::MathConstants<double>::twoPi * n / fftSize;
+        window[idx (n)] = static_cast<float> (0.35875 - 0.48829 * std::cos (phase) + 0.14128 * std::cos (2.0 * phase) - 0.01168 * std::cos (3.0 * phase));
         windowSum += window[idx (n)];
     }
 
@@ -1344,7 +1346,7 @@ bool runState (const Options& options, const juce::String& name, const Stereo& s
                 juce::Rectangle<float> (f, f * 2.5f, static_cast<float> (width) - 2.0f * f, f * 1.5f), juce::Justification::left, true);
     g.drawText ("Real: one pass through the activated processor"
                     + (effect ? " on a dense synthetic master (" + num (result.songRmsDb, 1) + " dBFS RMS)" : juce::String())
-                    + ", analysed like MiniMeters (Hann, a column every " + num (1000.0 * rendered.passSamples / sampleRate / w, 1)
+                    + ", analysed as a spectrogram analyser does (Blackman-Harris, a column every " + num (1000.0 * rendered.passSamples / sampleRate / w, 1)
                     + " ms, colours " + num (options.lowDb) + " to " + num (options.highDb) + " dBFS). Dashes: 250 Hz and 2 kHz.",
                 juce::Rectangle<float> (f, f * 4.0f, static_cast<float> (width) - 2.0f * f, f * 1.5f), juce::Justification::left, true);
 
@@ -1453,7 +1455,7 @@ juce::String report (const std::vector<StateResult>& results, const Options& opt
 {
     juce::String text;
     text << "ArtFreqTruthLab: each screenshot's state played through the activated processor and analysed like MiniMeters\n"
-         << "(Hann, the state's scale, colours " << num (options.lowDb) << " to " << num (options.highDb) << " dBFS), against the old canvas\n"
+         << "(Blackman-Harris, the state's scale, colours " << num (options.lowDb) << " to " << num (options.highDb) << " dBFS), against the old canvas\n"
          << "(--before: the screenshots before), the new canvas (the measured preview, as the editor renders it at each FFT size)\n"
          << "and the new fast preview alone (what shows while dragging). Bands: lows < 250 Hz, low-mids 250 Hz - 2 kHz,\n"
          << "highs > 2 kHz. All in dB as the analyser's colour key reads them, clipped to its range.\n"
@@ -1643,7 +1645,7 @@ bool renderMarketingShot (const MarketingShot& shot, const Options& options, con
                 juce::Justification::left, true);
     g.setColour (faint());
     g.setFont (fonts::ui (11.5f * s));
-    g.drawText ("Real measurement of the plug-in's audio, not a mock-up: Hann window, FFT 8192, log 20 Hz - 20 kHz, "
+    g.drawText ("Real measurement of the plug-in's audio, not a mock-up: Blackman-Harris window, FFT 8192, log 20 Hz - 20 kHz, "
                     + num (options.lowDb) + " to " + num (options.highDb) + " dBFS.",
                 juce::Rectangle<float> (64.0f * s, logicalH * s - 30.0f * s, plot.getWidth(), 18.0f * s), juce::Justification::left, true);
 

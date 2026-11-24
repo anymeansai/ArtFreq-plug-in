@@ -405,7 +405,7 @@ ARTFREQ_TEST (processorLoadsStatesFromBeforeStartAt)
 
 ARTFREQ_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
 {
-    // New instances play Smooth lows (the rising comb). Lows is a setting of the plan, so, like
+    // New instances play Smooth lows (the standing comb). Lows is a setting of the plan, so, like
     // Density, not an automation target.
     auto fresh = makeProcessor();
     auto* lows = fresh->getParameters().getParameter (params::id::lowEnd);

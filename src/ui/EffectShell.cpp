@@ -535,7 +535,7 @@ SoundStrip::SoundStrip (ArtFreqProcessor& processor)
     lows.setComponentID ("lows");
     lows.setTitle ("Lows");
     lows.setTooltip ("Lows: how the crowded low end plays (below about 2 kHz on a log scale). "
-                     "Smooth: sines gliding upwards keep shapes filled at every analyser FFT size. "
+                     "Smooth: fine steady lines keep shapes filled at every analyser FFT size, with nothing below them. "
                      "Stripes: separate lines 25 Hz apart, which long FFTs show as stripes (an effect).");
     lowsAttachment = std::make_unique<ChoiceSegments> (lows, parameter (processor, params::id::lowEnd));
 

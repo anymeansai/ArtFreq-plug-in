@@ -2,7 +2,7 @@
 
 // The analysis behind the live spectrogram view: the audio thread pushes what ArtFreq outputs,
 // the message thread turns it into spectrum columns, analysed as the user's analyser does (the
-// FFT size from Settings, a Hann window: SpectrumAnalyser), so the live view and the canvas show
+// FFT size from Settings and the window of SpectrumAnalyser), so the live view and the canvas show
 // the same sound alike.
 
 #include "SpectrumAnalysis.h"

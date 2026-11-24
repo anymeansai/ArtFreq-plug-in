@@ -244,7 +244,7 @@ struct Inspector::Impl
         // an object or to the analyser match, so it stays at the foot of the layer list.
         lowsControl.setTitle ("Lows");
         lowsControl.setTooltip ("Lows: how the crowded low end plays (below about 2 kHz on a log scale). "
-                                "Smooth: sines gliding upwards keep shapes filled at every analyser FFT size. "
+                                "Smooth: fine steady lines keep shapes filled at every analyser FFT size, with nothing below them. "
                                 "Stripes: separate lines 25 Hz apart, which long FFTs show as stripes (an effect).");
         lowsAttachment = std::make_unique<shell::ChoiceSegments> (lowsControl,
                                                                   *processor.getParameters().getParameter (params::id::lowEnd));

@@ -413,7 +413,7 @@ ARTFREQ_TEST (planFadesLowLinesInTime)
 
         // An 8 s pass: a column is 7.8 ms. The line at 125 Hz comes and goes over fadeCycles of
         // its sine (96 ms: 12.3 columns), half of it either side of the drawn edge, rising all
-        // the way; the line at 4.5 kHz, whose fade would be shorter than a column, as drawn.
+        // the way; the line at 4.5 kHz over shortestFadeSeconds (40 ms: 5.1 columns).
         settings.passSeconds = 8.0;
         const auto soft = buildPlan (canvas, settings);
         const auto hz = static_cast<double> (soft->frequencies[static_cast<size_t> (low)]);
@@ -431,8 +431,17 @@ ARTFREQ_TEST (planFadesLowLinesInTime)
         for (int c = 256 - reach; c < 256 + reach; ++c)
             CHECK (soft->amplitude (c + 1, low) >= soft->amplitude (c, low));
 
-        CHECK (! (soft->amplitude (255, high) > 0.0f) && soft->amplitude (767, high) > 0.0f && ! (soft->amplitude (768, high) > 0.0f));
-        CHECK_NEAR (soft->amplitude (256, high), soft->amplitude (500, high), 1.0e-7);
+        CHECK (! (soft->amplitude (253, high) > 0.0f) && soft->amplitude (255, high) > 0.0f);
+        CHECK (soft->amplitude (768, high) > 0.0f && ! (soft->amplitude (770, high) > 0.0f));
+        CHECK_LESS (soft->amplitude (256, high), soft->amplitude (500, high));
+        CHECK_NEAR (soft->amplitude (258, high), soft->amplitude (500, high), 1.0e-7);
+
+        // A 32 s pass: a column is 31 ms, longer than that fade, and the high line is as drawn.
+        settings.passSeconds = 32.0;
+        const auto slow = buildPlan (canvas, settings);
+        CHECK (! (slow->amplitude (255, high) > 0.0f) && ! (slow->amplitude (768, high) > 0.0f));
+        CHECK_NEAR (slow->amplitude (256, high), slow->amplitude (500, high), 1.0e-7);
+        settings.passSeconds = 8.0;
 
         // The loudest column is still at planTargetRms, and the active lists follow the fades.
         double loudest = 0.0;

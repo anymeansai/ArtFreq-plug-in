@@ -516,8 +516,10 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
     }
 
     // ---- Fades in time (see fadeCycles): which lines, and how long ----------------------------
-    // Only the lines whose fade is longer than two columns change at all (at the default length,
-    // those below about 770 Hz); they are kept line by line as well, as the fades run along them.
+    // Only the lines whose fade is longer than two columns change at all (every line at the
+    // default length; none where a column lasts 20 ms or more, and the engine's own glide from
+    // column to column is gentle enough); they are kept line by line as well, as the fades run
+    // along them.
     const auto passSeconds = std::isfinite (settings.passSeconds) ? settings.passSeconds : 0.0;
     std::vector<double> fadeColumns;    // per faded line, the length of its fade in columns
     std::vector<size_t> fadedLines;
@@ -526,10 +528,11 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
     {
         const auto columnSeconds = passSeconds / numColumns;
         const auto longest = std::min (static_cast<double> (longestFadeSeconds), passSeconds * static_cast<double> (longestFadeOfPass));
+        const auto shortest = std::min (static_cast<double> (shortestFadeSeconds), static_cast<double> (shortestFadeColumns) * columnSeconds);
 
         for (size_t l = 0; l < lines; ++l)
         {
-            const auto seconds = std::min (static_cast<double> (fadeCycles) / std::max (1.0, finalLines[l].hz), longest);
+            const auto seconds = std::min (std::max (shortest, static_cast<double> (fadeCycles) / std::max (1.0, finalLines[l].hz)), longest);
 
             if (seconds > 2.0 * columnSeconds)
             {

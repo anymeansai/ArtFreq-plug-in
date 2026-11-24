@@ -172,7 +172,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (bool forEffect
             .withStringFromValueFunction ([] (float v, int) { return formatDb (v, 0); })
             .withValueFromStringFunction ([] (const juce::String& t) { return parseNumber (t); })));
 
-    // How the lows below about 2 kHz are played: the rising comb (shapes stay filled) or separate
+    // How the lows below about 2 kHz are played: the standing comb (shapes stay filled) or separate
     // lines (stripes on a long FFT). Added after 0.2 (version hint 3): setStateInformation loads
     // states without it as Stripes, the only look before. It reshapes the plan, so like Density
     // it is not an automation target.

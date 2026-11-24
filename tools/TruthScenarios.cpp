@@ -215,7 +215,7 @@ Played play (ArtFreqProcessor& p, const Scenario& sc)
     return r;
 }
 
-/** An analyser written here: periodic Hann, |X| scaled so a full-scale sine reads 0 dB, one
+/** An analyser written here: periodic Blackman-Harris (four terms, as the plug-in's), |X| scaled so a full-scale sine reads 0 dB, one
     analysis per pixel column centred on it, rows read as interpolated between the bins around
     the row's centre or the loudest bin inside the row, plus the analyser's slope (pivot 1 kHz). */
 std::vector<float> analyse (const std::vector<float>& x, double from, double to, int fft, const FrequencyScale& scale,
@@ -227,7 +227,8 @@ std::vector<float> analyse (const std::vector<float>& x, double from, double to,
 
     for (int n = 0; n < fft; ++n)
     {
-        win[idx (n)] = 0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * n / fft);
+        const auto phase = 2.0 * juce::MathConstants<double>::pi * n / fft;
+        win[idx (n)] = 0.35875 - 0.48829 * std::cos (phase) + 0.14128 * std::cos (2.0 * phase) - 0.01168 * std::cos (3.0 * phase);
         sum += win[idx (n)];
     }
 

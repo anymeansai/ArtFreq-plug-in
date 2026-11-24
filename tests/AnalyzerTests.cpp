@@ -51,7 +51,7 @@ ARTFREQ_TEST (analyzerFullScaleSineReadsZeroDb)
     CHECK_NEAR (analyzer.getSampleRate(), sampleRate, 0.0);
 
     // 1 kHz falls between two bins: the strongest bin reads within the window's scalloping
-    // (Hann: up to 1.4 dB) of 0 dB.
+    // (Blackman-Harris: up to 0.8 dB) of 0 dB.
     int columns = 0;
     auto column = analyse (analyzer, sine (1000.0, 1.0, 16384), columns);
     CHECK (analyzer.getFftSize() == LiveAnalyzer::defaultFftSize);
@@ -75,7 +75,7 @@ ARTFREQ_TEST (analyzerFullScaleSineReadsZeroDb)
     column = analyse (centred, sine (100.0 * binHz, 0.5, 16384), columns);
     CHECK_NEAR (column[100], -6.02, 0.02);
 
-    // Hann, as analysers use: far from the tone the spectrum is deep down.
+    // Far from the tone the spectrum is deep down (the window's side lobes: 92 dB).
     CHECK_LESS (column[300], -90.0f);
 
     // The FFT size follows the analyser's (Settings): a column per sixteenth of the window.

@@ -41,7 +41,7 @@ constexpr float analysisWindowLobeBins = 4.0f;    // its main lobe ends this man
 struct AnalyserView
 {
     int fftSize = 8192;
-    float floorDb = -80.0f;      // shown as the darkest colour, and everything quieter
+    float floorDb = -90.0f;      // shown as the darkest colour, and everything quieter
     float ceilingDb = 0.0f;      // shown as the brightest colour, and everything louder
 
     /** A power of two from 1024 to 32768, and a range at least minSpanDb wide. */

@@ -498,7 +498,7 @@ ARTFREQ_TEST (analyserSettingsAreSavedWithTheProject)
         const auto defaults = loaded.getAnalyserView();
         CHECK (defaults.fftSize == 8192);
         CHECK_NEAR (defaults.floorDb, params::defaultAnalyserFloorDb, 0.001f);
-        CHECK_NEAR (params::defaultAnalyserFloorDb, -80.0f, 0.001f);
+        CHECK_NEAR (params::defaultAnalyserFloorDb, -90.0f, 0.001f);
         CHECK_NEAR (defaults.ceilingDb, 0.0f, 0.001f);
 
         // A range turned inside out keeps its floor and spans at least 20 dB.

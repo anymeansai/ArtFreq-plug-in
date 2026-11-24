@@ -58,7 +58,7 @@ namespace id
     // Analyser view (not automatable, and not heard): how the user's spectrogram draws, so the
     // canvas can show the sound as it will: its FFT size and the levels its colours span
     inline constexpr const char* analyserFft     = "analyserFft";      // choice: 4096, 8192, 16384 (default 8192)
-    inline constexpr const char* analyserFloor   = "analyserFloor";    // dBFS, -140..-40, default -80: the darkest colour
+    inline constexpr const char* analyserFloor   = "analyserFloor";    // dBFS, -140..-40, default -90: the darkest colour
     inline constexpr const char* analyserCeiling = "analyserCeiling";  // dBFS, -60..+12, default 0: the brightest colour
 
     // ArtFreq FX only: what happens to the audio coming in
@@ -84,13 +84,14 @@ constexpr int defaultLengthIndex = 4;  // "4 bars"
 
 /** The analyser view. FFT 8192: the size the Smooth lows are tuned for, and a usual choice in
     MiniMeters and other spectrograms. Levels: a full-scale sine reads 0 dBFS in an analyser's
-    cell; the darkest colour is at -80 dBFS, the span spectrograms usually show (60 to 90 dB).
+    cell; the darkest colour is at -90 dBFS, the deep end of what spectrograms usually show (60 to
+    90 dB), and just above the analysis window's own side lobes under a full-scale sine (92 dB).
     (It was -100 until 0.6: that deep, a picture is mostly the faintest tenth of a percent of the
     sound, which no ear and few analysers pick out; projects saved with -100 keep it.) MiniMeters'
     own defaults could not be looked up: the help says to set the range to whatever the user's
     analyser uses. */
 constexpr int defaultAnalyserFftIndex = 1;
-constexpr float defaultAnalyserFloorDb = -80.0f;
+constexpr float defaultAnalyserFloorDb = -90.0f;
 constexpr float defaultAnalyserCeilingDb = 0.0f;
 constexpr float minAnalyserSpanDb = 20.0f;   // the colours span at least this many dB
 
