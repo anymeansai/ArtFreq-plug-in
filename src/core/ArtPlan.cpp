@@ -122,7 +122,6 @@ constexpr int stripColumns = 16;   // buildPlan works through the canvas in stri
 void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* ownRow, const int* spanFirst, const int* spanLast,
                 bool comb, float* values, std::vector<uint8_t>& joined) noexcept
 {
-    constexpr auto strip = stripColumns;
 
     const auto rowOf = [&canvas, c0] (int rowFromBottom)
     {
@@ -133,9 +132,9 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
     // of them are drawn (no rows: silence, and "every row drawn").
     const auto over = [&rowOf, width] (int from, int to, float* loudest, float* quietest, float* drawn)
     {
-        std::fill (loudest, loudest + strip, 0.0f);
-        std::fill (quietest, quietest + strip, 1.0f);
-        std::fill (drawn, drawn + strip, 0.0f);
+        std::fill (loudest, loudest + stripColumns, 0.0f);
+        std::fill (quietest, quietest + stripColumns, 1.0f);
+        std::fill (drawn, drawn + stripColumns, 0.0f);
 
         for (int row = from; row <= to; ++row)
         {
@@ -150,9 +149,9 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
         }
     };
 
-    float own[strip] {}, ownAbove[strip] {}, lowLoudest[strip], lowQuietest[strip], highLoudest[strip], highQuietest[strip];
-    float lowRows[strip], highRows[strip];
-    const auto at = [values] (int line) { return values + static_cast<size_t> (line) * strip; };
+    float own[stripColumns] {}, ownAbove[stripColumns] {}, lowLoudest[stripColumns], lowQuietest[stripColumns], highLoudest[stripColumns], highQuietest[stripColumns];
+    float lowRows[stripColumns], highRows[stripColumns];
+    const auto at = [values] (int line) { return values + static_cast<size_t> (line) * stripColumns; };
 
     // The lowest line also plays what lies below its own row (there is no line down there).
     over (spanFirst[0], ownRow[0], at (0), lowQuietest, lowRows);
@@ -169,7 +168,7 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
 
         auto* below = at (l);
         auto* above = at (l + 1);
-        auto* join = joined.data() + static_cast<size_t> (l) * strip;
+        auto* join = joined.data() + static_cast<size_t> (l) * stripColumns;
 
         for (int i = 0; i < width; ++i)
         {
@@ -186,7 +185,7 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
             join[i] = belowDrawn && aboveDrawn && lowDrawn && highDrawn ? 1 : 0;
         }
 
-        std::copy (ownAbove, ownAbove + strip, own);
+        std::copy (ownAbove, ownAbove + stripColumns, own);
     }
 
     // ... and the highest of the lows what lies above its own row, up to the end of its span.
@@ -205,7 +204,7 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
         {
             auto last = first;
 
-            while (last + 1 < lines && joined[static_cast<size_t> (last) * strip + static_cast<size_t> (i)] != 0)
+            while (last + 1 < lines && joined[static_cast<size_t> (last) * stripColumns + static_cast<size_t> (i)] != 0)
                 ++last;
 
             if (last == first + 1)
