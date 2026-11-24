@@ -35,7 +35,6 @@ public:
     static constexpr double jumpFadeSeconds = 0.003;     // fade out before, and in after, a jump
     static constexpr double planFadeSeconds = 0.020;     // crossfade when the plan changes
     static constexpr int maxLines = 1024;                // plans with more lines are truncated
-    static constexpr int maxCombSines = combMaxSines;    // the most sines a rising comb has (ArtPlan::combSines)
 
     ArtEngine();
 
@@ -65,8 +64,9 @@ public:
         - The gate fades over gateFadeSeconds.
         - Lines at or above 0.48 * sampleRate are skipped (never alias).
         - Silent lines cost (almost) nothing.
-        - A plan with a rising comb (ArtPlan::combLines) also plays the comb's gliding sines;
-          where they are in their glide depends on the samples rendered since reset().
+        - The lines of a plan's standing comb (ArtPlan::combLines) keep their phases relative to
+          the samples rendered since reset(), silent or not: whenever one starts to sound it is
+          where it would have been had it never stopped.
         - Output is the plan's level (loudest column RMS = planTargetRms); the caller applies
           the user's level and the safety clipper. */
     void render (float* out, int numSamples, const PlaySegment* segments, int numSegments) noexcept;
@@ -92,8 +92,11 @@ private:
         std::vector<float> re, im, cosStep, sinStep;
         std::vector<float> frequencies;
         std::vector<uint8_t> usable;  // 0 for lines above the Nyquist guard
+        std::vector<float> phase;     // the comb's lines: their phase at reset (ArtPlan::combPhases)
+        std::vector<int64_t> playedTo;// ... and the sample (of `clock`) their oscillator has reached
         uint64_t layoutHash = 0;
         int numLines = 0;
+        int combLines = 0;            // lines [0, combLines) are the standing comb's
         bool valid = false;           // set up for some plan
     };
 
@@ -106,11 +109,8 @@ private:
     void renderRange (float* out, int from, int to) noexcept;
     int renderChunk (float* out, int maxSamples) noexcept;
     int samplesLeftInColumn (const ArtPlan& plan) const noexcept;
-    int gather (const ArtPlan* plan, const ArtPlan* second, const Bank& bank) noexcept;
+    int gather (const ArtPlan* plan, const ArtPlan* second, Bank& bank, int numSamples) noexcept;
     void synthesise (const ArtPlan* plan, const ArtPlan* second, Bank& bank, float* sum, float* secondSum, int numSamples) noexcept;
-    int gatherComb (const ArtPlan& plan, float weightStart, float weightEnd,
-                    const ArtPlan* second, float secondStart, float secondEnd, int numSamples) noexcept;
-    bool renderComb (const ArtPlan* heard, const ArtPlan* fadingOut, int numSamples) noexcept;
 
     double sampleRate = 48000.0;
     int maxBlock = 0;                // any block length works (it is rendered in chunks); kept for reference
@@ -136,7 +136,7 @@ private:
     bool jumpPending = false;        // fading out before moving to jumpTarget
     double jumpTarget = 0.0;         // where the jump lands, advanced while the fade-out runs
     double jumpRate = 0.0;
-    int64_t combClock = 0;           // samples since reset: how far the comb has glided
+    int64_t clock = 0;               // samples since reset: what the standing comb's phases count from
 
     // prepare-sized work buffers
     std::vector<float> initialRe, initialIm;  // deterministic starting phase of each line
@@ -145,13 +145,6 @@ private:
     std::vector<uint8_t> workMark;
     std::vector<float> laneSums, laneSums2;   // chunkSize x 4 partial sums
     std::vector<float> sumA, sumB, gain;      // chunkSize
-    std::vector<float> combInitialRe, combInitialIm;  // starting phase of each comb sine
-    std::vector<uint16_t> combWork;           // the comb sines of one chunk, padded to whole groups
-    std::vector<float> combAmp, combStep;     // ... their amplitude ramps, by position in combWork
-    std::vector<float> combRe, combIm;        // ... their phases at the chunk's start, by sine (the
-                                              // last slot is a silent dummy)
-    std::vector<float> combCos, combSin;      // ... and their steps
-    std::vector<float> combSum;               // chunkSize
 };
 
 } // namespace artfreq

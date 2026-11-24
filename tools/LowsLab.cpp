@@ -4,6 +4,7 @@
 //   ArtFreqLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]
 //              [--ffts 4096,8192,16384,32768] [--contrast 40] [--image <picture>]
 //              [--baseline <metrics.json>] [--wav]
+//   ArtFreqLab <output-dir> --drip [--lows stripes|smooth]     (the drip check: tools/DripLab.h)
 //
 // ArtFreq keeps its lines at least 25 Hz apart (PlanSettings::minLineSpacingHz), as closer
 // lines beat and pulse visibly. On a log scale that leaves only a handful of lines per octave
@@ -196,6 +197,7 @@ struct Options
     juce::File image;
     juce::File baseline;
     bool writeWav = false;
+    bool drip = false;
     bool showHelp = false;
 };
 
@@ -203,11 +205,13 @@ void printUsage()
 {
     std::cout << "ArtFreqLab <output-dir> [--lows stripes|smooth] [--cases sun,text,ramp,photo] [--densities 256,1024]\n"
                  "           [--ffts 4096,8192,16384,32768] [--contrast 40] [--image <picture>]\n"
-                 "           [--baseline <metrics.json>] [--wav]\n\n"
+                 "           [--baseline <metrics.json>] [--wav] [--drip]\n\n"
                  "  --lows       the Lows under test (PlanSettings::lowEnd); default: the ARTFREQ_LOWS\n"
                  "               environment variable, else stripes (--method 0 / 3 also work)\n"
                  "  --baseline   an earlier run's metrics.json: metrics.txt shows the change\n"
-                 "  --wav        also write each drawing's bounce\n";
+                 "  --wav        also write each drawing's bounce\n"
+                 "  --drip       the drip check instead: what sounds below, above and beside drawings\n"
+                 "               with something low in them (tools/DripLab.h)\n";
 }
 
 std::vector<int> parseIntList (const juce::String& text)
@@ -255,7 +259,7 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
     for (int i = 0; i < arguments.size(); ++i)
     {
         const auto& argument = arguments[i];
-        const auto takesValue = argument.startsWith ("--") && argument != "--wav" && argument != "--help";
+        const auto takesValue = argument.startsWith ("--") && argument != "--wav" && argument != "--drip" && argument != "--help";
         const auto value = takesValue && i + 1 < arguments.size() ? arguments[i + 1] : juce::String();
 
         if (takesValue && value.isEmpty())
@@ -268,6 +272,10 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
         {
             options.showHelp = true;
             return false;
+        }
+        else if (argument == "--drip")
+        {
+            options.drip = true;
         }
         else if (argument == "--wav")
         {
@@ -619,6 +627,8 @@ PlanSettings planSettingsFor (int density, float contrastDb, LowEnd lows)
     settings.contrastDb = contrastDb;
     settings.maxFrequencyHz = 22000.0f;
     settings.lowEnd = lows;
+    settings.passSeconds = passSeconds;   // looped, as renderDrawing plays it
+    settings.repeats = true;
     return settings;
 }
 
@@ -651,9 +661,7 @@ Render renderDrawing (const Canvas& canvas, const PlanSettings& settings)
 
     const auto& plan = *result.plan;
 
-    // The sines that play: the lines, and the comb's gliding sines rather than its loudness grid
-    // (its sines are spread evenly over the glide, so a range holds its share of them). The lows
-    // the comb replaced count only if they play a thin stroke somewhere.
+    // The sines that play: the lines that sound in some column.
     const auto sounds = [&plan] (int line)
     {
         for (int c = 0; c < plan.numColumns; ++c)
@@ -663,32 +671,15 @@ Render renderDrawing (const Canvas& canvas, const PlanSettings& settings)
         return false;
     };
 
-    cost.lines = plan.combSines;
-
-    for (int l = plan.combLines; l < plan.numLines; ++l)
+    for (int l = 0; l < plan.numLines; ++l)
     {
-        if (l < plan.combLines + plan.combThinLines && ! sounds (l))
+        if (! sounds (l))
             continue;
 
         const auto hz = plan.frequencies[idx (l)];
         ++cost.lines;
         cost.linesLow += hz >= labLowHz && hz < labSplitHz ? 1 : 0;
         cost.linesMid += hz >= labSplitHz && hz < labHighHz ? 1 : 0;
-    }
-
-    if (plan.combLines > 0)
-    {
-        const auto bottom = static_cast<double> (plan.combGridLowHz - plan.combEdgeHz);
-        const auto top = static_cast<double> (plan.combGridLowHz) + (plan.combLines - 1) * static_cast<double> (plan.combGridHz)
-                       + static_cast<double> (plan.combEdgeHz);
-        const auto share = [&] (double low, double high)
-        {
-            const auto overlap = std::max (0.0, std::min (high, top) - std::max (low, bottom));
-            return static_cast<int> (std::lround (plan.combSines * overlap / (top - bottom)));
-        };
-
-        cost.linesLow += share (labLowHz, labSplitHz);
-        cost.linesMid += share (labSplitHz, labHighHz);
     }
 
     const auto pad = padSamples();
@@ -1322,15 +1313,12 @@ juce::Image canvasImage (const Canvas& canvas, float contrastDb, int firstRow, i
 }
 
 /** The plan's lines at their heights, each display row showing the loudest line inside it (dark
-    where no line falls): where the sound's energy is put, before any analyser smears it. The
-    rising comb (Smooth) puts energy at every height of its band: there each row shows the grid
-    cell it falls in, at the brightness the comb is played for (amplitude / combGain), as the
-    canvas does. */
+    where no line falls): where the sound's energy is put, before any analyser smears it. */
 juce::Image planImage (const ArtPlan& plan, int firstRow, int numRows, int width)
 {
     juce::Image image (juce::Image::RGB, width, numRows, false);
     juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
-    const auto shown = [&plan] (int column, int line) { return plan.amplitude (column, line) / (line < plan.combLines ? combGain : 1.0f); };
+    const auto shown = [&plan] (int column, int line) { return plan.amplitude (column, line); };
     auto loudest = 0.0f;
 
     for (int c = 0; c < plan.numColumns; ++c)
@@ -1344,20 +1332,11 @@ juce::Image planImage (const ArtPlan& plan, int firstRow, int numRows, int width
         const auto high = 1.0 - static_cast<double> (row) / displayRows;
         std::vector<int> lines;
 
-        for (int l = plan.combLines; l < plan.numLines; ++l)
+        for (int l = 0; l < plan.numLines; ++l)
         {
             const auto norm = static_cast<double> (plan.lineNorm[idx (l)]);
             if (norm >= low && norm < high)
                 lines.push_back (l);
-        }
-
-        if (plan.combLines > 0)
-        {
-            const auto cell = std::lround ((hzAtNorm (0.5 * (low + high)) - static_cast<double> (plan.combGridLowHz))
-                                           / static_cast<double> (plan.combGridHz));
-
-            if (cell >= 0 && cell < plan.combLines)
-                lines.push_back (static_cast<int> (cell));
         }
 
         for (int x = 0; x < width; ++x)
@@ -1857,6 +1836,8 @@ juce::String makeReport (const Options& options, const std::vector<TestDrawing>&
     return text;
 }
 
+#include "DripLab.h"
+
 } // namespace
 
 int main (int argc, char* argv[])
@@ -1883,6 +1864,9 @@ int main (int argc, char* argv[])
     }
 
     std::cout << "ArtFreqLab: lows " << lowsName (options.lows) << " -> " << options.outputDir.getFullPathName() << std::endl;
+
+    if (options.drip)
+        return runDripLab (options);
 
     std::vector<TestDrawing> drawings;
     std::vector<CostResult> costs;

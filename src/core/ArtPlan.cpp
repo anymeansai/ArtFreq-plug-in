@@ -4,7 +4,6 @@
 #include <array>
 #include <cmath>
 #include <cstring>
-#include <iterator>
 
 namespace artfreq
 {
@@ -88,77 +87,163 @@ uint64_t hashFrequencies (const std::vector<float>& frequencies, int combLines) 
         mix (bits);
     }
 
-    // A comb plays its grid lines in a different way: never the same layout as plain lines.
+    // The comb's lines start from phases of their own: never the same layout as plain lines.
     if (combLines > 0)
         mix (0xC0B0C0B0u ^ static_cast<uint32_t> (combLines));
 
     return hash != 0 ? hash : 1;  // 0 is left to mean "no layout"
 }
 
-/** Thin strokes (see ArtPlan.h), in one column's values (line l's at values[l * stride]; the
-    grid's `cells` lines first, the replaced lines right after them): each run of drawn grid lines
-    shorter than thinCells is silenced, and its loudest value goes to the replaced line nearest
-    its middle, cells + thinAt[first + last]. Drawn means sounding: above the silence threshold. */
-void moveThinStrokes (float* values, size_t stride, int cells, int thinCells, const int* thinAt) noexcept
-{
-    const auto at = [values, stride] (int line) -> float& { return values[static_cast<size_t> (line) * stride]; };
+/** Never below the drawing (see buildPlan), for one column of the lows.
 
-    for (int k = 0; k < cells;)
+    `rows` holds the canvas over the lows' rows, bottom up (rows[0] is row `firstRow` from the
+    bottom); line l of the `lines` lows has its own row at ownRow[l] and its span ends at row
+    spanLast[l] (counted from the bottom of the canvas, ascending with l). Writes each line's
+    value to values[l * stride]. */
+void coverLows (const float* rows, int numRows, int firstRow, int lines, const int* ownRow, const int* spanLast,
+                float* values, size_t stride) noexcept
+{
+    for (int l = 0; l < lines; ++l)
+        values[static_cast<size_t> (l) * stride] = 0.0f;
+
+    int next = 0;   // the first line whose own row is not below the rows looked at so far
+
+    for (int r = 0; r < numRows;)
     {
-        if (! (at (k) > silenceThreshold))
+        if (! (rows[r] > silenceThreshold))
         {
-            ++k;
+            ++r;
             continue;
         }
 
-        const auto start = k;
-        auto loudest = 0.0f;
+        const auto start = r;
 
-        while (k < cells && at (k) > silenceThreshold)
-            loudest = std::max (loudest, at (k++));
+        while (r < numRows && rows[r] > silenceThreshold)
+            ++r;
 
-        if (k - start >= thinCells)
+        const auto runFirst = firstRow + start, runLast = firstRow + r - 1;
+
+        while (next < lines && ownRow[next] < runFirst)
+            ++next;
+
+        const auto loudestIn = [rows, firstRow] (int from, int to)
+        {
+            auto loudest = 0.0f;
+
+            for (int row = from; row <= to; ++row)
+                loudest = std::max (loudest, rows[row - firstRow]);
+
+            return loudest;
+        };
+
+        if (next < lines && ownRow[next] <= runLast)
+        {
+            // The lines inside the run: each plays the part of it in its span, the lowest of them
+            // also what is below its span and the highest what is above (a bright stroke with a
+            // faint fringe that reaches a line is played by that line, not lost).
+            for (auto from = runFirst; next < lines && ownRow[next] <= runLast; ++next)
+            {
+                const auto isLast = next + 1 == lines || ownRow[next + 1] > runLast;
+                const auto to = isLast ? runLast : std::min (runLast, spanLast[next]);
+                auto& value = values[static_cast<size_t> (next) * stride];
+                value = std::max (value, loudestIn (std::min (from, to), to));
+                from = std::min (runLast, std::max (from, to));
+            }
+
             continue;
+        }
 
-        for (int j = start; j < k; ++j)
-            at (j) = 0.0f;
+        // A stroke between two lines: the one nearest its middle (twice the middle row, to stay
+        // in whole numbers).
+        const auto middle = runFirst + runLast;
+        auto nearest = next < lines ? next : lines - 1;
 
-        auto& line = at (cells + thinAt[start + k - 1]);
-        line = std::max (line, loudest);
+        if (next > 0 && next < lines && middle - 2 * ownRow[next - 1] <= 2 * ownRow[next] - middle)
+            nearest = next - 1;
+
+        if (nearest >= 0)
+        {
+            auto& value = values[static_cast<size_t> (nearest) * stride];
+            value = std::max (value, loudestIn (runFirst, runLast));
+        }
     }
 }
 
-/** Softens the comb's grid (one column) at the edges of each run of drawn grid lines, see
-    combEdgeTaper. Only edges inside the grid count: below its first line and above its last the
-    glide's own fades take over. */
-void softenCombEdges (float* grid, int cells) noexcept
+/** A line's loudness over the columns, smoothed with a raised cosine `width` columns long (see
+    fadeCycles), in place. `wraps`: the last column leads into the first; else there is silence
+    either side, and the line also reaches silence at the two ends. */
+void fadeInTime (float* line, int columns, double width, bool wraps, std::vector<float>& kernel, std::vector<float>& scratch)
 {
-    constexpr auto taperCells = static_cast<int> (std::size (combEdgeTaper));
+    const auto reach = static_cast<int> (std::ceil (width * 0.5 - 1.0e-9)) - 1;   // offsets with a weight above 0
 
-    for (int k = 0; k < cells;)
+    if (reach < 1 || columns < 2)
+        return;
+
+    const auto first = static_cast<int> (std::find_if (line, line + columns, [] (float a) { return a > 0.0f; }) - line);
+
+    if (first == columns)
+        return;
+
+    auto last = columns - 1;
+
+    while (! (line[last] > 0.0f))
+        --last;
+
+    kernel.resize (static_cast<size_t> (reach) + 1);
+    auto sum = 0.0;
+
+    for (int j = 0; j <= reach; ++j)
     {
-        if (! (grid[k] > 0.0f))
-        {
-            ++k;
+        kernel[static_cast<size_t> (j)] = static_cast<float> (1.0 + std::cos (6.283185307179586 * j / width));
+        sum += (j == 0 ? 1.0 : 2.0) * static_cast<double> (kernel[static_cast<size_t> (j)]);
+    }
+
+    for (auto& weight : kernel)
+        weight = static_cast<float> (static_cast<double> (weight) / sum);
+
+    // Three copies of the line side by side (silence either side without Repeat), so the sums
+    // below need no wrapping; only the columns within reach of the drawn ones are worked out.
+    const auto c = static_cast<size_t> (columns);
+    scratch.assign (3 * c, 0.0f);
+    std::copy (line, line + columns, scratch.begin() + static_cast<std::ptrdiff_t> (c));
+
+    if (wraps)
+    {
+        std::copy (line, line + columns, scratch.begin());
+        std::copy (line, line + columns, scratch.begin() + static_cast<std::ptrdiff_t> (2 * c));
+    }
+
+    const auto from = first - reach, to = last + reach;
+    const auto whole = to - from + 1 >= columns;
+    const auto* centre = scratch.data() + c;
+
+    for (int i = whole ? 0 : from; i <= (whole ? columns - 1 : to); ++i)
+    {
+        const auto column = ((i % columns) + columns) % columns;
+
+        if (! wraps && column != i)
             continue;
-        }
 
-        const auto start = k;
+        const auto* at = centre + column;
+        auto value = kernel[0] * at[0];
 
-        while (k < cells && grid[k] > 0.0f)
-            ++k;
+        for (int j = 1; j <= reach; ++j)
+            value += kernel[static_cast<size_t> (j)] * (at[-j] + at[j]);
 
-        if (k - start < combEdgeTaperMinCells)
-            continue;
+        line[column] = value;
+    }
 
-        for (int d = 0; d < taperCells; ++d)
-        {
-            if (start > 0)
-                grid[start + d] *= combEdgeTaper[d];
+    if (wraps)
+        return;
 
-            if (k < cells)
-                grid[k - 1 - d] *= combEdgeTaper[d];
-        }
+    // A single pass: silent at its first and last column, full after `width` columns.
+    const auto ramp = std::min (columns / 2, static_cast<int> (std::ceil (width)));
+
+    for (int i = 0; i < ramp; ++i)
+    {
+        const auto gain = static_cast<float> (0.5 - 0.5 * std::cos (3.141592653589793 * i / width));
+        line[i] *= gain;
+        line[columns - 1 - i] *= gain;
     }
 }
 
@@ -242,20 +327,20 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
                                             : 0.5 * (layout[l].norm + layout[l + 1].norm);
     }
 
-    // ---- Smooth lows: the rising comb ----------------------------------------------------------
-    // It takes over the crowded lows: the lines from the bottom up to the last one that stands
-    // closer than twice the minimum spacing to the one below (a line with room on both sides is
-    // the density's own scan line, and stays), and below the comb's limit. At least two lines,
-    // else there is nothing to smooth.
-    size_t combReplaces = 0;
+    // ---- The lows -----------------------------------------------------------------------------
+    // The crowded lows: the lines from the bottom up to the last one that stands closer than
+    // twice the minimum spacing to the one below (a line with room on both sides is the density's
+    // own scan line), and below the comb's limit. At least two lines, else there are no lows to
+    // speak of (a linear scale has none).
+    size_t lows = 0;
 
-    if (settings.lowEnd == LowEnd::smooth && minSpacing > 0.0)
+    if (minSpacing > 0.0)
     {
-        while (combReplaces + 1 < layout.size() && crowded[combReplaces + 1] != 0
-               && layout[combReplaces + 1].hz < static_cast<double> (combTopLimitHz))
-            ++combReplaces;
+        while (lows + 1 < layout.size() && crowded[lows + 1] != 0
+               && layout[lows + 1].hz < static_cast<double> (combTopLimitHz))
+            ++lows;
 
-        combReplaces = combReplaces >= 1 ? combReplaces + 1 : 0;
+        lows = lows >= 1 ? lows + 1 : 0;
     }
 
     struct FinalLine
@@ -263,83 +348,84 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
         double hz, norm;
         int firstRow, lastRow;
         float gain;
-        double powerWeight;  // how much of its power sounds: less than all for the comb's grid
     };
 
     std::vector<FinalLine> finalLines;
     finalLines.reserve (layout.size() + 512);
 
-    // Thin strokes (see ArtPlan.h): in each column, a run of drawn grid lines of fewer than
-    // thinCells cells is played by the replaced line nearest its middle, thinAt[first + last].
-    auto thinCells = 0;
-    std::vector<int> thinAt;
+    // ---- Smooth lows: the standing comb ------------------------------------------------------
+    // It takes the lows' place: steady lines on a fixed grid (see ArtPlan.h), over exactly the
+    // band of the canvas the replaced lines played, so the lines above keep their spans.
+    size_t combReplaces = 0;
 
-    if (combReplaces > 0)
+    if (settings.lowEnd == LowEnd::smooth && lows > 0)
     {
-        // The grid covers the replaced lines' spans exactly, so the lines above keep theirs (its
-        // lowest cell also plays any rows below lowestPlayedHz, where the comb's sines are silent).
         const auto bottomHz = std::max (scale.toHz (spanBottom.front()), lowestLineHz);
-        const auto topHz = scale.toHz (spanTop[combReplaces - 1]);
-        // No plan has more than maxDensity lines (the engine plays no more): with all the lines
-        // (the replaced ones stay, for thin strokes), a fine grid could pass that on unusual
-        // scales and ranges; it is coarsened then.
-        const auto room = maxDensity - static_cast<int> (layout.size());
-        const auto cells = std::clamp (static_cast<int> (std::lround ((topHz - bottomHz) / static_cast<double> (combGridSpacingHz))), 2, std::max (2, room));
-        const auto cellHz = (topHz - bottomHz) / cells;
-        const auto edgeHz = static_cast<double> (combEdgeFadeHz);
-        const auto glideHz = (cells - 1) * cellHz + 2.0 * edgeHz;
-        const auto sines = std::clamp (static_cast<int> (std::lround (glideHz / static_cast<double> (combSpacingHz))), 2, combMaxSines);
+        const auto topHz = scale.toHz (spanTop[lows - 1]);
+        const auto fineTopHz = std::min (topHz, static_cast<double> (combFineTopHz));
 
-        plan->combLines = cells;
-        plan->combGridLowHz = static_cast<float> (bottomHz + 0.5 * cellHz);
-        plan->combGridHz = static_cast<float> (cellHz);
-        plan->combEdgeHz = static_cast<float> (edgeHz);
-        plan->combSines = sines;
-        plan->combSlope = combSlopeHzPerSecond;
-
-        // On average a sine spends cellHz / glideHz of its time at each grid line.
-        const auto weight = sines * cellHz / glideHz;
-
-        for (int k = 0; k < cells; ++k)
+        struct CombLine
         {
-            const auto hz = static_cast<double> (plan->combGridLowHz) + k * static_cast<double> (plan->combGridHz);
-            const auto low = k == 0 ? spanBottom.front() : scale.toNorm (bottomHz + k * cellHz);
-            const auto high = k + 1 == cells ? spanTop[combReplaces - 1] : scale.toNorm (bottomHz + (k + 1) * cellHz);
-            const auto first = rowAtNorm (low, false);
-            finalLines.push_back ({ hz, scale.toNorm (hz), first, std::max (first, rowAtNorm (high, true)), combGain, weight });
+            double hz, spacing;
+        };
+
+        std::vector<CombLine> comb;
+
+        // No plan has more than maxDensity lines (the engine plays no more): the grid is
+        // coarsened where it would pass that (unusual scales and ranges only).
+        for (double coarsen = 1.0; coarsen <= 64.0; coarsen *= 2.0)
+        {
+            comb.clear();
+
+            const auto add = [&comb] (double spacing, double from, double to)
+            {
+                for (auto k = std::ceil (from / spacing - 1.0e-9); k * spacing < to; k += 1.0)
+                    comb.push_back ({ k * spacing, spacing });
+            };
+
+            add (coarsen * static_cast<double> (combFineSpacingHz), bottomHz, fineTopHz);
+            add (coarsen * static_cast<double> (combCoarseSpacingHz), std::max (bottomHz, fineTopHz), topHz);
+
+            if (comb.size() + layout.size() - lows <= static_cast<size_t> (maxDensity))
+                break;
         }
 
-        // The replaced line nearest the middle of grid lines first..last: the one whose span
-        // holds it.
-        plan->combThinLines = static_cast<int> (combReplaces);
-        thinCells = std::max (1, static_cast<int> (std::lround (static_cast<double> (combSpacingHz) / cellHz)));
-        thinAt.resize (static_cast<size_t> (2 * cells - 1));
-        size_t nearest = 0;
-
-        for (size_t sum = 0; sum < thinAt.size(); ++sum)
+        if (comb.size() >= 2 && comb.size() + layout.size() - lows <= static_cast<size_t> (maxDensity))
         {
-            const auto middle = scale.toNorm (bottomHz + (0.5 * static_cast<double> (sum) + 0.5) * cellHz);
+            combReplaces = lows;
+            plan->combLines = static_cast<int> (comb.size());
+            plan->combPhases.resize (comb.size());
 
-            while (nearest + 1 < combReplaces && spanTop[nearest] <= middle)
-                ++nearest;
+            for (size_t k = 0; k < comb.size(); ++k)
+            {
+                // Each line plays the rows nearest to it, between the ends of the replaced band.
+                const auto norm = scale.toNorm (comb[k].hz);
+                const auto low = k == 0 ? spanBottom.front() : 0.5 * (scale.toNorm (comb[k - 1].hz) + norm);
+                const auto high = k + 1 == comb.size() ? spanTop[lows - 1] : 0.5 * (norm + scale.toNorm (comb[k + 1].hz));
+                const auto first = rowAtNorm (low, false);
 
-            thinAt[sum] = static_cast<int> (nearest);
+                // The sweep (see combPhaseLines): the phase falls with the square of the line's
+                // number on its grid.
+                const auto number = std::round (comb[k].hz / comb[k].spacing);
+                const auto turns = -0.5 * number * number / static_cast<double> (combPhaseLines);
+                const auto phase = 6.283185307179586 * (turns - std::floor (turns));
+                const auto gain = static_cast<double> (combGain) * std::sqrt (comb[k].spacing / static_cast<double> (combGainSpacingHz));
+
+                plan->combPhases[k] = static_cast<float> (phase);
+                finalLines.push_back ({ comb[k].hz, norm, first, std::max (first, rowAtNorm (high, true)), static_cast<float> (gain) });
+            }
         }
     }
 
-    // The lines. With a comb, the replaced ones stay too, but take no rows of their own (first
-    // row above last): they play thin strokes only, given to them column by column below.
-    for (size_t l = 0; l < layout.size(); ++l)
+    // The lines (all of them, or those above the comb).
+    for (size_t l = combReplaces; l < layout.size(); ++l)
     {
-        if (l < combReplaces)
-        {
-            finalLines.push_back ({ layout[l].hz, layout[l].norm, 0, -1, 1.0f, 1.0 });
-            continue;
-        }
-
         const auto first = rowAtNorm (spanBottom[l], false);
-        finalLines.push_back ({ layout[l].hz, layout[l].norm, first, std::max (first, rowAtNorm (spanTop[l], true)), 1.0f, 1.0 });
+        finalLines.push_back ({ layout[l].hz, layout[l].norm, first, std::max (first, rowAtNorm (spanTop[l], true)), 1.0f });
     }
+
+    // The lows as they are played: the comb's lines, or the crowded lines themselves.
+    const auto lowLines = static_cast<int> (plan->combLines > 0 ? static_cast<size_t> (plan->combLines) : lows);
 
     const auto numLines = static_cast<int> (finalLines.size());
     const auto numColumns = Canvas::width;
@@ -359,7 +445,6 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
     plan->layoutHash = hashFrequencies (plan->frequencies, plan->combLines);
     plan->amplitudes.assign (static_cast<size_t> (numColumns) * lines, 0.0f);
     plan->activeStart.assign (static_cast<size_t> (numColumns) + 1, 0);
-    plan->combActive.assign (plan->combLines > 0 ? static_cast<size_t> (numColumns) : 0, 0);
     plan->silent = true;
 
     if (numLines == 0 || canvas.values.size() != static_cast<size_t> (Canvas::width * Canvas::height))
@@ -367,35 +452,54 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
 
     // ---- Values: the maximum over each line's span of rows ---------------------------------
     const LoudnessTable loudness (contrastDb);
-    auto& amplitudes = plan->amplitudes;
 
-    std::vector<int> firstRow (lines), lastRow (lines);
+    std::vector<int> firstRow (lines), lastRow (lines), ownRow (static_cast<size_t> (lowLines));
     std::vector<float> slopeGain (lines);
-    std::vector<double> powerWeight (lines);
 
     for (size_t l = 0; l < lines; ++l)
     {
-        powerWeight[l] = finalLines[l].powerWeight;
         firstRow[l] = finalLines[l].firstRow;
         lastRow[l] = finalLines[l].lastRow;
+
+        if (l < ownRow.size())
+            ownRow[l] = std::clamp (static_cast<int> (std::floor (finalLines[l].norm * Canvas::height)), firstRow[l], lastRow[l]);
 
         // Analysers with a slope show highs louder: tilt the other way around 1 kHz.
         slopeGain[l] = static_cast<float> (std::pow (10.0, -slope * std::log2 (finalLines[l].hz / 1000.0) / 20.0))
                      * finalLines[l].gain;
     }
 
-    // The canvas is row-major and the plan column-major, so the work goes in strips of a few
-    // columns: the strip's values for every line stay in cache while they are turned around.
+    // The canvas is row-major and the plan column-major, and the fades run along each line: the
+    // work goes in strips of a few columns into a copy that is line-major (the strip's values for
+    // every line stay in cache while they are turned around), turned into the plan at the end.
     constexpr int strip = 16;
     std::vector<float> stripValues (lines * strip);
-    double loudestPower = 0.0;
+    std::vector<float> byLine (lines * static_cast<size_t> (numColumns));
+
+    // The lows' rows of the strip, column by column and bottom up, for coverLows.
+    const auto lowFirstRow = lowLines > 0 ? firstRow[0] : 0;
+    const auto lowRows = lowLines > 0 ? lastRow[static_cast<size_t> (lowLines) - 1] - lowFirstRow + 1 : 0;
+    std::vector<float> lowColumns (static_cast<size_t> (lowRows) * strip);
 
     for (int c0 = 0; c0 < numColumns; c0 += strip)
     {
         const auto width = std::min (strip, numColumns - c0);
         std::fill (stripValues.begin(), stripValues.end(), 0.0f);
 
-        for (size_t l = 0; l < lines; ++l)
+        for (int r = 0; r < lowRows; ++r)
+        {
+            const auto* row = canvas.values.data() + static_cast<size_t> (Canvas::height - 1 - (lowFirstRow + r)) * Canvas::width
+                            + static_cast<size_t> (c0);
+
+            for (int i = 0; i < width; ++i)
+                lowColumns[static_cast<size_t> (i) * static_cast<size_t> (lowRows) + static_cast<size_t> (r)] = row[i];
+        }
+
+        for (int i = 0; i < width && lowLines > 0; ++i)
+            coverLows (lowColumns.data() + static_cast<size_t> (i) * static_cast<size_t> (lowRows), lowRows, lowFirstRow, lowLines,
+                       ownRow.data(), lastRow.data(), stripValues.data() + i, static_cast<size_t> (strip));
+
+        for (auto l = static_cast<size_t> (lowLines); l < lines; ++l)
         {
             auto* values = stripValues.data() + l * strip;
 
@@ -409,26 +513,61 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
             }
         }
 
-        for (int i = 0; i < width; ++i)
+        for (size_t l = 0; l < lines; ++l)
         {
-            auto* column = amplitudes.data() + static_cast<size_t> (c0 + i) * lines;
+            const auto* values = stripValues.data() + l * strip;
+            auto* out = byLine.data() + l * static_cast<size_t> (numColumns) + static_cast<size_t> (c0);
 
-            if (plan->combLines > 0)
-                moveThinStrokes (stripValues.data() + i, static_cast<size_t> (strip), plan->combLines, thinCells, thinAt.data());
-
-            for (size_t l = 0; l < lines; ++l)
-                column[l] = loudness (stripValues[l * strip + static_cast<size_t> (i)]) * slopeGain[l];
-
-            softenCombEdges (column, plan->combLines);
-
-            double power = 0.0;
-
-            for (size_t l = 0; l < lines; ++l)
-                power += static_cast<double> (column[l]) * static_cast<double> (column[l]) * powerWeight[l];
-
-            loudestPower = std::max (loudestPower, power);
+            for (int i = 0; i < width; ++i)
+                out[i] = loudness (values[i]) * slopeGain[l];
         }
     }
+
+    // ---- Fades in time (see fadeCycles) ---------------------------------------------------------
+    const auto passSeconds = std::isfinite (settings.passSeconds) ? settings.passSeconds : 0.0;
+
+    if (passSeconds > 0.0)
+    {
+        const auto columnSeconds = passSeconds / numColumns;
+        const auto longest = std::min (static_cast<double> (longestFadeSeconds), passSeconds * static_cast<double> (longestFadeOfPass));
+        std::vector<float> kernel, scratch;
+
+        for (size_t l = 0; l < lines; ++l)
+        {
+            const auto seconds = std::min (static_cast<double> (fadeCycles) / std::max (1.0, finalLines[l].hz), longest);
+            fadeInTime (byLine.data() + l * static_cast<size_t> (numColumns), numColumns, seconds / columnSeconds,
+                        settings.repeats, kernel, scratch);
+        }
+    }
+
+    // ---- Into the plan, column by column; the loudest column ---------------------------------
+    auto& amplitudes = plan->amplitudes;
+    std::vector<double> columnPower (static_cast<size_t> (numColumns), 0.0);
+    constexpr int tile = 64;
+
+    for (int c0 = 0; c0 < numColumns; c0 += tile)
+    {
+        const auto cEnd = std::min (numColumns, c0 + tile);
+
+        for (size_t l0 = 0; l0 < lines; l0 += tile)
+        {
+            const auto lEnd = std::min (lines, l0 + tile);
+
+            for (auto l = l0; l < lEnd; ++l)
+            {
+                const auto* in = byLine.data() + l * static_cast<size_t> (numColumns);
+
+                for (int c = c0; c < cEnd; ++c)
+                {
+                    const auto a = in[c];
+                    amplitudes[static_cast<size_t> (c) * lines + l] = a;
+                    columnPower[static_cast<size_t> (c)] += static_cast<double> (a) * static_cast<double> (a);
+                }
+            }
+        }
+    }
+
+    const auto loudestPower = *std::max_element (columnPower.begin(), columnPower.end());
 
     // ---- Normalisation: the loudest column sits at planTargetRms -----------------------------
     if (! (loudestPower > 0.0))
@@ -445,11 +584,9 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
     // ---- Active lines per column (both ends of the interpolation c -> c + 1) -----------------
     // Written through a pointer into room for every line in every column, then trimmed: a busy
     // canvas has nearly every line active everywhere, and push_back per entry is slow.
-    // The comb's grid lines are played by the comb, never as lines of their own.
     auto& active = plan->activeLines;
     active.resize (static_cast<size_t> (numColumns) * lines);
     size_t count = 0;
-    const auto firstLine = static_cast<size_t> (plan->combLines);
 
     for (int c = 0; c < numColumns; ++c)
     {
@@ -459,19 +596,11 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
 
         plan->activeStart[static_cast<size_t> (c)] = static_cast<uint32_t> (count);
 
-        for (size_t l = firstLine; l < lines; ++l)
+        for (size_t l = 0; l < lines; ++l)
         {
             out[count] = static_cast<uint16_t> (l);
             count += (here[l] > 0.0f || next[l] > 0.0f) ? 1 : 0;
         }
-
-        uint8_t combSounds = 0;
-
-        for (size_t l = 0; l < firstLine; ++l)
-            combSounds |= (here[l] > 0.0f || next[l] > 0.0f) ? 1 : 0;
-
-        if (firstLine > 0)
-            plan->combActive[static_cast<size_t> (c)] = combSounds;
     }
 
     plan->activeStart[static_cast<size_t> (numColumns)] = static_cast<uint32_t> (count);

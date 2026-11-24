@@ -10,19 +10,15 @@
 //    (Hann), as many Hz wide at every height (sampleRate / fftSize a bin), so at low density the
 //    highs show scan lines one pixel tall with dark gaps, and the lows are blurred and thick;
 //  - in time, each line's loudness is blurred by the analyser's window (fftSize samples);
-//  - the rising comb (Smooth lows) is drawn as a filled band at the brightness the analyser shows
-//    it (its energy spreads along its glide: about 3 dB darker per doubling of the FFT), each grid
-//    line with a lobe as wide as the sines glide through in a window and a skirt beyond it, and
-//    the rising stripes its sines make;
-//  - around a shape in the comb's band, the faint haze its gliding sines leave: below it, falling
-//    away with distance and in streaks, and beside it in time (as measured: see renderGeometry);
+//  - the standing comb's lines (Smooth lows) stand closer than the analyser's bins are wide, so
+//    each is drawn as much brighter as the lines sharing a bin add up to (combBrightness);
 //  - colours are absolute levels, dBFS at the output Level with the analyser's slope, over the
 //    analyser's range from Settings, as the measured preview and the live view colour them.
 //
 // What it leaves out, and only the measured preview shows: energy spilled where shapes start and
-// stop elsewhere, lines beating against each other; in the lows, low shapes still stand out 6 - 17
-// dB more than in the sound (docs/ACCURACY.md). So the canvas shows it only where the drawing
-// changed since the last measurement, and that measurement elsewhere (FastPreview.h).
+// stop, lines beating against each other, the comb's fine texture. So the canvas shows it only
+// where the drawing changed since the last measurement, and that measurement elsewhere
+// (FastPreview.h).
 
 #include "core/ArtPlan.h"
 #include "dsp/SpectrumAnalysis.h"
@@ -64,7 +60,7 @@ struct AnalyserModel
 /** Where the fast preview shows the last measurement rather than its model (see FastPreview.h):
     the columns of the picture the drawing did not change near since it was measured. Their sound
     is exactly what was measured (moved by `shiftDb`: Level, or the drawing's loudness scaled as a
-    whole), so the picture there is the measured one, haze, blur and the comb's texture included. */
+    whole), so the picture there is the measured one, blur and the comb's texture included. */
 struct MeasuredPatch
 {
     const MeasuredSpectrogram* analysis = nullptr;  // its output levels, rows as the picture's
@@ -123,9 +119,9 @@ public:
         their envelope, -32 dB at 2.5 bins and falling 18 dB an octave). */
     static float lobe (float bins) noexcept;
 
-    /** How bright an analyser of fftSize points shows the rising comb, against a line of the
-        same amplitude (combGain is the brightness at 8192). */
-    static float combBrightness (int fftSize) noexcept;
+    /** How much brighter than its own amplitude an analyser of fftSize points shows a line of the
+        standing comb, whose neighbours stand spacingHz away: 1 where it tells them apart. */
+    static float combBrightness (int fftSize, double sampleRate, float spacingHz) noexcept;
 
 private:
     void updateAmplitudes (const ArtPlan& plan, const AnalyserModel& model);
@@ -169,7 +165,7 @@ private:
     std::vector<int> rowStart;
     std::vector<int> columnOf, nextColumnOf;
     std::vector<float> columnFraction;
-    std::vector<float> accumulator, combAccumulator, combDb, scratch;
+    std::vector<float> accumulator, scratch;
     std::vector<int> stretchBefore;
     std::vector<float> stretchFraction, rowIndex;
     std::vector<juce::PixelARGB> rowPixels;

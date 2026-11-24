@@ -84,7 +84,7 @@ bool FastPreview::makePatch (const FastRequest& r, MeasuredPatch& patch)
         const auto& b = *bPlan;
 
         if (a.numLines != b.numLines || a.numColumns != b.numColumns || a.layoutHash != b.layoutHash || a.combLines != b.combLines
-            || a.combThinLines != b.combThinLines || a.amplitudes.size() != b.amplitudes.size())
+            || a.amplitudes.size() != b.amplitudes.size())
             return false;
 
         if (&a != &b)
