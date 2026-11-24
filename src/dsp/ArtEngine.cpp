@@ -25,7 +25,10 @@
 //
 // The phasors are single precision and are pulled back onto the unit circle after every
 // chunk, so they neither grow nor die away. Lines that are silent keep their phase where it
-// was; they start again from an amplitude of 0, so where their phase is does not matter.
+// was; they start again from an amplitude of 0, so where their phase is does not matter. The
+// one exception is the standing comb (ArtPlan::combLines), whose lines only fill a shape evenly
+// if each keeps its phase against the others: a comb line that starts to sound is first set to
+// the phase it would have reached had it played since reset() (see gather).
 //
 // The gate, jump and plan fades are gains on the summed output, per sample.
 

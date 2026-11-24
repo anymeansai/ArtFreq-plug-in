@@ -151,7 +151,9 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
 
     for (int l = 0; l + 1 < lines; ++l)
     {
-        const auto meet = std::clamp (spanLast[l], ownRow[l], ownRow[l + 1] - 1);
+        // (two lines may share a row where rows are taller than the lines are apart: then there
+        // is nothing between them)
+        const auto meet = std::min (std::max (spanLast[l], ownRow[l]), ownRow[l + 1] - 1);
         over (ownRow[l] + 1, meet, lowLoudest, lowQuietest);
         over (meet + 1, ownRow[l + 1] - 1, highLoudest, highQuietest);
         std::copy (rowOf (ownRow[l + 1]), rowOf (ownRow[l + 1]) + width, ownAbove);

@@ -324,6 +324,9 @@ streak under every step. Four causes, and what replaced each:
   one core of the Linux build machine, x real time (gliding comb -> standing comb): Density 256,
   8 s pass 252 - 260 -> 236 - 242; 0.5 s pass 123 - 126 -> 126 - 142; Density 1024, 8 s 139 - 145
   -> 140 - 147; 0.5 s 69 - 73 -> 80 - 86 (Stripes: 480 - 510, 300 - 330, 200 - 210, 120 - 127).
+  A drawing that fills the lows and nothing else costs about a tenth more than it did (the lab's
+  block from 30 Hz to 2 kHz: 2.2 -> 2.5 ms per second of sound, a quarter of a percent of a core;
+  its text 1.5 -> 1.4, its disc 0.8 -> 0.8).
   buildPlan in its worst case (Density 1024, noise on the whole canvas) 7.5 -> 10.5 ms; typical
   drawings 5 - 9 ms as before.
 - **What a project saved with 0.5 or 0.6 does.** It opens as it was (Lows is a saved choice, the
@@ -338,19 +341,20 @@ brackets the loudest cell there against the loudest cell of the drawing):
 
 | drawing | Smooth 0.6 | Smooth now | Stripes 0.6 | Stripes now |
 | --- | --- | --- | --- | --- |
-| one row at 100 Hz (a single tone) | -30.7 (-30.5) | -50.1 (-42.3) | -30.6 (-30.4) | -50.1 (-42.3) |
+| one row at 100 Hz (a single tone) | -30.7 (-30.5) | -50.1 (-42.3) | -30.6 (-30.4) | -49.8 (-42.2) |
 | block 60 - 250 Hz | -32.8 (-19.0) | -77.3 (-64.2) | -42.6 (-33.4) | -75.7 (-70.1) |
 | LOW in the Low band | -24.2 (-12.7) | -57.6 (-39.9) | -26.7 (-20.9) | -40.9 (-28.7) |
 | thin wavy stroke 130 - 350 Hz | -28.5 (-27.6) | -45.6 (-43.3) | -30.0 (-29.9) | -48.5 (-37.1) |
 | dot 40 - 65 Hz | -15.6 (-18.7) | -67.0 (-63.0) | -22.8 (-25.9) | -57.2 (-59.0) |
-| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -67.3 (-59.3) | -9.9 (0.0) | -10.2 (0.0) |
-| MID in the Mid band | -52.0 (-36.4) | -62.8 (-50.6) | -49.7 (-39.0) | -62.4 (-52.5) |
-| portrait 40 Hz - 2 kHz | -43.8 (-33.5) | -70.1 (-60.7) | -39.0 (-30.9) | -71.9 (-64.3) |
+| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -69.6 (-60.8) | -9.9 (0.0) | -10.1 (0.0) |
+| MID in the Mid band | -52.0 (-36.4) | -66.3 (-55.2) | -49.7 (-39.0) | -66.1 (-58.4) |
+| portrait 40 Hz - 2 kHz | -43.8 (-33.5) | -74.3 (-60.6) | -39.0 (-30.9) | -73.7 (-64.2) |
 
 What is left, and why. A tone that starts and stops is as wide as one over the time it takes to:
 with fades of 12 cycles, a line's energy lies within a sixth of its frequency, part of it just
 past the sixth-of-an-octave mark (the single tone's -50 dB; the lowest lines of the text, where
-the fade is capped at 0.25 s). A thin stroke that moves in pitch is played by one fixed line
+the fade is capped at 0.25 s). Above the drawing the same eight read -44 (the wavy stroke) to
+-91 dB (-19 to -79 with the gliding comb). A thin stroke that moves in pitch is played by one fixed line
 after another, each for a moment, and two fixed sines cannot hand over as one gliding sine would:
 faint arcs run off the stroke where it bends (-46 dB; the gliding comb played the same stroke as
 a staircase on Stripes' lines, with a streak under every step, -28 dB). Stripes' frame: its
@@ -364,20 +368,22 @@ densities; low = 30 - 250 Hz / mid = 250 Hz - 2 kHz):
 | --- | --- | --- | --- | --- | --- | --- |
 | 4096 | Stripes | .84/.93 | .93/.86 | 4.2/6.9 | 1.2/1.1 | -9.7/-16.8 |
 | | gliding comb | .89/.96 | .93/.92 | 4.6/4.7 | 2.9/2.8 | -15.4/-22.7 |
-| | standing comb | FILL4096 |
+| | standing comb | .90/.96 | .93/.93 | 4.5/4.2 | 2.9/2.6 | -15.9/-22.7 |
 | 8192 | Stripes | .69/.76 | .38/.53 | 17.9/24.7 | 0.9/0.8 | -9.7/-17.1 |
 | | gliding comb | .90/.95 | .93/.93 | 4.4/3.7 | 2.7/2.3 | -17.3/-21.3 |
-| | standing comb | FILL8192 |
+| | standing comb | .92/.96 | .93/.94 | 4.3/3.6 | 2.9/2.0 | -18.6/-21.7 |
 | 16384 | Stripes | .43/.57 | .21/.21 | 18.5/28.0 | 1.3/0.6 | -10.7/-16.4 |
 | | gliding comb | .88/.93 | .88/.91 | 5.8/4.1 | 3.7/2.1 | -17.8/-18.3 |
-| | standing comb | FILL16384 |
+| | standing comb | .91/.94 | .91/.93 | 4.7/3.4 | 2.8/0.9 | -19.3/-19.0 |
 | 32768 | Stripes | .31/.49 | .30/.21 | 12.5/19.8 | 1.7/0.8 | -11.1/-14.8 |
 | | gliding comb | .84/.90 | .81/.90 | 7.1/3.9 | 3.8/2.0 | -17.4/-15.4 |
-| | standing comb | FILL32768 |
+| | standing comb | .85/.90 | .79/.90 | 7.5/3.2 | 1.7/0.1 | -18.8/-17.0 |
 
-(The Stripes rows are 0.6's; the lab's leak here is measured with Hann at each size and is
-mostly the analyser's own blur around shapes, which is why it moves little: the drip table is
-the measure of what the sound leaves outside the drawing.) At 32768 points the comb's own lines,
+(The Stripes rows are 0.6's; Stripes now, with its lines kept inside the drawing and the fades:
+fidelity .87/.92, .70/.72, .45/.54, .32/.46, fill .89/.81, .33/.38, .18/.16, .28/.21, leak -12.6
+to -18.4 in the lows. The lab's leak is measured with Hann at each size and is mostly the
+analyser's own blur around shapes, which is why it moves little: the drip table is the measure
+of what the sound leaves outside the drawing.) At 32768 points the comb's own lines,
 5 Hz apart, begin to show below 500 Hz as fine stripes (a gap of 7 - 8 dB, as the gliding comb's
 shimmer left); they do not move.
 

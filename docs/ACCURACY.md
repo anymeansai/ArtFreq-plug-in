@@ -80,19 +80,20 @@ the drawing):
 
 | drawing | Smooth, 0.6 | Smooth, now | Stripes, 0.6 | Stripes, now |
 | --- | --- | --- | --- | --- |
-| one row at 100 Hz (a single tone) | -30.7 (-30.5) | -50.1 (-42.3) | -30.6 (-30.4) | -50.1 (-42.3) |
+| one row at 100 Hz (a single tone) | -30.7 (-30.5) | -50.1 (-42.3) | -30.6 (-30.4) | -49.8 (-42.2) |
 | block 60 - 250 Hz | -32.8 (-19.0) | -77.3 (-64.2) | -42.6 (-33.4) | -75.7 (-70.1) |
 | LOW in the Low band | -24.2 (-12.7) | -57.6 (-39.9) | -26.7 (-20.9) | -40.9 (-28.7) |
 | thin wavy stroke 130 - 350 Hz | -28.5 (-27.6) | -45.6 (-43.3) | -30.0 (-29.9) | -48.5 (-37.1) |
 | dot 40 - 65 Hz | -15.6 (-18.7) | -67.0 (-63.0) | -22.8 (-25.9) | -57.2 (-59.0) |
-| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -67.3 (-59.3) | -9.9 (0.0) | -10.2 (0.0) |
-| MID in the Mid band | -52.0 (-36.4) | -62.8 (-50.6) | -49.7 (-39.0) | -62.4 (-52.5) |
-| portrait 40 Hz - 2 kHz | -43.8 (-33.5) | -70.1 (-60.7) | -39.0 (-30.9) | -71.9 (-64.3) |
+| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -69.6 (-60.8) | -9.9 (0.0) | -10.1 (0.0) |
+| MID in the Mid band | -52.0 (-36.4) | -66.3 (-55.2) | -49.7 (-39.0) | -66.1 (-58.4) |
+| portrait 40 Hz - 2 kHz | -43.8 (-33.5) | -74.3 (-60.6) | -39.0 (-30.9) | -73.7 (-64.2) |
 
 Verdict for the lows:
 
-- **Filled shapes, pictures, a dot: clean.** 67 to 77 dB of the sound's energy lies inside the
-  drawing's own range (the target was 60); nothing is played below the lowest drawn frequency.
+- **Filled shapes, pictures, mid text, a dot: clean.** What lies below the drawing is 66 to 77
+  dB under the sound's energy (the target was 60); nothing is played below the lowest drawn
+  frequency.
   The dot is a dot (35 - 90 Hz on an analyser of 8192 points, which cannot show it smaller).
 - **Low text: 58 dB, not 60.** The letters' lowest lines, at 40 - 50 Hz, fade in and out over a
   quarter of a second at most, and a tone that short is a few Hz wide whatever plays it: some of
@@ -107,17 +108,20 @@ Verdict for the lows:
   as Smooth where its lines stand inside what is drawn. Where a stroke lies between two of its
   lines, 25 Hz apart, it is played by the nearer, as ever: that is Stripes (the frame's bar at 80
   - 90 Hz is played at 72 Hz).
-- **The fill is kept**: ArtFreqLab's table in docs/DESIGN.md (fill .93/.93 at 4096 and 8192
-  points, .91/.92 at 16384, .79/.89 at 32768, low / mid; the gliding comb: .93/.92, .93/.93,
-  .88/.91, .81/.90).
+- **The fill is kept**: ArtFreqLab's table in docs/DESIGN.md (fill .93/.93 at 4096 points,
+  .93/.94 at 8192, .91/.93 at 16384, .79/.90 at 32768, low / mid; the gliding comb: .93/.92,
+  .93/.93, .88/.91, .81/.90).
 - **What an analyser adds.** With a Hann window and a range deeper than about 70 dB, an analyser
   still paints its own skirt under low shapes (side-by-side renders: `ArtFreqLab --drip`,
   `*-hann8192.png` against `*-bh8192.png`). That is why the canvas and the Live view no longer
   use Hann.
 
-The numbers in the next two sections were measured with 0.6 and have not been measured again
-with the new lows and window; the truth lab still runs (`ArtFreqTruthLab`), with the canvas's
-window, and its figures for this build are in the section "Reproduce".
+The numbers in the next two sections were measured with 0.6 (Hann, -100 to 0 dBFS, the gliding
+comb). Run again on this build (`ArtFreqTruthLab`, now with the canvas's window; FFT 8192, the
+canvas against the real processor's output analysed separately): ArtFreq's default, rich, layers
+and linear states, correlation 0.99 - 1.00 in every band, mean difference within 0.1 dB, excess
+contrast within 0.3 dB; ArtFreq FX once a pass has played, 0.97 - 1.00, within 0.2 dB and 0.2 dB.
+The canvas is still the real output, analysed.
 
 
 ## The new canvas against the real output
@@ -406,6 +410,7 @@ xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --drag      
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --scenarios scenarios          # other songs, rates, tempos
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --scenarios standin --standin  # ArtFreq FX before a pass
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --marketing docs/marketing
+build/ArtFreqLab_artefacts/Release/ArtFreqLab drip --drip --lows smooth    # the lows: what sounds outside the drawing (drip.txt, PNGs)
 ```
 
 `--states a,b`, `--ffts 4096,8192,16384`, `--range -100,0` and `--wav` choose what is measured
