@@ -108,8 +108,14 @@ constexpr int stripColumns = 16;   // buildPlan works through the canvas in stri
     with one exception: where one of the two lines' own rows is drawn and the other's is not, and
     every row of the drawn line's half is drawn too, the drawing reaches on into the other half
     from the drawn side: an edge of a shape. Then the drawn line plays both halves, and the other
-    one, which the drawing does not reach, stays silent. A stroke that touches neither line's row
-    is thus played by the nearer line, as before.
+    one, which the drawing does not reach, stays silent.
+
+    A stroke that touches neither line's row is played by the nearer line. One that lies in both
+    halves (it straddles the place where the spans meet) is played by the line that has more of
+    its rows, and by that line alone: played half by each, as the spans would have it, the two
+    lines beat against each other, five times a second in the comb (a stroke that looks like a
+    row of beads and sounds like a tremolo; at 60 Hz the comb's lines are 15 canvas rows apart, so
+    four in ten of the thin strokes drawn there straddle).
 
     `comb`: the lines are the standing comb's, where two or three lines joined by drawn rows, and
     joined to no further line, are a thin stroke (see combThinEdge). */
@@ -123,12 +129,13 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
         return canvas.values.data() + static_cast<size_t> (Canvas::height - 1 - rowFromBottom) * Canvas::width + static_cast<size_t> (c0);
     };
 
-    // The loudest and the quietest value of rows `from` to `to`, column by column (no rows:
-    // silence, and "every row drawn").
-    const auto over = [&rowOf, width] (int from, int to, float* loudest, float* quietest)
+    // The loudest and the quietest value of rows `from` to `to`, column by column, and how many
+    // of them are drawn (no rows: silence, and "every row drawn").
+    const auto over = [&rowOf, width] (int from, int to, float* loudest, float* quietest, float* drawn)
     {
         std::fill (loudest, loudest + strip, 0.0f);
         std::fill (quietest, quietest + strip, 1.0f);
+        std::fill (drawn, drawn + strip, 0.0f);
 
         for (int row = from; row <= to; ++row)
         {
@@ -138,15 +145,17 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
             {
                 loudest[i] = std::max (loudest[i], v[i]);
                 quietest[i] = std::min (quietest[i], v[i]);
+                drawn[i] += v[i] > silenceThreshold ? 1.0f : 0.0f;
             }
         }
     };
 
     float own[strip] {}, ownAbove[strip] {}, lowLoudest[strip], lowQuietest[strip], highLoudest[strip], highQuietest[strip];
+    float lowRows[strip], highRows[strip];
     const auto at = [values] (int line) { return values + static_cast<size_t> (line) * strip; };
 
     // The lowest line also plays what lies below its own row (there is no line down there).
-    over (spanFirst[0], ownRow[0], at (0), lowQuietest);
+    over (spanFirst[0], ownRow[0], at (0), lowQuietest, lowRows);
     std::copy (rowOf (ownRow[0]), rowOf (ownRow[0]) + width, own);
 
     for (int l = 0; l + 1 < lines; ++l)
@@ -154,8 +163,8 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
         // (two lines may share a row where rows are taller than the lines are apart: then there
         // is nothing between them)
         const auto meet = std::min (std::max (spanLast[l], ownRow[l]), ownRow[l + 1] - 1);
-        over (ownRow[l] + 1, meet, lowLoudest, lowQuietest);
-        over (meet + 1, ownRow[l + 1] - 1, highLoudest, highQuietest);
+        over (ownRow[l] + 1, meet, lowLoudest, lowQuietest, lowRows);
+        over (meet + 1, ownRow[l + 1] - 1, highLoudest, highQuietest, highRows);
         std::copy (rowOf (ownRow[l + 1]), rowOf (ownRow[l + 1]) + width, ownAbove);
 
         auto* below = at (l);
@@ -168,11 +177,12 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
             const auto lowDrawn = lowQuietest[i] > silenceThreshold, highDrawn = highQuietest[i] > silenceThreshold;
             const auto both = std::max (lowLoudest[i], highLoudest[i]);
 
-            // (all four are worked out and one chosen, so that noisy drawings cost no more)
-            const auto edgeFromBelow = belowDrawn && ! aboveDrawn && lowDrawn;
-            const auto edgeFromAbove = aboveDrawn && ! belowDrawn && highDrawn;
-            below[i] = std::max (below[i], edgeFromBelow ? both : (edgeFromAbove ? 0.0f : lowLoudest[i]));
-            above[i] = std::max (ownAbove[i], edgeFromAbove ? both : (edgeFromBelow ? 0.0f : highLoudest[i]));
+            // (all the cases are worked out and one chosen, so that noisy drawings cost no more)
+            const auto between = ! belowDrawn && ! aboveDrawn && lowRows[i] > 0.0f && highRows[i] > 0.0f;
+            const auto allBelow = (belowDrawn && ! aboveDrawn && lowDrawn) || (between && lowRows[i] >= highRows[i]);
+            const auto allAbove = (aboveDrawn && ! belowDrawn && highDrawn) || (between && lowRows[i] < highRows[i]);
+            below[i] = std::max (below[i], allBelow ? both : (allAbove ? 0.0f : lowLoudest[i]));
+            above[i] = std::max (ownAbove[i], allAbove ? both : (allBelow ? 0.0f : highLoudest[i]));
             join[i] = belowDrawn && aboveDrawn && lowDrawn && highDrawn ? 1 : 0;
         }
 
@@ -180,7 +190,7 @@ void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* o
     }
 
     // ... and the highest of the lows what lies above its own row, up to the end of its span.
-    over (ownRow[lines - 1] + 1, spanLast[lines - 1], lowLoudest, lowQuietest);
+    over (ownRow[lines - 1] + 1, spanLast[lines - 1], lowLoudest, lowQuietest, lowRows);
 
     for (int i = 0; i < width; ++i)
         at (lines - 1)[i] = std::max (at (lines - 1)[i], lowLoudest[i]);
@@ -534,7 +544,14 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
 
         for (size_t l = 0; l < lines; ++l)
         {
-            const auto seconds = std::min (std::max (shortest, static_cast<double> (fadeCycles) / std::max (1.0, finalLines[l].hz)), longest);
+            const auto own = static_cast<double> (fadeCycles) / std::max (1.0, finalLines[l].hz);
+            auto seconds = std::max (shortest, own);
+
+            // Long columns (see coarsestFadeColumns).
+            if (own > columnSeconds)
+                seconds = std::max (seconds, static_cast<double> (coarsestFadeColumns) * columnSeconds);
+
+            seconds = std::min (seconds, longest);
 
             if (seconds > 2.0 * columnSeconds)
             {

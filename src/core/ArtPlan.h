@@ -87,10 +87,12 @@ constexpr float combPhaseLines = 2.618034f;   // lines the sweep passes in one b
 // thin lettering) are too few for the sweep to even out. Two lines alone beat as one pulse, five
 // or ten times a second (8 to 14 dB on an analyser of 4096 or 8192 points, a tremolo to the ear):
 // where, in a column, drawn rows join two lines and no third, the louder of the two plays for
-// both, steadily. Three lines play, the outer two at combThinEdge of their level (that shimmers by
-// 4 dB at 4096 points and 3 dB at 8192; all three at full level, by 6 dB). The narrowest runs
-// played as they are (four or five lines) shimmer by about 6 dB at 4096 points and 3 dB at 8192;
-// from six lines on, as any shape does.
+// both, steadily. Three lines play, the outer two as if drawn at combThinEdge of their value (20
+// dB down at the default contrast: the stroke is nearly one line, with a hint of its height;
+// that shimmers by 4 dB at 4096 points and 3 dB at 8192; all three at full level, by 6 dB). The
+// narrowest runs played as they are (four or five lines) shimmer by about 6 dB at 4096 points and
+// 3 dB at 8192; from six lines on, as any shape does. (A stroke that touches no line's own row is
+// played by one line at any rate: see buildPlan, "Never below the drawing".)
 constexpr float combThinEdge = 0.5f;
 
 // Nothing is played below this: lower lines are dropped (nothing so low is heard or shown).
@@ -117,10 +119,19 @@ constexpr float combGainSpacingHz = 20.0f;
     dB above, and is still shorter than any analyser's window), no longer than longestFadeSeconds
     and a sixteenth of the pass. With Repeat the smoothing runs round from the last column into
     the first; without, the pass is surrounded by silence and the lines also reach silence at its
-    two ends. */
+    two ends.
+
+    Long passes have long columns (31 ms at 16 bars and 120 BPM), and a fade only two or three
+    columns long is drawn with as many straight strokes: its corners spread a low line's energy
+    again (measured on low text at 16 bars: 6 dB more below the letters than at 4 bars). So a
+    line whose own fade is longer than one column fades over coarsestFadeColumns at least (the
+    engine's glide from column to column rounds those into one smooth curve); a line whose
+    fadeCycles fit into one column is left to that glide alone, so the highs keep every column
+    as drawn. */
 constexpr float fadeCycles = 12.0f;
 constexpr float shortestFadeSeconds = 0.04f;
 constexpr float shortestFadeColumns = 5.0f;
+constexpr float coarsestFadeColumns = 4.0f;
 constexpr float longestFadeSeconds = 0.25f;
 constexpr float longestFadeOfPass = 1.0f / 16.0f;
 
@@ -190,8 +201,9 @@ struct ArtPlan
     lowest edge is at 60 Hz would also sound at 47 Hz). So there a line sounds only if the
     drawing covers its own frequency: in each column, each run of drawn rows is played by the
     lines whose own row lies inside it (each at the maximum over the part of the run in its
-    span). A run with no line inside it (a thin stroke between two lines) is played by the line
-    nearest its middle, at the run's maximum, so that nothing drawn disappears.
+    span). A run with no line inside it (a thin stroke between two lines) is played by one line,
+    the one that has more of the run's rows in its span, at the run's maximum, so that nothing
+    drawn disappears and no stroke is split between two lines, which would beat.
 
     Loudness: value v (0..1) becomes amplitude 10^((v - 1) * contrastDb / 20) for v > 0.001, else
     0; times the slope compensation 10^(-slope * log2 (f / 1000) / 20), and for the comb's lines

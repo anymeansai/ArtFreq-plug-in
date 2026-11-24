@@ -198,6 +198,7 @@ struct Options
     juce::File baseline;
     bool writeWav = false;
     bool drip = false;
+    bool skeptic = false;
     bool showHelp = false;
 };
 
@@ -259,7 +260,7 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
     for (int i = 0; i < arguments.size(); ++i)
     {
         const auto& argument = arguments[i];
-        const auto takesValue = argument.startsWith ("--") && argument != "--wav" && argument != "--drip" && argument != "--help";
+        const auto takesValue = argument.startsWith ("--") && argument != "--wav" && argument != "--drip" && argument != "--skeptic" && argument != "--help";
         const auto value = takesValue && i + 1 < arguments.size() ? arguments[i + 1] : juce::String();
 
         if (takesValue && value.isEmpty())
@@ -276,6 +277,10 @@ bool parseOptions (int argc, char* argv[], Options& options, juce::String& error
         else if (argument == "--drip")
         {
             options.drip = true;
+        }
+        else if (argument == "--skeptic")
+        {
+            options.skeptic = true;
         }
         else if (argument == "--wav")
         {
@@ -1837,6 +1842,7 @@ juce::String makeReport (const Options& options, const std::vector<TestDrawing>&
 }
 
 #include "DripLab.h"
+#include "SkepticLab.h"
 
 } // namespace
 
@@ -1867,6 +1873,9 @@ int main (int argc, char* argv[])
 
     if (options.drip)
         return runDripLab (options);
+
+    if (options.skeptic)
+        return runSkepticLab (options);
 
     std::vector<TestDrawing> drawings;
     std::vector<CostResult> costs;

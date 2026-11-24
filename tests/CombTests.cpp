@@ -377,6 +377,84 @@ ARTFREQ_TEST (planLowsNeverPlayBelowTheDrawing)
            == std::vector<float> (highs->amplitudes.begin(), highs->amplitudes.end()) || highs->combLines > 0);
 }
 
+ARTFREQ_TEST (planPlaysEveryThinStrokeOnOneLine)
+{
+    // Thin horizontal strokes (2, 4 and 6 canvas rows) at every height from 45 to 300 Hz, each in
+    // a few columns of its own: whichever rows a stroke falls on, it is played (nothing drawn
+    // disappears), by lines no further from it than the lines stand apart, at the stroke's level,
+    // and never by two lines alone. Two lines beat against each other: the comb's five times a
+    // second, at full depth when a stroke that touches neither line's own row lies half in one
+    // line's span and half in the other's (at 60 Hz the comb's lines are 15 rows apart, so four
+    // in ten thin strokes do). Such a stroke goes to the line that has more of it.
+    const FrequencyScale scale;
+    constexpr int strokeColumns = 4;
+    const auto firstTop = static_cast<int> (std::ceil ((1.0 - scale.toNorm (300.0)) * Canvas::height));
+    const auto lastTop = static_cast<int> (std::floor ((1.0 - scale.toNorm (45.0)) * Canvas::height));
+
+    for (const auto lowEnd : { smooth, stripes })
+    {
+        for (const auto rows : { 2, 4, 6 })
+        {
+            auto played = 0;
+
+            for (int first = firstTop; first <= lastTop; first += Canvas::width / strokeColumns)
+            {
+                const auto last = std::min (lastTop, first + Canvas::width / strokeColumns - 1);
+                Canvas canvas;
+
+                for (int top = first; top <= last; ++top)
+                    for (int y = top; y < top + rows; ++y)
+                        for (int x = (top - first) * strokeColumns; x < (top - first + 1) * strokeColumns; ++x)
+                            canvas.at (x, y) = 1.0f;
+
+                const auto plan = buildPlan (canvas, combSettings (lowEnd));
+
+                for (int top = first; top <= last; ++top)
+                {
+                    const auto column = (top - first) * strokeColumns + strokeColumns / 2;
+                    const auto strokeHz = scale.toHz (1.0 - (top + 0.5 * rows) / Canvas::height);
+                    const auto reachHz = 0.5 * (scale.toHz (1.0 - static_cast<double> (top) / Canvas::height)
+                                                - scale.toHz (1.0 - static_cast<double> (top + rows) / Canvas::height))
+                                       + (lowEnd == smooth ? 5.0 : 20.0);
+                    auto sounding = 0;
+
+                    for (int l = 0; l < plan->numLines; ++l)
+                    {
+                        if (! (plan->amplitude (column, l) > 0.0f))
+                            continue;
+
+                        ++sounding;
+                        const auto hz = static_cast<double> (plan->frequencies[static_cast<size_t> (l)]);
+                        CHECK_MSG (std::abs (hz - strokeHz) < reachHz,
+                                   "a stroke " << rows << " rows thick at " << strokeHz << " Hz is played at " << hz << " Hz");
+                    }
+
+                    CHECK_MSG (sounding >= 1, "a stroke " << rows << " rows thick at " << strokeHz << " Hz is lost");
+                    CHECK_MSG (sounding != 2, "a stroke " << rows << " rows thick at " << strokeHz << " Hz is played by two lines, which beat");
+
+                    // Stripes' lines stand 19 Hz apart at least: a stroke this thin holds one.
+                    if (lowEnd == stripes)
+                        CHECK (sounding == 1);
+
+                    // On its own it plays at the stroke's level: the plan's loudest, but for the
+                    // faint outer lines of the thickest strokes here (see combThinEdge), which make
+                    // their columns 0.1 dB louder.
+                    if (sounding == 1)
+                    {
+                        ++played;
+
+                        for (int l = 0; l < plan->numLines; ++l)
+                            if (plan->amplitude (column, l) > 0.0f)
+                                CHECK_NEAR (plan->amplitude (column, l), std::sqrt (2.0f) * planTargetRms, 0.005);
+                    }
+                }
+            }
+
+            CHECK_GREATER (played, 100);
+        }
+    }
+}
+
 ARTFREQ_TEST (planFadesLowLinesInTime)
 {
     // A block over 100 - 150 Hz and another over 4 - 5 kHz, both from column 256 to 767.
@@ -437,10 +515,19 @@ ARTFREQ_TEST (planFadesLowLinesInTime)
         CHECK_NEAR (soft->amplitude (258, high), soft->amplitude (500, high), 1.0e-7);
 
         // A 32 s pass: a column is 31 ms, longer than that fade, and the high line is as drawn.
+        // The low line's own fade is three columns long, too few to shape it: it fades over
+        // coarsestFadeColumns (a quarter, three quarters, all), which the engine's glide from
+        // column to column rounds into one curve.
         settings.passSeconds = 32.0;
         const auto slow = buildPlan (canvas, settings);
         CHECK (! (slow->amplitude (255, high) > 0.0f) && ! (slow->amplitude (768, high) > 0.0f));
         CHECK_NEAR (slow->amplitude (256, high), slow->amplitude (500, high), 1.0e-7);
+        CHECK (! (slow->amplitude (254, low) > 0.0f));
+        CHECK_NEAR (slow->amplitude (255, low), 0.25f * slow->amplitude (500, low), 1.0e-6);
+        CHECK_NEAR (slow->amplitude (256, low), 0.75f * slow->amplitude (500, low), 1.0e-6);
+        CHECK_NEAR (slow->amplitude (257, low), slow->amplitude (500, low), 1.0e-6);
+        CHECK_NEAR (slow->amplitude (768, low), 0.25f * slow->amplitude (500, low), 1.0e-6);
+        CHECK (! (slow->amplitude (769, low) > 0.0f));
         settings.passSeconds = 8.0;
 
         // The loudest column is still at planTargetRms, and the active lists follow the fades.
@@ -729,7 +816,11 @@ ARTFREQ_TEST (engineCombPlaysThinStrokesSteadily)
         bool thin;
     };
 
+    // (62.5 and 137.5 Hz lie half way between two of the comb's lines: strokes there touch
+    // neither line's row and straddle the place where their spans meet, which until 0.6.1 were
+    // played half by each line, beating)
     for (const auto& stroke : { Stroke { 100.0, 0.0, true }, Stroke { 100.0, 5.0, true }, Stroke { 102.5, 6.0, true },
+                                Stroke { 62.5, 2.0, true }, Stroke { 137.5, 3.0, true },
                                 Stroke { 400.0, 0.0, true }, Stroke { 400.0, 5.0, true },
                                 Stroke { 100.0, 10.0, false }, Stroke { 400.0, 10.0, false },
                                 Stroke { 100.0, 20.0, false }, Stroke { 400.0, 20.0, false }, Stroke { 100.0, 40.0, false } })
