@@ -1413,7 +1413,7 @@ void checkLows (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& proce
 
     checkSoon ([&] { return lows->getOptions() == juce::StringArray { "Smooth", "Stripes" } && lows->getSelectedIndex() == 0
                     && juce::exactlyEqual (value(), 0.0f) && planHasComb(); },
-               "Lows, under the layer list, is on Smooth in a new instance: the plan has the rising comb");
+               "Lows, under the layer list, is on Smooth in a new instance: the plan has the standing comb");
 
     if (auto* tip = dynamic_cast<juce::TooltipClient*> (lows))
         check (tip->getTooltip().contains ("Smooth") && tip->getTooltip().contains ("Stripes"), "Lows explains both in its tooltip");

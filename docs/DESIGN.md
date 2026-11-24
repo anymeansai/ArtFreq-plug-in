@@ -30,9 +30,11 @@ code is also built as **ArtFreq FX**, an audio effect that carves the drawing in
    column comes from the canvas, mapped to decibels with the *contrast* (dB range),
    compensated for the analyser's slope, and normalised so the loudest moment sits at -12 dBFS
    RMS before the output level. With *Lows* on Smooth (the default) the crowded lows are played
-   by the rising comb instead of lines (see [Smooth lows](#smooth-lows)).
+   by the standing comb, fine steady lines, instead (see [Smooth lows](#smooth-lows)), and every
+   line's loudness is smoothed along time over a few cycles of its own sine, so low lines come
+   and go without clicking.
 5. **The engine** (`dsp/ArtEngine.h`) plays the plan on the audio thread: one sine per line
-   (and the comb's gliding sines), amplitudes interpolated across columns, click-free fades on
+   (the comb's lines locked in phase to its sample clock), amplitudes interpolated across columns, click-free fades on
    start/stop/retrigger/bypass, crossfades when the plan changes.
 6. **The tracker** (`dsp/PlayheadTracker.h`) decides the position in the drawing (see
    [Trigger](#trigger)): follow the DAW transport (once, from a bar of the song, or with Repeat
@@ -83,7 +85,7 @@ used as a trigger, and the drawing can also be bounced to a WAV file.
 | rangeHigh | Analyser high | 2000..24000 Hz | 20000 Hz | no |
 | slope | Analyser slope | 0, 3, 4.5, 6 dB/oct | 0 dB/oct | no |
 | analyserFft | Analyser FFT | 4096, 8192, 16384 | 8192 | no |
-| analyserFloor | Analyser floor | -140..-40 dBFS | -100 dBFS | no |
+| analyserFloor | Analyser floor | -140..-40 dBFS | -90 dBFS | no |
 | analyserCeiling | Analyser top | -60..+12 dBFS | 0 dBFS | no |
 | mode | Mode (ArtFreq FX only) | Carve, Carve + Draw, Stencil, Draw | Carve | yes |
 | depth | Depth (ArtFreq FX only) | -120..0 dB | -80 dB | yes |
@@ -247,86 +249,156 @@ Both:
 The customer, after 0.1: the stripes in the lows are a nice effect, but they lose a lot of a
 picture. On a log scale the lows hold few lines (merged to 25 Hz apart, as closer lines beat and
 pulse), and an analyser with a long FFT (MiniMeters at 8192 and up) resolves them into stripes
-with dark gaps: low-band fill 0.38 at 8192, 0.21 at 16384. Three ways of filling the gaps were
-built and measured with ArtFreqLab: lines that wobble inside their spans, narrow noise bands,
-and a rising comb. The comb won (it filled best and flickered least, and at 4096, where the lines
-already looked fine, it stayed as good), so it is **Smooth**, the default for new instances;
-**Stripes** stays as the other choice, as the customer liked it as an effect.
+with dark gaps: low-band fill 0.38 at 8192, 0.21 at 16384. From 0.3 to 0.6 **Smooth** filled the
+gaps with a *rising comb*: sines 20 Hz apart gliding upwards at 200 Hz/s, each taking its
+loudness from the drawing at the height it had reached. It filled, and it dripped. The customer,
+on 0.5: "Lower frequencies are all distorted. Lower it gets worse. There's like a 'drip' from the
+image or text that drips into the lower frequencies, even if the canvas doesn't have anything
+drawn down there." Measured (`ArtFreqLab --drip`, below): under a block drawn from 60 Hz the
+gliding comb left 33 dB below the block's energy all the way down to 20 Hz, a dot at 40 - 65 Hz
+came out as an upright streak from 20 to 400 Hz, and a thin wavy stroke as a staircase with a
+streak under every step. Four causes, and what replaced each:
 
-- **What it replaces.** The lines from the bottom up to the last one that stands closer than
-  twice the minimum spacing to the one below (the merged and crowded lows, below 2 kHz): about
-  20 Hz - 1.8 kHz at density 256, up to 2 kHz at 1024, up to about 110 Hz at 16. A line with room
-  on both sides is the density's own scan line and stays, so a low Density keeps its scan-line
-  look above the comb. Nothing is crowded on a linear scale: no comb there. The lines above keep
-  their frequencies (bit for bit) and spans; their amplitudes change only by the normalisation.
-- **The comb.** Sines 20 Hz apart (at most 255) glide upwards together at 200 Hz/s, from 15 Hz
-  below the band to 15 Hz above it, where each wraps round to the bottom; they fade in and out over
-  those 15 Hz. Every height is passed every 0.1 s, so a short window blurs neighbouring sines
-  together and a long one sees each smeared along its glide: energy at every height from 4096 to
-  32768 points. All glide at one speed, so they never cross or crowd; fixed unrelated starting
-  phases keep the passes from adding up in a repeating pattern. What remains is a fine rising
-  shimmer (out of step from height to height), not a pulse of the whole band. 20 Hz and 200 Hz/s
-  had the lowest worst case of the settings tried (25 Hz or 130 Hz/s pulse at up to 5 dB).
-- **Its bottom.** The fade-in starts from silence wherever a sine can first be heard: never below
-  10 Hz (nothing is played lower: with the analyser's low end at 10 Hz the glide starts at -2.5
-  Hz), and more than one chunk's glide (1 Hz at 48 kHz) above the bottom of the glide, as a sine
-  that passes the top during a chunk wraps round unheard and is next played that far up. It runs
-  over 15 Hz from there, so for a low end under 17.5 Hz the lowest grid lines fade in too. (A sine
-  coming on at a level of its own, up to a sixth of the bottom's at a 10 Hz low end and 7 % after
-  a wrap, clicked every 0.1 s, put energy far above the drawing and rumble below 5 Hz.) A sine
-  fading in that low still does so over about one cycle, which leaves a little content below 10
-  Hz: about -35 dB against the whole for a drawing from the bottom to 200 Hz at the default low
-  end (lines leave none). It is inaudible, and below what analysers show; a longer fade would
-  darken the bottom of the canvas.
-- **Its loudness.** The replaced band of the canvas becomes a grid of plan lines 5 Hz apart (the
-  maximum of the canvas over each cell): finer than the sines, so edges stay where they were
-  drawn. Each sine plays the grid interpolated at the height it has reached, between grid lines
-  and between columns. The grid lines are never sines of their own (not in `activeLines`;
-  `combActive` says where the comb can sound). At the edges of a run of drawn grid lines (in one
-  column, five or more) the outermost plays at half its level and the next at 0.93: a sine then
-  enters a shape over 75 ms, not 25, and splashes less energy below it and into holes (measured:
-  1.3 dB less leakage in the lows, fidelity +0.01, fill unchanged; runs of four lines keep their
-  level).
-- **Thin strokes.** A run of drawn grid lines narrower than the sines' spacing (fewer than four, a
-  one-row stroke, an outline, thin lettering) would be lit only while a sine is inside it: the
-  whole stroke would blink ten times a second (15 - 28 dB on an analyser of 4096 points, 4 - 5 dB
-  at 8192, a train of blips to the ear), while the canvas showed it steady. So, column by column,
-  such a run is silenced in the grid and played instead by the replaced line nearest its middle,
-  at the run's loudest value: steady, where Stripes would play it, and drawn as Stripes draws it.
-  The replaced lines stay in the plan for this, after the grid (`combThinLines`; with the lines
-  above, exactly a Stripes plan's lines), silent elsewhere. The comb's narrowest runs (four lines)
-  shimmer as any shape does: about 3 dB at 4096 points, 1 dB at 8192.
-- **Its brightness.** A line's energy stays in one analyser bin; the comb's is spread along its
-  glide, about 3 dB darker per doubling of the FFT size. It is played 3.5 dB louder (combGain
-  1.5), as bright as the lines above at 8192 (3 dB brighter at 4096, 3 - 7 dB darker at 32768).
-  The normalisation counts it as its sines, each with the mean power of the grid it glides over.
-  The lows carry about 4.5 dB more power than the stripes did, so in drawings with lows the rest
-  sits lower by up to about 5 dB in absolute level (the balance is the intended correction).
-- **The engine.** A separate SIMD kernel turns each sine's step by a fixed angle per sample, so
-  its frequency rises exactly linearly. At every chunk each sine's frequency and phase are worked
-  out afresh from the samples rendered since `reset()` (double-precision recurrences across the
-  sines, no trig per sine), so where blocks and chunks fall changes the sound only by rounding
-  and the phase never drifts. Buffers are sized in `prepare()`; nothing allocates, locks or waits.
-  Plans are checked (`hasComb`) before the comb is played. Crossfades work on the sines'
-  amplitudes, linear between plans of one layout, equal power otherwise, as for lines; switching
-  Lows changes the layout, so it crossfades over 20 ms like a Density change.
-- **Cost.** 93 sines + 88 lines at density 256 (Stripes: 142 lines), 101 + 295 at 1024 (366); in
-  the worst case (a one-beat, fully drawn density-1024 plan) 65 - 95 x real time on one core
-  (Stripes: 100 - 150 x); buildPlan 2 - 8 ms (1 - 3 ms); about 1.5 MB more per plan.
-- **Measured** (ArtFreqLab, Hann, interpolated, mean over four drawings and both densities;
-  low = 30 - 250 Hz / mid = 250 Hz - 2 kHz, Stripes -> Smooth):
+- **Gliding sines have to be switched.** A sine that glides through a shape is turned on as it
+  enters and off as it leaves, and that switching is amplitude modulation: it sprays energy far
+  outside the shape, a pulse train at the comb's pass rate. **The standing comb**: the lows are
+  played by steady lines on a fixed grid instead, every multiple of 5 Hz up to 500 Hz and every
+  multiple of 10 Hz above (232 lines at Density 256 where the gliding comb had 93 sines; the band
+  is the same: the crowded lows, about 20 Hz - 1.8 kHz at Density 256, up to 2 kHz at 1024, none
+  on a linear scale). A line that is not inside the drawing is silent, so nothing is played
+  below the lowest drawn frequency or above the highest, by construction.
+- **Why steady lines that close do not pulse.** Lines 5 Hz apart beat against each other; with
+  unrelated phases a band of them is a noise that throbs. With the right phases a band of them
+  is, exactly, a comb of sines gliding upwards (a sum of chirps shifted in time is a line
+  spectrum: Poisson's formula), which an analyser's window of any usual length sees as an even
+  level. Line k of a grid (its frequency over the spacing) starts at -pi k^2 / N, with N = 2.618
+  (the golden ratio squared) the lines the sweep passes in one beat period. Whole and half
+  numbers (2, 3.5, 4) make all the beats line up into a train of clicks, 5 to 10 dB taller (crest
+  factor of a block: 15 - 20 dB against 9); with the golden number no two beats ever line up.
+  Measured against other N, random phases and the gliding comb (same fill and flicker at 4096
+  and 8192, steadier at 16384 and 32768), below. The grid is 5 Hz where an analyser of 16384
+  or 32768 points could otherwise tell the lines apart on a display's rows (below 500 Hz) and 10
+  Hz above, which keeps the worst-case CPU where it was.
+- **The phases need a clock.** The pattern only works if every line keeps its place in it, but
+  the engine lets silent oscillators stand still. So the comb's lines are locked to the samples
+  rendered since `reset()`: whenever one starts to sound (always from an amplitude of 0), its
+  oscillator is set to the phase it would have had if it had never stopped
+  (`ArtPlan::combPhases`, `ArtEngine::gather`; a cosine and a sine per line that comes on, no
+  more). The gliding oscillators, their SIMD kernel and their buffers are gone.
+- **Every line was switched in a few ms.** A sine turned on between two columns (7.8 ms at the
+  default length) is for that moment a click as wide as one over the time it took, and a little
+  of it much wider: an octave of "legs" under every edge at 100 Hz, faint streaks to the bottom
+  of the picture under text in the mids, in Stripes as in Smooth. **Fades in time**: each line's
+  loudness is smoothed along time in the plan (message thread; no cost on the audio thread) with
+  a raised cosine as long as 12 cycles of its own sine, at least 40 ms (five columns at most, so
+  a short drawing keeps its edges) and at most 0.25 s and a sixteenth of the pass. 8 cycles leave
+  legs 15 dB stronger; 20 gain 5 dB more on blocks and nothing on text, and soften low letters.
+  The 40 ms take the streaks under mid text down by 4 dB below it and 11 dB above (25 ms: 1 and
+  7 dB); they are shorter than any analyser's window, so the edges look as they did. With Repeat
+  the smoothing runs round from the last column into the first; without, the pass is surrounded
+  by silence and the lines also reach silence at its two ends. Long passes have long columns (31
+  ms at 16 bars and 120 BPM), and a fade two or three columns long is drawn with as many straight
+  strokes, whose corners spread a low line's energy again: a line whose 12 cycles are longer than
+  one column fades over four columns at least (`coarsestFadeColumns`; the low text at 16 bars:
+  2 dB less below the letters, 5 dB less above), and a line whose 12 cycles fit into one column
+  is left to the engine's glide from column to column, so the highs keep every column as drawn.
+  The plan therefore knows how long
+  a pass takes (`PlanSettings::passSeconds`, from Length and the tempo to the nearest 3 %, so a
+  tempo ramp rebuilds it now and then) and whether it repeats.
+- **Rows were played by the nearest line, wherever it was.** In the lows the nearest line can be
+  a third of an octave below the drawing (Stripes: a shape drawn from 60 Hz also sounded at 47).
+  **Never below the drawing**, in both modes: a low line sounds only if the drawing covers its
+  own frequency. Looked at between each pair of neighbouring lines: where one line's own row is
+  drawn and the other's is not, and the drawing runs on unbroken from the drawn line to where
+  their spans meet, it is a shape's edge: the drawn line plays all of it and the other stays
+  silent. A stroke that touches neither line's row is played by one line, so nothing drawn
+  disappears: the nearer one, and where the stroke straddles the place where the two lines'
+  spans meet, the line that has more of its rows. (Played half by each, as the spans would have
+  it, the two lines beat against each other at full depth: five times a second in the comb, a
+  stroke like a row of beads with a tremolo to it, which was one in six of all strokes 2 to 6
+  rows thick between 40 and 300 Hz. `ArtFreqLab --skeptic` builds a stroke at every height from
+  40 Hz to 1.7 kHz, 1 to 24 rows thick, and counts none on two lines and none lost.)
+- **Thin strokes.** Two of the comb's lines on their own would beat as one pulse, five or ten
+  times a second (14 dB on an analyser of 4096 points). Where drawn rows join two lines and no
+  third, the louder plays for both, steadily; three lines play with the outer two as if drawn at
+  half the value (20 dB down at the default contrast: nearly one line, with a hint of the
+  stroke's height; 4 dB of shimmer at 4096 points, 3 dB at 8192). The narrowest runs played as they are (four or
+  five lines, 20 Hz) shimmer by 6 dB at 4096 and 3 dB at 8192, more than the gliding comb's did
+  (4 and 2 dB: its sines were 20 Hz apart, exactly one in such a stroke at any time, which is
+  also why it had to be switched); from six lines on, as any shape does.
+- **Its brightness.** Lines closer than an analyser's bins add up in each bin, so each comb line
+  is played at combGain (1.5) times the square root of its spacing over 20 Hz: the power per Hz
+  the gliding comb had. As bright as the lines above at 8192 points, about 3 dB brighter at 4096,
+  about 3 dB darker (but filled) at 16384 and 32768. The normalisation counts the comb's lines as
+  any others.
+- **Cost.** Density 256: 232 comb lines + 88 lines (the gliding comb: 93 sines + 88 lines;
+  Stripes: 142 lines); Density 1024: 247 + 295 (101 + 295; 366). Worst case, everything drawn,
+  one core of the Linux build machine, x real time (gliding comb -> standing comb): Density 256,
+  8 s pass 252 - 260 -> 236 - 242; 0.5 s pass 123 - 126 -> 126 - 142; Density 1024, 8 s 139 - 145
+  -> 140 - 147; 0.5 s 69 - 73 -> 80 - 86 (Stripes: 480 - 510, 300 - 330, 200 - 210, 120 - 127).
+  A drawing that fills the lows and nothing else costs about a tenth more than it did (the lab's
+  block from 30 Hz to 2 kHz: 2.2 -> 2.5 ms per second of sound, a quarter of a percent of a core;
+  its text 1.5 -> 1.4, its disc 0.8 -> 0.8).
+  buildPlan in its worst case (Density 1024, noise on the whole canvas) 7.5 -> 10.5 ms; typical
+  drawings 5 - 9 ms as before.
+- **What a project saved with 0.5 or 0.6 does.** It opens as it was (Lows is a saved choice, the
+  parameter unchanged) and sounds cleaner: the same shapes, as bright, filled as before, with
+  nothing under them.
 
-  | FFT | fidelity | fill | gap dB | flicker dB | leak dB |
-  | --- | --- | --- | --- | --- | --- |
-  | 4096 | .84/.93 -> .89/.96 | .93/.86 -> .93/.92 | 4.2/6.9 -> 4.6/4.7 | 1.2/1.1 -> 2.9/2.8 | -9.7/-16.8 -> -15.4/-22.7 |
-  | 8192 | .69/.76 -> .90/.95 | .38/.53 -> .93/.93 | 17.9/24.7 -> 4.4/3.7 | 0.9/0.8 -> 2.7/2.3 | -9.7/-17.1 -> -17.3/-21.3 |
-  | 16384 | .43/.57 -> .88/.93 | .21/.21 -> .88/.91 | 18.5/28.0 -> 5.8/4.1 | 1.3/0.6 -> 3.7/2.1 | -10.7/-16.4 -> -17.8/-18.3 |
-  | 32768 | .31/.49 -> .84/.90 | .30/.21 -> .81/.90 | 12.5/19.8 -> 7.1/3.9 | 1.7/0.8 -> 3.8/2.0 | -11.1/-14.8 -> -17.4/-15.4 |
+**Measured: the drip** (`ArtFreqLab <dir> --drip`, tools/DripLab.h: eight drawings with
+something low in them at Density 256, played looped by the real engine; a 65536-point
+Blackman-Harris analysis, which adds nothing of its own; the share of the sound's energy more
+than a sixth of an octave below the lowest frequency drawn under each window, in dB, and in
+brackets the loudest cell there against the loudest cell of the drawing):
 
-  The flicker is the shimmer: steady cells move by about 3 dB from frame to frame (the stripes'
-  were steadier, but dark). The worst regular pulse in any single case falls from 5.5 to 3.7 dB.
-  Still to judge by eye and ear: real photos in MiniMeters on macOS, and the sound of the lows (a
-  rising, shimmering texture instead of steady tones).
+| drawing | Smooth 0.6 | Smooth now | Stripes 0.6 | Stripes now |
+| --- | --- | --- | --- | --- |
+| one row at 100 Hz (a single tone) | -30.7 (-30.5) | -50.1 (-42.3) | -30.6 (-30.4) | -49.8 (-42.2) |
+| block 60 - 250 Hz | -32.8 (-19.0) | -77.3 (-64.2) | -42.6 (-33.4) | -75.7 (-70.1) |
+| LOW in the Low band | -24.2 (-12.7) | -57.6 (-39.9) | -26.7 (-20.9) | -40.5 (-28.6) |
+| thin wavy stroke 130 - 350 Hz | -28.5 (-27.6) | -45.6 (-43.3) | -30.0 (-29.9) | -46.0 (-35.4) |
+| dot 40 - 65 Hz | -15.6 (-18.7) | -67.0 (-63.0) | -22.8 (-25.9) | -56.9 (-59.0) |
+| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -69.6 (-60.8) | -9.9 (0.0) | -71.8 (-64.0) |
+| MID in the Mid band | -52.0 (-36.4) | -66.3 (-55.2) | -49.7 (-39.0) | -66.1 (-58.4) |
+| portrait 40 Hz - 2 kHz | -43.8 (-33.5) | -74.3 (-60.6) | -39.0 (-30.9) | -73.7 (-64.2) |
+
+What is left, and why. A tone that starts and stops is as wide as one over the time it takes to:
+with fades of 12 cycles, a line's energy lies within a sixth of its frequency, part of it just
+past the sixth-of-an-octave mark (the single tone's -50 dB; the lowest lines of the text, where
+the fade is capped at 0.25 s). Above the drawing the same eight read -44 (the wavy stroke) to
+-91 dB (-19 to -79 with the gliding comb). A thin stroke that moves in pitch is played by one fixed line
+after another, each for a moment, and two fixed sines cannot hand over as one gliding sine would:
+faint arcs run off the stroke where it bends (-46 dB; the gliding comb played the same stroke as
+a staircase on Stripes' lines, with a streak under every step, -28 dB). Stripes' frame: its
+bottom bar, 80 - 90 Hz, lies between two of its lines (72 and 97 Hz) and is played by the upper,
+which has more of it (0.6 played it half on each, and the lower read as -10 dB "below the
+drawing"); Smooth has lines inside it.
+
+**Measured: the fill** (ArtFreqLab, Hann, interpolated, mean over four drawings and both
+densities; low = 30 - 250 Hz / mid = 250 Hz - 2 kHz):
+
+| FFT | | fidelity | fill | gap dB | flicker dB | leak dB |
+| --- | --- | --- | --- | --- | --- | --- |
+| 4096 | Stripes | .84/.93 | .93/.86 | 4.2/6.9 | 1.2/1.1 | -9.7/-16.8 |
+| | gliding comb | .89/.96 | .93/.92 | 4.6/4.7 | 2.9/2.8 | -15.4/-22.7 |
+| | standing comb | .90/.96 | .93/.93 | 4.5/4.2 | 2.9/2.6 | -15.9/-22.7 |
+| 8192 | Stripes | .69/.76 | .38/.53 | 17.9/24.7 | 0.9/0.8 | -9.7/-17.1 |
+| | gliding comb | .90/.95 | .93/.93 | 4.4/3.7 | 2.7/2.3 | -17.3/-21.3 |
+| | standing comb | .92/.96 | .93/.94 | 4.3/3.6 | 2.9/2.0 | -18.6/-21.7 |
+| 16384 | Stripes | .43/.57 | .21/.21 | 18.5/28.0 | 1.3/0.6 | -10.7/-16.4 |
+| | gliding comb | .88/.93 | .88/.91 | 5.8/4.1 | 3.7/2.1 | -17.8/-18.3 |
+| | standing comb | .91/.94 | .91/.93 | 4.7/3.4 | 2.8/0.9 | -19.3/-19.0 |
+| 32768 | Stripes | .31/.49 | .30/.21 | 12.5/19.8 | 1.7/0.8 | -11.1/-14.8 |
+| | gliding comb | .84/.90 | .81/.90 | 7.1/3.9 | 3.8/2.0 | -17.4/-15.4 |
+| | standing comb | .85/.90 | .79/.90 | 7.5/3.2 | 1.7/0.1 | -18.8/-17.0 |
+
+(The Stripes rows are 0.6's; Stripes now, with its lines kept inside the drawing and the fades:
+fidelity .87/.92, .70/.72, .45/.54, .32/.46, fill .89/.81, .33/.38, .18/.16, .28/.21, leak -12.6
+to -18.4 in the lows. The lab's leak is measured with Hann at each size and is mostly the
+analyser's own blur around shapes, which is why it moves little: the drip table is the measure
+of what the sound leaves outside the drawing.) At 32768 points the comb's own lines,
+5 Hz apart, begin to show below 500 Hz as fine stripes (a gap of 7 - 8 dB, as the gliding comb's
+shimmer left); they do not move.
 
 ## Carving
 
@@ -745,13 +817,30 @@ real output as the user's analyser will show it (`ui/MeasuredPreview.h`):
   stand-in `dsp/StandInSong.h`; see [ArtFreq FX](#artfreq-fx)), the sines of the Draw
   modes added, the latency taken out as a host's delay compensation does. Silence (ArtFreq) or
   the song uncarved (ArtFreq FX) half a window either side, as an analyser sees around a pass.
-- **How it is analysed** (`dsp/SpectrumAnalysis.h`, shared with the live view): Hann, the FFT
-  size from Settings, a full-scale sine reads 0 dBFS; each pixel row reads the spectrum between
-  the bins around its centre, or the loudest bin inside it, plus the analyser's slope; colours:
-  the canvas's colour map over the levels from Settings (-100 to 0 dBFS by default). One analysis
-  per pixel column at most and none closer than a sixteenth of the window (the window blurs time
-  over far more; the columns between are interpolated): a 4-bar pass at 8192 points is 750
-  analyses whatever the window size.
+- **How it is analysed** (`dsp/SpectrumAnalysis.h`, shared with the live view): a four-term
+  Blackman-Harris window, the FFT size from Settings, a full-scale sine reads 0 dBFS; each pixel
+  row reads the spectrum between the bins around its centre, or the loudest bin inside it, plus
+  the analyser's slope; colours: the canvas's colour map over the levels from Settings (-90 to 0
+  dBFS by default). One analysis per pixel column at most and none closer than a sixteenth of the
+  window (the window blurs time over far more; the columns between are interpolated): a 4-bar
+  pass at 8192 points is 750 analyses whatever the window size.
+- **Why that window and that range** (they were Hann and -100 dBFS in 0.6). Hann's side lobes
+  start 31 dB under a tone and fall slowly (60 dB down seven bins away). On a log scale, with a
+  floor 80 or 100 dB under the sound, that draws every low tone, however clean, with a skirt
+  hanging under it to the bottom of the picture: at 8192 points a 50 Hz tone 60 dB above the
+  darkest colour shows from 10 to 90 Hz. The customer read exactly that as sound "dripping" below
+  the drawing, and could not tell it from the drip that was in the sound. Blackman-Harris (side
+  lobes 92 dB down) shows a tone as its main lobe and nothing else (the same tone: 27 to 73 Hz
+  at the very faintest), at the price of a main lobe a third wider near its top (2.7 bins at half
+  height against 2). What the canvas and the live view show under a shape is now in the sound.
+  The floor at -90 dBFS is the deep end of what spectrograms usually show, and just above the
+  window's own side lobes under a full-scale sine; at -100 the picture also showed what is left
+  of the clicks where lines in the mids and highs start and stop, 70 to 90 dB under the letters.
+  Both stay the user's to set (Settings, FFT size and levels);
+  a project saved with -100 keeps it. An analyser that uses Hann (MiniMeters' window could not be
+  looked up) draws the lows a little thinner and adds that skirt, nothing else differs. Renders
+  of one tone, a block and text through both: `ArtFreqLab --drip` writes them
+  (`*-hann8192.png`, `*-hann8192-floor80.png`, `*-bh8192.png`, `*-bh8192-floor80.png`).
 - **When.** A request (the plan and masks, mode, Depth and Level to the quarter dB, the length to
   the millisecond, the rate, the scale and slope, FFT and levels, the picture's size, the
   document's revision) is made on the canvas's timer; a new one stops a render of an older one at
@@ -857,18 +946,14 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   swap to the new measurement is gentle (truth lab, a word moved: correlation with the new
   measurement 0.93 -> 0.97 in the lows, mean difference 5.6 -> 1.9 dB). Where it changed, and
   before the first measurement, a model (`ui/CanvasPlanImage.h`): each line drawn as the analyser draws a
-  sine (Hann's main lobe and first side lobes, as many Hz wide at every height: a scan line one
-  pixel tall in the highs at low Density, blurred and thick in the lows), each line's loudness
-  blurred in time by the analyser's window, the comb's band filled at the brightness the analyser
-  shows it (combGain at 8192, 3 dB more or less per halving or doubling), in absolute levels:
-  dBFS at Level with the analyser's slope, coloured over the analyser's range from Settings, as
-  the measured preview and the live view are; the comb's grid with a lobe as wide as its sines
-  glide through in a window, a skirt beyond it (1.4 dB a Hz at 8192), its rising stripes (3.5 dB
-  either way, at the phase the measured pass starts with); under the comb's shapes the haze its
-  gliding sines leave, falling away below the shape as measured (52 dB down a quarter of an
-  octave below, 77 from two octaves) and in streaks (before: an even fill 45 dB down to the
-  bottom, 13 - 33 dB brighter than the real haze). It still leaves out some of what only the sound
-  has (energy spilled where shapes start and stop, lines beating): see docs/ACCURACY.md for its
+  sine (its window's main lobe, as many Hz wide at every height: a scan line one pixel tall in
+  the highs at low Density, blurred and thick in the lows), each line's loudness blurred in time
+  by the analyser's window, the standing comb's lines as much brighter as the lines sharing a bin
+  add up to, in absolute levels: dBFS at Level with the analyser's slope, coloured over the
+  analyser's range from Settings, as the measured preview and the live view are. (The gliding
+  comb needed a model of its haze, skirt and rising stripes here; a steady line needs none.) It
+  still leaves out what only the sound has (energy spilled where shapes start and stop, lines
+  beating, the comb's fine texture): see docs/ACCURACY.md for its
   numbers. A change of the picture's size, the colours, the take of the user's song or (where it
   is one shift) the instrument's Level keeps the measured picture until the new one is in (a
   moment); any other change goes to the fast preview at once (before, a mode, Density or Depth
@@ -917,11 +1002,13 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 ### Live view
 
 A scrolling spectrogram of ArtFreq's own output (`LiveAnalyzer`), right to left, analysed as the
-canvas's measured preview is (Hann, the FFT size, slope and colour range from Settings, the same
-rows: `dsp/SpectrumAnalysis.h`), so the same sound looks the same in both. A column every
+canvas's measured preview is (the same window, the FFT size, slope and colour range from Settings,
+the same rows: `dsp/SpectrumAnalysis.h`; see [Measured preview](#measured-preview) for why that
+window), so the same sound looks the same in both. A column every
 sixteenth of the window (5 to 21 ms at 48 kHz); its history kept in hundredths of a dB, under
 16 MB at any FFT size. (Until the measured preview it had its own analysis, Blackman-Harris 4096
-points, and its own colours, -89 to -29 dBFS, tuned to look like the canvas's relative ones.) It shows one pass of the drawing and a quarter more
+points, and its own colours, -89 to -29 dBFS, tuned to look like the canvas's relative ones; 0.6
+used Hann over -100 to 0 dBFS, which drew a skirt under every low tone.) It shows one pass of the drawing and a quarter more
 (whole seconds, 4 to 20 s; it follows the length and the tempo), so the whole drawing is on screen
 for a while each pass; seconds are labelled every 1, 2 or 5 s, as room allows. A small "LIVE" badge
 in accent2.
@@ -1298,12 +1385,11 @@ deactivations per key in a period (say three in 30 days), then support.
 
 `ArtFreqTests` (no host): scale maths; document round trip; image modes (auto-invert on a white
 background, transparency, outline); text rendering coverage; compositor placement; plan
-(frequencies, spacing, normalisation, contrast, slope); Smooth lows, the rising comb (the lines it
-replaces, its loudness grid and softened edges, thin strokes played steady on the replaced lines
-and drawn as Stripes draws them, the fade-in at the bottom without clicks, splashes or extra rumble
-at low ends of 10, 20 and 30 Hz, a long-FFT analyser seeing the band filled, its power staying in
-the drawn band, leakage, determinism, crossfades, speed, the canvas drawing the band filled and as
-bright as the lines); exchange (versions, garbage); engine
+(frequencies, spacing, normalisation, contrast, slope); Smooth lows, the standing comb (the lines it
+replaces, its grid, gains and phases; low lines never below the drawing, in Stripes too; thin
+strokes; the fades in time, with and without Repeat; the band filled at 16384 and 32768 points
+where Stripes shows gaps; nothing outside the drawn band; lines back in their pattern after a
+silence; determinism, crest factor, crossfades, speed; nothing below the canvas's low end); exchange (versions, garbage); engine
 (single line frequency, silence, crossfade continuity, jump fades, Nyquist guard, real-time
 speed); tracker (transport positions, tempo changes and ramps, bar lines, the single pass on
 play: starting anywhere in the song at any block sizes, in the first block the tracker sees and
@@ -1344,7 +1430,7 @@ or Depth from the host going to the fast preview at once, a window opened again 
 measurement at once, the fast preview made on its own thread with the message thread asking for
 it in under 5 ms on a dense project at 2x and 4x, and showing the measurement where the drawing
 did not change); the fast preview (the comb's band filled and Stripes' gaps, the comb as
-bright as the lines, thin strokes as Stripes draws them and blurred by the window; ArtFreq FX's
+bright as the lines, a thin stroke as one line blurred by the window; ArtFreq FX's
 modes over the stand-in, the halo, the sines' level, the measured stand-in taking the texture's
 place); the live analyser at the FFT size from Settings;
 the editor, driven with synthetic events (bounce files; the export following the drawing:
@@ -1421,7 +1507,16 @@ it: the space bar through the peer in every focus state (see
 on: it renders four drawings through the real plan and engine, analyses them like a spectrogram
 (Hann and Blackman-Harris, 4096 to 32768 points, interpolated and nearest-bin) and measures, over
 30 Hz - 2 kHz, fidelity, fill, gap depth, flicker, regular pulsing and leakage, with PNG sheets
-and a comparison against an earlier run (`--baseline`).
+and a comparison against an earlier run (`--baseline`). `ArtFreqLab <dir> --drip`
+(tools/DripLab.h) is the drip check: what sounds below, above and beside eight drawings with
+something low in them, with pictures as analysers show them (see [Smooth lows](#smooth-lows)).
+`ArtFreqLab <dir> --skeptic` (tools/SkepticLab.h) is the second opinion on that: it plays the
+drawings people make (the default text in the Low band, small and large low text, soft
+gradients, brush strokes, a full-height picture, text in the highs) at Density 64, 256 and 1024,
+over 1, 4 and 16 bars, looped and once, on the log and the linear scale, and writes each one's
+real output as raw floats with what was drawn where, for an analysis from outside; and it builds
+thin horizontal strokes at every height and counts the lines that play each (docs/ACCURACY.md
+has what it found).
 
 `ArtFreqTruthLab <snapshot-dir> <out>` (tools/TruthLab.cpp) checks the screenshots against the
 sound. The snapshot tool, run with `ARTFREQ_SNAPSHOT_STATES=1`, saves each state beside its PNG
@@ -1429,8 +1524,8 @@ sound. The snapshot tool, run with `ARTFREQ_SNAPSHOT_STATES=1`, saves each state
 processor of its kind, activated against the test licensing environment, plays one pass with a
 transport that starts after 0.77 s stopped (ArtFreq FX on a dense synthetic master at -10 dBFS RMS,
 its output moved back by the latency), analyses the output as an FFT spectrogram such as
-MiniMeters' does (its settings assumed: Hann, 4096 / 8192 / 16384 points, one analysis per canvas
-column, the state's scale, rows interpolated between bins
+MiniMeters' does (its settings assumed; the canvas's window, Blackman-Harris, 4096 / 8192 / 16384
+points, one analysis per canvas column, the state's scale, rows interpolated between bins
 or the loudest bin inside them, the canvas's colour map over -100 to 0 dBFS) and writes the
 screenshot's canvas beside the real display with numbers per band (lows < 250 Hz, low mids, highs
 > 2 kHz): correlation, levels inside and around the drawing, contrast against the canvas's, and

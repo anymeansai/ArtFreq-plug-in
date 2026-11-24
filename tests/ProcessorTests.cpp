@@ -405,7 +405,7 @@ ARTFREQ_TEST (processorLoadsStatesFromBeforeStartAt)
 
 ARTFREQ_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
 {
-    // New instances play Smooth lows (the rising comb). Lows is a setting of the plan, so, like
+    // New instances play Smooth lows (the standing comb). Lows is a setting of the plan, so, like
     // Density, not an automation target.
     auto fresh = makeProcessor();
     auto* lows = fresh->getParameters().getParameter (params::id::lowEnd);
@@ -450,6 +450,37 @@ ARTFREQ_TEST (processorLowsDefaultsToSmoothButOldStatesKeepStripes)
     const auto smoothAgain = load (state);
     CHECK_NEAR (getParameter (*smoothAgain, params::id::lowEnd), static_cast<float> (params::smoothLowEndIndex), 1.0e-4);
     CHECK (smoothAgain->getCurrentPlan() != nullptr && smoothAgain->getCurrentPlan()->combLines > 0);
+
+    // A project saved with 0.5 (Smooth: the gliding comb then; no analyser settings yet, and no
+    // knowledge of the fades in time) opens on Smooth, played by the standing comb with its fades
+    // worked out for the project's Length and Repeat, and its canvas and Live view get today's
+    // defaults: the cleaner sound and the cleaner picture, nothing to set.
+    if (xml != nullptr)
+    {
+        auto fromPointFive = juce::AudioProcessor::getXmlFromBinary (state.getData(), static_cast<int> (state.getSize()));
+        auto* saved = fromPointFive != nullptr ? fromPointFive->getChildByName ("ArtFreqParameters") : nullptr;
+        CHECK (saved != nullptr);
+
+        if (saved != nullptr)
+        {
+            for (const auto* id : { params::id::analyserFft, params::id::analyserFloor, params::id::analyserCeiling })
+            {
+                CHECK (saved->getChildByAttribute ("id", id) != nullptr);
+                saved->removeChildElement (saved->getChildByAttribute ("id", id), true);
+            }
+
+            juce::MemoryBlock pointFive;
+            juce::AudioProcessor::copyXmlToBinary (*fromPointFive, pointFive);
+            const auto opened = load (pointFive);
+            CHECK (opened->getPlanSettings().lowEnd == LowEnd::smooth);
+            CHECK (opened->getCurrentPlan() != nullptr && opened->getCurrentPlan()->combLines > 0);
+            CHECK_GREATER (opened->getPlanSettings().passSeconds, 0.0);
+            CHECK (opened->getPlanSettings().repeats == (getParameter (*opened, params::id::repeat) >= 0.5f));
+            CHECK_NEAR (opened->getAnalyserView().floorDb, params::defaultAnalyserFloorDb, 1.0e-4);
+            CHECK_NEAR (opened->getAnalyserView().ceilingDb, params::defaultAnalyserCeilingDb, 1.0e-4);
+            CHECK (opened->getAnalyserView().fftSize == 8192);
+        }
+    }
 }
 
 ARTFREQ_TEST (processorSwitchingLowsWhilePlayingDoesNotClick)

@@ -137,7 +137,11 @@ ARTFREQ_TEST (standInSongHasTheTexturesLevels)
 
     std::printf ("\n");
     CHECK_NEAR (median (differences), 0.0, 1.0);
-    CHECK_NEAR (median (lows), 0.0, 2.0);
+    // (The lows: within 3.5 dB. The analyser's window is a third wider than the Hann window the
+    // texture's kick and bass were drawn for, so at 4096 points their lobes cover more of the
+    // few bins below 300 Hz than the texture says: 3 dB in the median, 8 dB below 60 Hz. With
+    // Hann it was 1 dB.)
+    CHECK_NEAR (median (lows), 0.0, 3.5);
     CHECK_NEAR (median (highs), 0.0, 2.0);
 
     // The same timeline gives the same noise, wherever the render starts.
@@ -369,7 +373,7 @@ ARTFREQ_TEST (measuredPreviewRecoloursWithoutRendering)
     if (first == nullptr)
         return;
 
-    request.view.floorDb = -80.0f;
+    request.view.floorDb = -70.0f;
     auto changed = now();
     const auto second = waitForResult (preview, request, 10.0);
     auto quickest = now() - changed;
@@ -493,7 +497,8 @@ ARTFREQ_TEST (analyserSettingsAreSavedWithTheProject)
         loaded.setStateInformation (old.getData(), static_cast<int> (old.getSize()));
         const auto defaults = loaded.getAnalyserView();
         CHECK (defaults.fftSize == 8192);
-        CHECK_NEAR (defaults.floorDb, -100.0f, 0.001f);
+        CHECK_NEAR (defaults.floorDb, params::defaultAnalyserFloorDb, 0.001f);
+        CHECK_NEAR (params::defaultAnalyserFloorDb, -90.0f, 0.001f);
         CHECK_NEAR (defaults.ceilingDb, 0.0f, 0.001f);
 
         // A range turned inside out keeps its floor and spans at least 20 dB.

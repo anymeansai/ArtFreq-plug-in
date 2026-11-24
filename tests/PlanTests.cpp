@@ -335,9 +335,12 @@ ARTFREQ_TEST (planMergedLinesKeepTheirRows)
             }
         }
 
-        CHECK_GREATER (lowest, 35.0f);
-        CHECK_GREATER (highest, 235.0f);
-        CHECK_LESS (highest, 275.0f);
+        // (A low line sounds only if the drawing covers its own frequency: the lines
+        // just below 40 Hz and just above 250 Hz, each the nearest to the block's edge rows, no
+        // longer play. Before, the highest was the line at about 256 Hz.)
+        CHECK_GREATER (lowest, 39.5f);
+        CHECK_GREATER (highest, 200.0f);
+        CHECK_LESS (highest, 251.0f);
     }
 }
 

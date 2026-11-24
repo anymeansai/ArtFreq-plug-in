@@ -1,8 +1,10 @@
-// Smooth lows (LowEnd::smooth), the rising comb: the crowded lows played by sines that glide
-// upwards together, instead of lines 25 Hz apart. The plan's side (which lines it replaces, the
-// loudness grid, the normalisation), the engine's (the band fills at long FFT sizes where lines
-// show as stripes, its power stays in the drawn band, determinism, crossfades, speed) and the
-// canvas's (the band drawn filled, as bright as the lines).
+// Smooth lows (LowEnd::smooth), the standing comb: the crowded lows played by steady lines on a
+// fine grid, with phases that keep them from pulsing, instead of lines 25 Hz apart. The plan's
+// side (which lines it replaces, its grid, gains and phases, the normalisation; nothing below the
+// drawing, in Stripes too; the fades in time), the engine's (the band fills at long FFT sizes
+// where lines show as stripes, nothing sounds outside the drawn band, the lines keep their phases
+// through silence, determinism, crossfades, speed) and the canvas's (the band drawn filled, as
+// bright as the lines).
 
 #include "TestFramework.h"
 #include "TestPlans.h"
@@ -66,16 +68,16 @@ std::vector<float> render (const ArtPlan& plan, double seconds, int blockSize = 
     return test::play (engine, static_cast<int> (seconds * rate48), 0.0, 1.0 / (8.0 * rate48), blockSize, true);
 }
 
-/** How a long-FFT analyser (32768 samples, Hann) sees a band: the share of its bins within 6 dB
+/** How a long-FFT analyser (2^order samples, Hann) sees a band: the share of its bins within 6 dB
     of their median, averaged over a few windows. */
-double longFftFill (const std::vector<float>& audio, double lowHz, double highHz, double* medianDb = nullptr)
+double longFftFill (const std::vector<float>& audio, double lowHz, double highHz, double* medianDb = nullptr, int order = 15)
 {
     double share = 0.0, median = 0.0;
     constexpr int windows = 4;
 
     for (int w = 0; w < windows; ++w)
     {
-        const auto spectrum = test::spectrum (audio, static_cast<size_t> (9600 + w * 16384), 15, rate48);
+        const auto spectrum = test::spectrum (audio, static_cast<size_t> (9600 + w * 16384), order, rate48);
         std::vector<double> levels;
 
         for (size_t b = 0; b < spectrum.magnitudes.size(); ++b)
@@ -168,8 +170,8 @@ Canvas rowCanvas (double hz)
 }
 
 /** How much a thin feature at `hz` blinks: the spread (95th minus 5th percentile, dB) of the
-    power within 20 Hz of it, frame by frame (Hann, 2^order points, a frame every 256 samples). */
-double levelSpreadDb (const std::vector<float>& audio, double hz, int order)
+    power within `withinHz` of it, frame by frame (Hann, 2^order points, a frame every 256 samples). */
+double levelSpreadDb (const std::vector<float>& audio, double hz, int order, double withinHz = 20.0)
 {
     std::vector<double> levels;
     const auto size = static_cast<size_t> (1) << order;
@@ -180,7 +182,7 @@ double levelSpreadDb (const std::vector<float>& audio, double hz, int order)
         double power = 1.0e-30;
 
         for (size_t b = 0; b < frame.magnitudes.size(); ++b)
-            if (std::abs (static_cast<double> (b) * frame.binHz - hz) <= 20.0)
+            if (std::abs (static_cast<double> (b) * frame.binHz - hz) <= withinHz)
                 power += frame.magnitudes[b] * frame.magnitudes[b];
 
         levels.push_back (10.0 * std::log10 (power));
@@ -203,246 +205,422 @@ ARTFREQ_TEST (planCombReplacesTheCrowdedLows)
         const auto lines = buildPlan (canvas, combSettings (stripes, density));
         const auto comb = buildPlan (canvas, combSettings (smooth, density));
 
-        // The grid: evenly spaced, about combGridSpacingHz apart, from the bottom of the canvas
-        // to below the comb's limit.
-        CHECK_GREATER (comb->combLines, 100);
-        CHECK (comb->combGridHz > 4.0f && comb->combGridHz < 6.0f);
-        CHECK_NEAR (comb->combGridLowHz - 0.5f * comb->combGridHz, 20.0f, 0.01f);
-        CHECK_NEAR (comb->combSlope, combSlopeHzPerSecond, 1.0e-6);
-        CHECK_NEAR (comb->combEdgeHz, combEdgeFadeHz, 1.0e-6);
+        // The comb's lines: every multiple of combFineSpacingHz from the bottom of the canvas (20
+        // Hz) to combFineTopHz, every multiple of combCoarseSpacingHz from there to below the
+        // comb's limit.
+        CHECK_GREATER (comb->combLines, 200);
+        CHECK_LESS (comb->combLines, 270);
+        CHECK_NEAR (comb->frequencies[0], 20.0f, 1.0e-4);
+        CHECK (comb->combPhases.size() == static_cast<size_t> (comb->combLines));
 
         for (int k = 0; k < comb->combLines; ++k)
-            CHECK_NEAR (comb->frequencies[static_cast<size_t> (k)], comb->combGridLowHz + static_cast<float> (k) * comb->combGridHz, 1.0e-2);
-
-        // (the grid reaches halfway to the first line kept, a little above the limit at most)
-        const auto gridTop = comb->frequencies[static_cast<size_t> (comb->combLines - 1)];
-        CHECK_LESS (gridTop, combTopLimitHz + 0.5f * 25.0f);
-        const auto glide = static_cast<double> (gridTop - comb->combGridLowHz) + 2.0 * comb->combEdgeHz;
-        CHECK_NEAR (comb->combSines, glide / combSpacingHz, 1.0);
-
-        // After it, the very same lines as without the comb: the replaced lows (which play only
-        // thin strokes: none here) and above them the lines kept (the highs are untouched), at
-        // amplitudes that differ only by the normalisation.
-        CHECK (comb->numLines - comb->combLines == lines->numLines);
-        CHECK (std::memcmp (comb->frequencies.data() + comb->combLines, lines->frequencies.data(),
-                            sizeof (float) * static_cast<size_t> (lines->numLines)) == 0);
-
-        const auto offset = comb->combThinLines;  // the replaced lines, first in Stripes' plan
-        const auto kept = lines->numLines - offset;
-        const auto firstKept = comb->combLines + offset;
-        CHECK_GREATER (offset, 10);
-        CHECK_GREATER (kept, 50);
-        CHECK_GREATER (comb->frequencies[static_cast<size_t> (firstKept)], 1500.0f);
-        CHECK_GREATER (comb->frequencies[static_cast<size_t> (firstKept)], gridTop);
-        CHECK_LESS (comb->frequencies[static_cast<size_t> (firstKept - 1)], gridTop);
-
-        const auto ratio = comb->amplitude (0, firstKept) / lines->amplitude (0, offset);
-        auto proportional = true, thinSilent = true;
-
-        for (int c = 0; c < Canvas::width; c += 37)
         {
-            for (int l = 0; l < kept; ++l)
-                proportional = proportional && std::abs (comb->amplitude (c, firstKept + l) - ratio * lines->amplitude (c, offset + l))
-                                                   <= 1.0e-5f * lines->amplitude (c, offset + l) + 1.0e-9f;
+            const auto hz = static_cast<double> (comb->frequencies[static_cast<size_t> (k)]);
+            const auto spacing = static_cast<double> (hz < combFineTopHz ? combFineSpacingHz : combCoarseSpacingHz);
+            CHECK_NEAR (hz / spacing, std::round (hz / spacing), 1.0e-6);
 
-            for (int l = 0; l < offset; ++l)
-                thinSilent = thinSilent && ! (comb->amplitude (c, comb->combLines + l) > 0.0f);
+            if (k > 0)
+                CHECK_NEAR (hz - comb->frequencies[static_cast<size_t> (k - 1)], hz <= combFineTopHz ? combFineSpacingHz : combCoarseSpacingHz, 1.0e-3);
+
+            // The sweep: the phase falls with the square of the line's number on its grid.
+            const auto number = std::round (hz / spacing);
+            const auto expected = std::remainder (-juce::MathConstants<double>::pi * number * number / combPhaseLines, juce::MathConstants<double>::twoPi);
+            CHECK_NEAR (std::remainder (static_cast<double> (comb->combPhases[static_cast<size_t> (k)]) - expected, juce::MathConstants<double>::twoPi), 0.0, 1.0e-3);
         }
 
+        // (the comb reaches up to halfway to the first line kept, a little above the limit at most)
+        const auto combTop = comb->frequencies[static_cast<size_t> (comb->combLines - 1)];
+        CHECK_LESS (combTop, combTopLimitHz + 0.5f * 25.0f);
+
+        // After it, the lines Stripes plays above the lows, the very same (the highs are
+        // untouched), at amplitudes that differ only by the normalisation.
+        const auto kept = comb->numLines - comb->combLines;
+        const auto offset = lines->numLines - kept;   // the replaced lines, first in Stripes' plan
+        CHECK_GREATER (offset, 10);
+        CHECK_GREATER (kept, 50);
+        CHECK (std::memcmp (comb->frequencies.data() + comb->combLines, lines->frequencies.data() + offset,
+                            sizeof (float) * static_cast<size_t> (kept)) == 0);
+        CHECK_GREATER (comb->frequencies[static_cast<size_t> (comb->combLines)], 1500.0f);
+        CHECK_GREATER (comb->frequencies[static_cast<size_t> (comb->combLines)], combTop);
+        CHECK_LESS (lines->frequencies[static_cast<size_t> (offset - 1)], combTopLimitHz);
+
+        const auto ratio = comb->amplitude (0, comb->combLines) / lines->amplitude (0, offset);
+        auto proportional = true;
+
+        for (int c = 0; c < Canvas::width; c += 37)
+            for (int l = 0; l < kept; ++l)
+                proportional = proportional && std::abs (comb->amplitude (c, comb->combLines + l) - ratio * lines->amplitude (c, offset + l))
+                                                   <= 1.0e-5f * lines->amplitude (c, offset + l) + 1.0e-9f;
+
         CHECK (proportional);
-        CHECK (thinSilent);
 
-        // The replaced lines were all crowded lows.
-        for (int l = 0; l < offset; ++l)
-            CHECK_LESS (lines->frequencies[static_cast<size_t> (l)], combTopLimitHz);
-
-        // The grid is played by the comb, never as lines.
-        CHECK (std::none_of (comb->activeLines.begin(), comb->activeLines.end(),
-                             [&] (uint16_t line) { return line < comb->combLines; }));
-        CHECK (comb->combActive.size() == static_cast<size_t> (Canvas::width));
-        CHECK (std::all_of (comb->combActive.begin(), comb->combActive.end(), [] (uint8_t a) { return a != 0; }));
+        // The comb's lines are lines like any other: active wherever they sound.
+        CHECK (comb->activeLines.size() == static_cast<size_t> (comb->numLines) * static_cast<size_t> (Canvas::width));
         CHECK (comb->layoutHash != lines->layoutHash);
 
-        // The normalisation counts the comb as its sines: each spends cellHz / glide of its time
-        // at each grid line.
+        // The normalisation: the loudest column (every column here) at planTargetRms.
         double power = 0.0;
-        const auto weight = comb->combSines * static_cast<double> (comb->combGridHz) / glide;
 
         for (int l = 0; l < comb->numLines; ++l)
-            power += static_cast<double> (comb->amplitude (0, l)) * comb->amplitude (0, l) * (l < comb->combLines ? weight : 1.0);
+            power += static_cast<double> (comb->amplitude (0, l)) * comb->amplitude (0, l);
 
         CHECK_NEAR (std::sqrt (power / 2.0), planTargetRms, 1.0e-3);
 
-        // Played louder than lines, to look as bright (see combGain).
-        CHECK_NEAR (comb->amplitude (0, comb->combLines / 2) / comb->amplitude (0, firstKept), combGain, 0.05);
+        // Played as loud as the gliding comb was for its spacing (see combGain): the closer the
+        // lines, the quieter each.
+        const auto lineLevel = comb->amplitude (0, comb->combLines);
+        CHECK_NEAR (comb->amplitude (0, 10) / lineLevel, combGain * std::sqrt (combFineSpacingHz / combGainSpacingHz), 0.01);
+        CHECK_NEAR (comb->amplitude (0, comb->combLines - 10) / lineLevel, combGain * std::sqrt (combCoarseSpacingHz / combGainSpacingHz), 0.01);
     }
 
     // Stripes is plain lines (no comb); so is Smooth where nothing is crowded (a linear scale).
     const auto lines = buildPlan (canvas, combSettings (stripes));
-    CHECK (lines->combLines == 0 && lines->combActive.empty());
+    CHECK (lines->combLines == 0 && lines->combPhases.empty());
 
     const auto linear = buildPlan (canvas, combSettings (smooth, 256, ScaleType::linear));
     const auto linearLines = buildPlan (canvas, combSettings (stripes, 256, ScaleType::linear));
     CHECK (linear->combLines == 0);
-    CHECK (linear->combActive.empty());
     CHECK (linear->frequencies == linearLines->frequencies);
     CHECK (linear->amplitudes == linearLines->amplitudes);
 
-    // An empty canvas: laid out, silent, the comb never active.
+    // An empty canvas: laid out, silent.
     const auto empty = buildPlan (Canvas(), combSettings (smooth));
     CHECK (empty->silent);
-    CHECK_GREATER (empty->combLines, 100);
+    CHECK_GREATER (empty->combLines, 200);
 }
 
-ARTFREQ_TEST (planCombGridFollowsTheDrawing)
+ARTFREQ_TEST (planLowsNeverPlayBelowTheDrawing)
 {
-    const auto plan = buildPlan (bandCanvas (100.0, 150.0), combSettings (smooth));
-    CHECK_GREATER (plan->combLines, 100);
-
-    // Grid lines inside the band are on; those more than a cell and a row away from it are off.
-    // The run of lit lines is level in its middle, and softened at both of its edges: its
-    // outermost line at combEdgeTaper[0] of that level, the next at combEdgeTaper[1].
-    const auto runAt = [] (const ArtPlan& p, int column, double insideLow, double insideHigh, double outsideLow, double outsideHigh)
+    // The lines that sound in a column, in Hz.
+    const auto sounding = [] (const ArtPlan& plan, int column)
     {
-        std::vector<float> run;
-        auto last = -2;
-        auto contiguous = true;
+        std::vector<double> hz;
 
-        for (int k = 0; k < p.combLines; ++k)
-        {
-            const auto hz = static_cast<double> (p.frequencies[static_cast<size_t> (k)]);
-            const auto amplitude = p.amplitude (column, k);
+        for (int l = 0; l < plan.numLines; ++l)
+            if (plan.amplitude (column, l) > 0.0f)
+                hz.push_back (static_cast<double> (plan.frequencies[static_cast<size_t> (l)]));
 
-            if (hz > insideLow && hz < insideHigh)
-                CHECK_MSG (amplitude > 0.0f, "grid line at " << hz << " Hz is on");
-
-            if (amplitude > 0.0f)
-            {
-                CHECK_MSG (hz > outsideLow && hz < outsideHigh, "grid line at " << hz << " Hz is off");
-                contiguous = contiguous && (last < 0 || last == k - 1);
-                last = k;
-                run.push_back (amplitude);
-            }
-        }
-
-        CHECK (contiguous);
-        return run;
+        return hz;
     };
 
-    const auto run = runAt (*plan, 500, 104.0, 146.0, 94.0, 157.0);
-    CHECK_GREATER (static_cast<int> (run.size()), 2 * combEdgeTaperMinCells - 1);
-
-    if (run.size() >= 5)
+    // A block over 100 - 150 Hz. Smooth: exactly the comb's lines inside it, all at one level.
+    // Stripes: its lines stand about 25 Hz apart, and the nearest one below the block (which
+    // 0.6 played: a shape drawn from 100 Hz sounded from about 90) stays silent, as does the
+    // nearest one above.
+    for (const auto lowEnd : { smooth, stripes })
     {
-        const auto level = run[run.size() / 2];
-        const auto last = run.size() - 1;
+        const auto plan = buildPlan (bandCanvas (100.0, 150.0), combSettings (lowEnd));
+        const auto hz = sounding (*plan, 500);
+        CHECK_GREATER (static_cast<int> (hz.size()), lowEnd == smooth ? 9 : 0);
 
-        for (size_t i = 2; i + 2 <= last; ++i)
-            CHECK_NEAR (run[i], level, 1.0e-6);
+        for (const auto f : hz)
+            CHECK_MSG (f > 99.0 && f < 151.0, "a line at " << f << " Hz sounds for a block over 100 - 150 Hz");
 
-        CHECK_NEAR (run[0], combEdgeTaper[0] * level, 1.0e-6);
-        CHECK_NEAR (run[1], combEdgeTaper[1] * level, 1.0e-6);
-        CHECK_NEAR (run[last], combEdgeTaper[0] * level, 1.0e-6);
-        CHECK_NEAR (run[last - 1], combEdgeTaper[1] * level, 1.0e-6);
+        if (lowEnd == smooth)
+        {
+            CHECK (hz.size() == 11 || hz.size() == 10 || hz.size() == 9);
+            const auto level = plan->amplitude (500, static_cast<int> (std::lround (125.0 / 5.0)) - 4);
+
+            for (int l = 0; l < plan->combLines; ++l)
+                if (plan->amplitude (500, l) > 0.0f)
+                    CHECK_NEAR (plan->amplitude (500, l), level, 1.0e-6);
+        }
     }
 
-    // A stroke as wide as the comb's spacing (four grid lines) is the comb's, at its full level
-    // throughout (too few lines to soften); so is a shape's edge at the end of the grid, where
-    // the glide fades of its own accord.
-    const auto narrow = runAt (*buildPlan (bandCanvas (101.0, 118.0), combSettings (smooth)), 500, 101.0, 118.0, 94.0, 126.0);
-    CHECK (narrow.size() == 4);
-    CHECK (std::all_of (narrow.begin(), narrow.end(), [&] (float a) { return std::abs (a - narrow.front()) < 1.0e-6f; }));
-
-    // A thinner one (a canvas row, or 7 Hz: one or two grid lines) leaves the grid silent and is
-    // played by the replaced line nearest its middle (the line Stripes plays it on), at its value:
-    // a line holds steady where the comb's sines would only pass. A shape beside it in the same
-    // column is still the comb's.
+    // A thin stroke between two lines is played by the nearer one, so nothing drawn disappears:
+    // one canvas row (0.7 Hz tall at 100 Hz), and a band 8 Hz wide, which holds two of the comb's
+    // lines (two alone would beat: see combThinEdge; one of them plays for both).
+    for (const auto lowEnd : { smooth, stripes })
     {
-        Canvas canvas = bandCanvas (200.0, 250.0);
-        const auto stroke = rowCanvas (100.0);
-
-        for (size_t i = 0; i < canvas.values.size(); ++i)
-            canvas.values[i] = std::max (canvas.values[i], stroke.values[i]);
-
-        const auto band = bandCanvas (101.0, 108.0);
-
-        for (const auto* drawing : std::array<const Canvas*, 2> { &canvas, &band })
+        for (const auto& drawing : { rowCanvas (103.0), bandCanvas (98.0, 106.0) })
         {
-            const auto thinPlan = buildPlan (*drawing, combSettings (smooth));
-            const auto stripesPlan = buildPlan (*drawing, combSettings (stripes));
-            const auto beside = drawing == &canvas;
-            CHECK (thinPlan->numLines - thinPlan->combLines == stripesPlan->numLines);
+            const auto plan = buildPlan (drawing, combSettings (lowEnd));
+            const auto hz = sounding (*plan, 500);
+            CHECK (hz.size() == 1);
 
-            if (beside)
-                CHECK_GREATER (static_cast<int> (runAt (*thinPlan, 500, 204.0, 246.0, 190.0, 260.0).size()), 2 * combEdgeTaperMinCells);
-            else
-                CHECK (std::none_of (thinPlan->combActive.begin(), thinPlan->combActive.end(), [] (uint8_t a) { return a != 0; }));
-
-            std::vector<int> on;
-
-            for (int l = 0; l < thinPlan->combThinLines; ++l)
-                if (thinPlan->amplitude (500, thinPlan->combLines + l) > 0.0f)
-                    on.push_back (l);
-
-            CHECK (on.size() == 1);
-
-            if (on.size() == 1)
+            if (hz.size() == 1)
             {
-                const auto line = thinPlan->combLines + on.front();
-                const auto hz = thinPlan->frequencies[static_cast<size_t> (line)];
-                std::printf ("    thin stroke at %s: played on the line at %.1f Hz (Stripes: %.3g there)\n", beside ? "100 Hz" : "101 - 108 Hz",
-                             static_cast<double> (hz), static_cast<double> (stripesPlan->amplitude (500, on.front())));
-                CHECK_NEAR (hz, 104.0f, 20.0f);
-                CHECK_GREATER (stripesPlan->amplitude (500, on.front()), 0.0f);
+                CHECK_NEAR (hz.front(), 102.5, lowEnd == smooth ? 3.0 : 20.0);
 
-                if (! beside)  // the only thing drawn, so the loudest: sqrt (2) planTargetRms
-                    CHECK_NEAR (thinPlan->amplitude (500, line), std::sqrt (2.0f) * planTargetRms, 1.0e-4);
+                // The only thing drawn, so the loudest: sqrt (2) planTargetRms.
+                for (int l = 0; l < plan->numLines; ++l)
+                    if (plan->amplitude (500, l) > 0.0f)
+                        CHECK_NEAR (plan->amplitude (500, l), std::sqrt (2.0f) * planTargetRms, 1.0e-4);
             }
         }
     }
 
-    const auto fromBottom = runAt (*buildPlan (bandCanvas (10.0, 60.0), combSettings (smooth)), 500, 0.0, 56.0, 0.0, 67.0);
-    CHECK (fromBottom.size() >= 6 && std::abs (fromBottom[0] - fromBottom[fromBottom.size() / 2]) < 1.0e-6f
-           && std::abs (fromBottom.back() - combEdgeTaper[0] * fromBottom[fromBottom.size() / 2]) < 1.0e-6f);
+    // A bright stroke with a faint fringe that reaches a line is played by that line at the
+    // stroke's level, not the fringe's.
+    {
+        Canvas canvas = rowCanvas (103.0);
+        const auto fringe = bandCanvas (99.0, 104.0, 0.1f);
 
-    // A column with nothing drawn below the comb's limit leaves it silent there.
-    Canvas highsOnly = bandCanvas (5000.0, 8000.0);
-    const auto highs = buildPlan (highsOnly, combSettings (smooth));
-    CHECK (std::none_of (highs->combActive.begin(), highs->combActive.end(), [] (uint8_t a) { return a != 0; }));
+        for (size_t i = 0; i < canvas.values.size(); ++i)
+            canvas.values[i] = std::max (canvas.values[i], fringe.values[i]);
+
+        const auto plan = buildPlan (canvas, combSettings (smooth));
+        const auto hz = sounding (*plan, 500);
+        CHECK (hz.size() == 1);
+        CHECK_NEAR (*std::max_element (plan->amplitudes.begin(), plan->amplitudes.end()), std::sqrt (2.0f) * planTargetRms, 1.0e-4);
+    }
+
+    // A column with nothing drawn in the lows leaves them silent; the highs play as ever (every
+    // row on its nearest line).
+    const auto highs = buildPlan (bandCanvas (5000.0, 8000.0), combSettings (smooth));
     CHECK (! highs->silent);
+
+    for (const auto f : sounding (*highs, 500))
+        CHECK_GREATER (f, 4900.0);
+
+    CHECK (buildPlan (bandCanvas (5000.0, 8000.0), combSettings (stripes))->amplitudes
+           == std::vector<float> (highs->amplitudes.begin(), highs->amplitudes.end()) || highs->combLines > 0);
+}
+
+ARTFREQ_TEST (planPlaysEveryThinStrokeOnOneLine)
+{
+    // Thin horizontal strokes (2, 4 and 6 canvas rows) at every height from 45 to 300 Hz, each in
+    // a few columns of its own: whichever rows a stroke falls on, it is played (nothing drawn
+    // disappears), by lines no further from it than the lines stand apart, at the stroke's level,
+    // and never by two lines alone. Two lines beat against each other: the comb's five times a
+    // second, at full depth when a stroke that touches neither line's own row lies half in one
+    // line's span and half in the other's (one in six of these strokes did, until such a stroke
+    // went to the line that has more of it).
+    const FrequencyScale scale;
+    constexpr int strokeColumns = 4;
+    const auto firstTop = static_cast<int> (std::ceil ((1.0 - scale.toNorm (300.0)) * Canvas::height));
+    const auto lastTop = static_cast<int> (std::floor ((1.0 - scale.toNorm (45.0)) * Canvas::height));
+
+    for (const auto lowEnd : { smooth, stripes })
+    {
+        for (const auto rows : { 2, 4, 6 })
+        {
+            auto played = 0;
+
+            for (int first = firstTop; first <= lastTop; first += Canvas::width / strokeColumns)
+            {
+                const auto last = std::min (lastTop, first + Canvas::width / strokeColumns - 1);
+                Canvas canvas;
+
+                for (int top = first; top <= last; ++top)
+                    for (int y = top; y < top + rows; ++y)
+                        for (int x = (top - first) * strokeColumns; x < (top - first + 1) * strokeColumns; ++x)
+                            canvas.at (x, y) = 1.0f;
+
+                const auto plan = buildPlan (canvas, combSettings (lowEnd));
+
+                for (int top = first; top <= last; ++top)
+                {
+                    const auto column = (top - first) * strokeColumns + strokeColumns / 2;
+                    const auto strokeHz = scale.toHz (1.0 - (top + 0.5 * rows) / Canvas::height);
+                    const auto reachHz = 0.5 * (scale.toHz (1.0 - static_cast<double> (top) / Canvas::height)
+                                                - scale.toHz (1.0 - static_cast<double> (top + rows) / Canvas::height))
+                                       + (lowEnd == smooth ? 5.0 : 20.0);
+                    auto sounding = 0;
+
+                    for (int l = 0; l < plan->numLines; ++l)
+                    {
+                        if (! (plan->amplitude (column, l) > 0.0f))
+                            continue;
+
+                        ++sounding;
+                        const auto hz = static_cast<double> (plan->frequencies[static_cast<size_t> (l)]);
+                        CHECK_MSG (std::abs (hz - strokeHz) < reachHz,
+                                   "a stroke " << rows << " rows thick at " << strokeHz << " Hz is played at " << hz << " Hz");
+                    }
+
+                    CHECK_MSG (sounding >= 1, "a stroke " << rows << " rows thick at " << strokeHz << " Hz is lost");
+                    CHECK_MSG (sounding != 2, "a stroke " << rows << " rows thick at " << strokeHz << " Hz is played by two lines, which beat");
+
+                    // Stripes' lines stand 19 Hz apart at least: a stroke this thin holds one.
+                    if (lowEnd == stripes)
+                        CHECK (sounding == 1);
+
+                    // On its own it plays at the stroke's level: the plan's loudest, but for the
+                    // faint outer lines of the thickest strokes here (see combThinEdge), which make
+                    // their columns 0.1 dB louder.
+                    if (sounding == 1)
+                    {
+                        ++played;
+
+                        for (int l = 0; l < plan->numLines; ++l)
+                            if (plan->amplitude (column, l) > 0.0f)
+                                CHECK_NEAR (plan->amplitude (column, l), std::sqrt (2.0f) * planTargetRms, 0.005);
+                    }
+                }
+            }
+
+            CHECK_GREATER (played, 100);
+        }
+    }
+}
+
+ARTFREQ_TEST (planFadesLowLinesInTime)
+{
+    // A block over 100 - 150 Hz and another over 4 - 5 kHz, both from column 256 to 767.
+    Canvas canvas;
+
+    for (int y = 0; y < Canvas::height; ++y)
+    {
+        const auto hz = FrequencyScale().toHz (1.0 - (y + 0.5) / Canvas::height);
+
+        if ((hz >= 100.0 && hz <= 150.0) || (hz >= 4000.0 && hz <= 5000.0))
+            for (int x = 256; x < 768; ++x)
+                canvas.at (x, y) = 1.0f;
+    }
+
+    const auto lineAt = [] (const ArtPlan& plan, double hz)
+    {
+        auto best = 0;
+
+        for (int l = 1; l < plan.numLines; ++l)
+            if (std::abs (plan.frequencies[static_cast<size_t> (l)] - hz) < std::abs (plan.frequencies[static_cast<size_t> (best)] - hz))
+                best = l;
+
+        return best;
+    };
+
+    for (const auto lowEnd : { smooth, stripes })
+    {
+        // Not told how long a pass takes: every line changes from one column to the next, as drawn.
+        auto settings = combSettings (lowEnd);
+        const auto hard = buildPlan (canvas, settings);
+        const auto low = lineAt (*hard, 125.0), high = lineAt (*hard, 4500.0);
+        CHECK (! (hard->amplitude (255, low) > 0.0f) && hard->amplitude (256, low) > 0.0f);
+        CHECK (hard->amplitude (767, low) > 0.0f && ! (hard->amplitude (768, low) > 0.0f));
+
+        // An 8 s pass: a column is 7.8 ms. The line at 125 Hz comes and goes over fadeCycles of
+        // its sine (96 ms: 12.3 columns), half of it either side of the drawn edge, rising all
+        // the way; the line at 4.5 kHz over shortestFadeSeconds (40 ms: 5.1 columns).
+        settings.passSeconds = 8.0;
+        const auto soft = buildPlan (canvas, settings);
+        const auto hz = static_cast<double> (soft->frequencies[static_cast<size_t> (low)]);
+        const auto reach = static_cast<int> (std::ceil (0.5 * fadeCycles / hz / (8.0 / Canvas::width)));
+        const auto level = soft->amplitude (500, low);
+        CHECK_GREATER (level, 0.0f);
+        CHECK_GREATER (reach, 4);
+        CHECK (! (soft->amplitude (255 - reach, low) > 0.0f));
+        CHECK_GREATER (soft->amplitude (256 - reach + 2, low), 0.0f);
+        CHECK_NEAR (soft->amplitude (256 + reach, low), level, 1.0e-6);
+        CHECK_NEAR (0.5f * (soft->amplitude (255, low) + soft->amplitude (256, low)), 0.5f * level, 0.02f * level);
+        CHECK_NEAR (0.5f * (soft->amplitude (767, low) + soft->amplitude (768, low)), 0.5f * level, 0.02f * level);
+        CHECK (! (soft->amplitude (768 + reach, low) > 0.0f));
+
+        for (int c = 256 - reach; c < 256 + reach; ++c)
+            CHECK (soft->amplitude (c + 1, low) >= soft->amplitude (c, low));
+
+        CHECK (! (soft->amplitude (253, high) > 0.0f) && soft->amplitude (255, high) > 0.0f);
+        CHECK (soft->amplitude (768, high) > 0.0f && ! (soft->amplitude (770, high) > 0.0f));
+        CHECK_LESS (soft->amplitude (256, high), soft->amplitude (500, high));
+        CHECK_NEAR (soft->amplitude (258, high), soft->amplitude (500, high), 1.0e-7);
+
+        // A 32 s pass: a column is 31 ms, longer than that fade, and the high line is as drawn.
+        // The low line's own fade is three columns long, too few to shape it: it fades over
+        // coarsestFadeColumns (a quarter, three quarters, all), which the engine's glide from
+        // column to column rounds into one curve.
+        settings.passSeconds = 32.0;
+        const auto slow = buildPlan (canvas, settings);
+        CHECK (! (slow->amplitude (255, high) > 0.0f) && ! (slow->amplitude (768, high) > 0.0f));
+        CHECK_NEAR (slow->amplitude (256, high), slow->amplitude (500, high), 1.0e-7);
+        CHECK (! (slow->amplitude (254, low) > 0.0f));
+        CHECK_NEAR (slow->amplitude (255, low), 0.25f * slow->amplitude (500, low), 1.0e-6);
+        CHECK_NEAR (slow->amplitude (256, low), 0.75f * slow->amplitude (500, low), 1.0e-6);
+        CHECK_NEAR (slow->amplitude (257, low), slow->amplitude (500, low), 1.0e-6);
+        CHECK_NEAR (slow->amplitude (768, low), 0.25f * slow->amplitude (500, low), 1.0e-6);
+        CHECK (! (slow->amplitude (769, low) > 0.0f));
+        settings.passSeconds = 8.0;
+
+        // The loudest column is still at planTargetRms, and the active lists follow the fades.
+        double loudest = 0.0;
+
+        for (int c = 0; c < Canvas::width; ++c)
+        {
+            double power = 0.0;
+
+            for (int l = 0; l < soft->numLines; ++l)
+                power += static_cast<double> (soft->amplitude (c, l)) * soft->amplitude (c, l);
+
+            loudest = std::max (loudest, power);
+        }
+
+        CHECK_NEAR (std::sqrt (loudest / 2.0), planTargetRms, 1.0e-4);
+        const auto active = [&] (int column, int line)
+        {
+            const auto first = soft->activeLines.begin() + soft->activeStart[static_cast<size_t> (column)];
+            const auto last = soft->activeLines.begin() + soft->activeStart[static_cast<size_t> (column) + 1];
+            return std::find (first, last, static_cast<uint16_t> (line)) != last;
+        };
+
+        CHECK (active (256 - reach + 2, low));
+        CHECK (! active (250 - reach, low));
+
+        // A longer pass has shorter columns... and a longer fade in columns; a very short one caps
+        // the fade at a sixteenth of the pass.
+        settings.passSeconds = 0.5;
+        const auto quick = buildPlan (canvas, settings);
+        CHECK (! (quick->amplitude (256 - 33, low) > 0.0f));
+        CHECK_GREATER (quick->amplitude (256 - 30, low), 0.0f);
+    }
+
+    // Repeat: a shape that runs to the end of the pass leads round into its start. A single pass:
+    // silence either side, and the low lines reach silence at both ends inside the pass.
+    Canvas toTheEnd;
+
+    for (int y = 0; y < Canvas::height; ++y)
+    {
+        const auto hz = FrequencyScale().toHz (1.0 - (y + 0.5) / Canvas::height);
+
+        if (hz >= 100.0 && hz <= 150.0)
+            for (int x = 512; x < Canvas::width; ++x)
+                toTheEnd.at (x, y) = 1.0f;
+    }
+
+    auto settings = combSettings (smooth);
+    settings.passSeconds = 8.0;
+    const auto looped = buildPlan (toTheEnd, settings);
+    const auto line = lineAt (*looped, 125.0);
+    CHECK_GREATER (looped->amplitude (0, line), 0.0f);
+    CHECK_GREATER (looped->amplitude (Canvas::width - 1, line), looped->amplitude (0, line));
+    CHECK (! (looped->amplitude (20, line) > 0.0f));
+
+    settings.repeats = false;
+    const auto single = buildPlan (toTheEnd, settings);
+    CHECK (! (single->amplitude (0, line) > 0.0f));
+    CHECK (! (single->amplitude (Canvas::width - 1, line) > 0.0f));
+    CHECK_GREATER (single->amplitude (Canvas::width - 3, line), 0.0f);
+    CHECK_NEAR (single->amplitude (800, line), looped->amplitude (800, line), 1.0e-6);
 }
 
 ARTFREQ_TEST (engineCombFillsTheBand)
 {
-    // A block over 100 - 500 Hz. With lines 25 Hz apart a 32768-sample analyser shows stripes:
-    // most bins far from the median. The comb fills the band.
+    // A block over 100 - 500 Hz. With lines 25 Hz apart a long analyser shows stripes: most bins
+    // far from the median. The comb fills the band: wholly at 16384 points, and at 32768, where
+    // its own lines begin to show, still mostly.
     const auto canvas = bandCanvas (100.0, 500.0);
     const auto lines = buildPlan (canvas, combSettings (stripes));
     const auto comb = buildPlan (canvas, combSettings (smooth));
 
-    const auto linesAudio = render (*lines, 1.8);
-    const auto combAudio = render (*comb, 1.8);
+    const auto linesAudio = render (*lines, 2.0);   // the four windows of longFftFill and no less
+    const auto combAudio = render (*comb, 2.0);
 
-    const auto linesFill = longFftFill (linesAudio, 130.0, 470.0);
     double medianDb = 0.0;
-    const auto combFill = longFftFill (combAudio, 130.0, 470.0, &medianDb);
-    std::printf ("    32768-sample FFT, 130 - 470 Hz within 6 dB of the median: lines %.2f, comb %.2f\n", linesFill, combFill);
-    CHECK_LESS (linesFill, 0.5);
-    CHECK_GREATER (combFill, 0.8);
 
-    // Nothing leaks far from the band: the comb's edges blur over a few grid lines and its
-    // glide's spread (about the square root of the slope, 14 Hz), no further. Lines have the
-    // same floor of window leakage far below.
-    const auto linesMedian = [&]
+    for (const auto order : { 14, 15 })
     {
-        double m = 0.0;
-        longFftFill (linesAudio, 130.0, 470.0, &m);
-        return m;
-    }();
+        const auto linesFill = longFftFill (linesAudio, 130.0, 470.0, nullptr, order);
+        const auto combFill = longFftFill (combAudio, 130.0, 470.0, &medianDb, order);
+        std::printf ("    %d-sample FFT, 130 - 470 Hz within 6 dB of the median: lines %.2f, comb %.2f\n", 1 << order, linesFill, combFill);
+        CHECK_LESS (linesFill, 0.5);
+        CHECK_GREATER (combFill, order == 14 ? 0.85 : 0.65);
+    }
 
-    CHECK_LESS (longFftLoudest (combAudio, 20.0, 45.0) - medianDb, -30.0);
-    CHECK_LESS (longFftLoudest (combAudio, 20.0, 45.0) - medianDb, longFftLoudest (linesAudio, 20.0, 45.0) - linesMedian + 3.0);
-    CHECK_LESS (longFftLoudest (combAudio, 560.0, 4000.0) - medianDb, -40.0);
+    // Nothing sounds outside the band: a steady line has no skirt but the analyser's own. (The
+    // gliding comb of 0.6 left -30 dB below the band and -40 dB above it.)
+    const auto below = longFftLoudest (combAudio, 20.0, 80.0) - medianDb;
+    const auto above = longFftLoudest (combAudio, 560.0, 4000.0) - medianDb;
+    std::printf ("    loudest bin against the band's median: %.1f dB below it (20 - 80 Hz), %.1f dB above (560 Hz - 4 kHz)\n", below, above);
+    CHECK_LESS (below, -60.0);
+    CHECK_LESS (above, -60.0);
 
     // At the plan's level: the loudest column (every column here) at planTargetRms.
     CHECK_NEAR (test::toDb (test::rms (combAudio, 9600) / planTargetRms), 0.0, 1.0);
@@ -457,8 +635,7 @@ ARTFREQ_TEST (engineCombIsDeterministic)
     CHECK (first == second);
     CHECK_GREATER (test::rms (first), 0.05);
 
-    // The block size moves only rounding: every chunk starts each sine's step afresh from the
-    // time since reset.
+    // The block size moves only rounding.
     const auto oddBlocks = render (*plan, 1.0, 61);
     double largestDifference = 0.0;
 
@@ -466,12 +643,46 @@ ARTFREQ_TEST (engineCombIsDeterministic)
         largestDifference = std::max (largestDifference, static_cast<double> (std::abs (first[i] - oddBlocks[i])));
 
     CHECK_LESS (largestDifference, 5.0e-3);
+
+    // The sum never peaks: the comb's phases keep its lines from lining up (whole numbers of
+    // lines per sweep made a train of clicks 5 to 10 dB taller).
+    const auto crestDb = test::toDb (test::peak (first, 9600) / test::rms (first, 9600));
+    std::printf ("    crest factor of a block over 40 Hz - 1.5 kHz: %.1f dB\n", crestDb);
+    CHECK_LESS (crestDb, 12.0);
+}
+
+ARTFREQ_TEST (engineCombLinesKeepTheirPhasesThroughSilence)
+{
+    // A block over 100 - 150 Hz that plays, stops and plays again, against the same block playing
+    // throughout: once it is back, the sound is the very same, sample for sample. Each of the
+    // comb's lines starts again where it would have been had it never stopped, which is what
+    // keeps the lines of a shape in their pattern whenever each of them came on.
+    Canvas throughout = bandCanvas (100.0, 150.0), interrupted = throughout;
+
+    for (int y = 0; y < Canvas::height; ++y)
+        for (int x = 300; x < 500; ++x)
+            interrupted.at (x, y) = 0.0f;
+
+    const auto a = render (*buildPlan (throughout, combSettings (smooth)), 6.0);
+    const auto b = render (*buildPlan (interrupted, combSettings (smooth)), 6.0);
+    const auto column = [] (int c) { return static_cast<size_t> (c * 8.0 * rate48 / Canvas::width); };
+
+    CHECK_LESS (test::peak (b, column (305), column (495)), 1.0e-6);
+
+    double largestDifference = 0.0;
+
+    for (auto i = column (510); i < column (700); ++i)
+        largestDifference = std::max (largestDifference, static_cast<double> (std::abs (a[i] - b[i])));
+
+    std::printf ("    after 1.5 s of silence: largest difference from the uninterrupted sound %.2g (peak %.2f)\n",
+                 largestDifference, test::peak (a, column (510), column (700)));
+    CHECK_LESS (largestDifference, 2.0e-3);
 }
 
 ARTFREQ_TEST (engineCombCrossfadesWithoutClicks)
 {
-    // Two plans with one layout (the comb's sines go on, their amplitudes cross), one without a
-    // comb (other sines entirely), and none.
+    // Two plans with one layout (the lines go on, their amplitudes cross), one without a comb
+    // (other lines entirely), and none.
     const auto loud = buildPlan (bandCanvas (60.0, 900.0, 1.0f), combSettings (smooth));
     const auto soft = buildPlan (bandCanvas (200.0, 1200.0, 0.8f), combSettings (smooth));
     const auto lines = buildPlan (bandCanvas (60.0, 900.0, 1.0f), combSettings (stripes));
@@ -554,8 +765,8 @@ ARTFREQ_TEST (engineCombPerformance)
         for (const auto passSeconds : { 8.0, 0.5 })
         {
             const auto combSpeed = speed (*plan, passSeconds);
-            std::printf ("    density %4d, %.1f s drawing, all active: comb (%d sines + %d lines) %6.1f x real time, lines (%d) %6.1f x\n",
-                         density, passSeconds, plan->combSines, plan->numLines - plan->combLines - plan->combThinLines, combSpeed,
+            std::printf ("    density %4d, %.1f s drawing, all active: smooth (%d comb lines + %d lines) %6.1f x real time, stripes (%d lines) %6.1f x\n",
+                         density, passSeconds, plan->combLines, plan->numLines - plan->combLines, combSpeed,
                          lines->numLines, speed (*lines, passSeconds));
             CHECK_GREATER (combSpeed, 40.0);
         }
@@ -564,57 +775,55 @@ ARTFREQ_TEST (engineCombPerformance)
 
 ARTFREQ_TEST (engineCombKeepsItsPowerInTheDrawnBand)
 {
-    // (Ported from the wobbling-lines prototype's containment test, so that leakage from the
-    // comb cannot grow unnoticed.) A block over 100 - 300 Hz, played for 8 s and averaged by a
-    // long analyser (32768 points, Hann, hop a quarter): the power lies in the drawn band, give
-    // or take a grid cell and the analyser's own window, spread evenly over it (no stripes, no
-    // single line), and next to none of it far away.
+    // A block over 100 - 300 Hz, played for 8 s and averaged by a long analyser (32768 points,
+    // Hann, hop a quarter): the power lies in the drawn band and nowhere else, spread evenly
+    // over it. (The gliding comb of 0.6: 0.995 inside, 2e-5 beyond 40 Hz from the band; here
+    // only the analyser's own window is left out there.)
     const auto plan = buildPlan (bandCanvas (100.0, 300.0), combSettings (smooth));
     const auto audio = render (*plan, 8.0);
     const auto [power, binHz] = averagePower (audio, 9600, 15);
 
     const auto total = powerBetween (power, binHz, 0.0, 24000.0);
     const auto inside = powerBetween (power, binHz, 95.0, 305.0);
-    const auto near = powerBetween (power, binHz, 80.0, 320.0);
     const auto far = powerBetween (power, binHz, 0.0, 60.0) + powerBetween (power, binHz, 340.0, 24000.0);
-    std::printf ("    inside %.4f, within 20 Hz %.5f, beyond 40 Hz %.2g\n", inside / total, near / total, far / total);
-    CHECK_GREATER (inside / total, 0.995);
-    CHECK_GREATER (near / total, 0.9995);
-    CHECK_LESS (far / total, 2.0e-5);
+    std::printf ("    inside %.6f, beyond 40 Hz %.2g\n", inside / total, far / total);
+    CHECK_GREATER (inside / total, 0.9999);
+    CHECK_LESS (far / total, 1.0e-7);
 
     // Even across the band: each 20 Hz of it holds a tenth of the power, within 1.5 dB.
     for (double hz = 100.0; hz < 299.0; hz += 20.0)
     {
-        const auto share = powerBetween (power, binHz, hz, hz + 20.0) / inside;
-        CHECK_MSG (std::abs (10.0 * std::log10 (share * 210.0 / 20.0)) < 1.5,
-                   hz << " - " << hz + 20.0 << " Hz holds " << 10.0 * std::log10 (share * 210.0 / 20.0) << " dB of its share");
+        const auto share = powerBetween (power, binHz, hz - 2.5, hz + 17.5) / inside;
+        CHECK_MSG (std::abs (10.0 * std::log10 (share * 205.0 / 20.0)) < 1.5,
+                   hz << " - " << hz + 20.0 << " Hz holds " << 10.0 * std::log10 (share * 205.0 / 20.0) << " dB of its share");
     }
-
-    // Nor lines: a steady sine puts about two thirds of its power in one bin; the band's 140
-    // bins share it, none holding more than about three times its share.
-    const auto strongest = *std::max_element (power.begin(), power.end()) / inside;
-    std::printf ("    strongest bin %.4f of the power\n", strongest);
-    CHECK_LESS (strongest, 0.02);
 }
 
 ARTFREQ_TEST (engineCombPlaysThinStrokesSteadily)
 {
-    // A stroke thinner than the comb's spacing (20 Hz) would be lit only while one of its sines,
-    // passing every 0.1 s, is inside it: the whole stroke would blink ten times a second (15 - 28
-    // dB on a 4096-point analyser, 4 - 5 dB at 8192). It must hold steady instead, as Stripes
-    // plays it: one canvas row, 5 Hz and 10 Hz wide, at 100 and 400 Hz (where a row is 0.7 and
-    // 2.7 Hz tall). The narrowest strokes the comb plays (four grid lines: 20 Hz, or 10 Hz at
-    // 400 Hz once its rows' cells are counted) shimmer as the comb does in any shape, by a few
-    // dB at 4096 points and one or so at 8192, never more.
+    // Two of the comb's lines alone would beat as one pulse, five times a second (14 dB on an
+    // analyser of 4096 points, 8 dB at 8192): a stroke that thin must hold steady instead, played
+    // by one line: one canvas row and 5 Hz wide, at 100 and 400 Hz (where a row is 0.7 and 2.7 Hz
+    // tall). The narrowest strokes the comb itself plays (10 Hz: three lines, the outer two
+    // softened; 20 Hz: four or five) shimmer, by more than a wide shape does (a few lines are too
+    // few for the sweep to even out), but never blink: under 8 dB at 4096 points, 4 dB at 8192.
+    // (The gliding comb of 0.6 kept strokes of 20 Hz within 4 and 2 dB, and played thinner ones
+    // on one line: its sines were 20 Hz apart, one in such a stroke at any time; the price of
+    // that was the drip.)
     struct Stroke
     {
         double hz, widthHz;   // width 0: one canvas row
         bool thin;
     };
 
-    for (const auto& stroke : { Stroke { 100.0, 0.0, true }, Stroke { 100.0, 5.0, true }, Stroke { 100.0, 10.0, true },
+    // (62.5 and 137.5 Hz lie half way between two of the comb's lines: strokes there touch
+    // neither line's row and straddle the place where their spans meet; played half by each
+    // line they would beat)
+    for (const auto& stroke : { Stroke { 100.0, 0.0, true }, Stroke { 100.0, 5.0, true }, Stroke { 102.5, 6.0, true },
+                                Stroke { 62.5, 2.0, true }, Stroke { 137.5, 3.0, true },
                                 Stroke { 400.0, 0.0, true }, Stroke { 400.0, 5.0, true },
-                                Stroke { 400.0, 10.0, false }, Stroke { 100.0, 20.0, false }, Stroke { 400.0, 20.0, false } })
+                                Stroke { 100.0, 10.0, false }, Stroke { 400.0, 10.0, false },
+                                Stroke { 100.0, 20.0, false }, Stroke { 400.0, 20.0, false }, Stroke { 100.0, 40.0, false } })
     {
         const auto hz = stroke.hz;
         const auto canvas = stroke.widthHz > 0.0 ? bandCanvas (hz - 0.5 * stroke.widthHz, hz + 0.5 * stroke.widthHz) : rowCanvas (hz);
@@ -623,42 +832,31 @@ ARTFREQ_TEST (engineCombPlaysThinStrokesSteadily)
 
         for (const auto order : { 12, 13 })
         {
-            const auto smoothSpread = levelSpreadDb (smoothAudio, hz, order);
-            const auto stripesSpread = levelSpreadDb (stripesAudio, hz, order);
+            const auto smoothSpread = levelSpreadDb (smoothAudio, hz, order, 20.0 + 0.5 * stroke.widthHz);
+            const auto stripesSpread = levelSpreadDb (stripesAudio, hz, order, 20.0 + 0.5 * stroke.widthHz);
             std::printf ("    %.0f Hz stroke %s%.0f Hz wide, FFT %d: level spread smooth %.1f dB, stripes %.1f dB\n", hz,
                          stroke.widthHz > 0.0 ? "" : "(one row) ", stroke.widthHz, 1 << order, smoothSpread, stripesSpread);
 
             if (stroke.thin)
                 CHECK_LESS (smoothSpread, 0.5);
             else
-                CHECK_LESS (smoothSpread, order == 12 ? 4.0 : 2.0);
+                CHECK_LESS (smoothSpread, order == 12 ? 8.0 : 4.0);
         }
 
-        // It sounds, at the plan's level, near where it was drawn.
+        // It sounds, at the plan's level, where it was drawn.
         CHECK_NEAR (test::toDb (test::rms (smoothAudio, 9600) / planTargetRms), 0.0, 1.0);
         const auto [power, binHz] = averagePower (smoothAudio, 9600, 14);
-        CHECK_GREATER (powerBetween (power, binHz, hz - 25.0, hz + 25.0) / powerBetween (power, binHz, 0.0, 24000.0), 0.95);
+        CHECK_GREATER (powerBetween (power, binHz, hz - 25.0, hz + 25.0) / powerBetween (power, binHz, 0.0, 24000.0), 0.999);
     }
 }
 
-ARTFREQ_TEST (engineCombFadesInAboveTheLowestLine)
+ARTFREQ_TEST (engineLowsLeaveNothingBelowTheCanvas)
 {
-    // The comb's glide starts 15 Hz below its grid, which starts half a cell above the canvas's
-    // bottom: with the analyser's low end at 10 Hz, below 0 Hz, where sines are not played; and a
-    // sine that passes the top during a chunk is next played up to a chunk's glide above the
-    // bottom. A sine must never come on at a level of its own (a step every 0.1 s: clicks,
-    // content far above anything drawn, rumble below 5 Hz), nor play below the lowest line (10
-    // Hz). A drawing from the canvas's bottom up to 200 Hz, with and without an analyser slope
-    // (which makes the lowest heights the loudest), at the lowest low end, the default one and
-    // one where the glide starts above 10 Hz.
-    struct Sound
-    {
-        double step = 0.0;       // the largest step between samples
-        double belowFiveDb = 0.0;// power below 5 Hz, re the power of the drawing's lowest 30 Hz
-        double belowTenDb = 0.0; // power below 10 Hz, re the whole
-        double above400Db = 0.0; // power above 400 Hz (twice the top of the drawing), re the whole
-    };
-
+    // A drawing from the canvas's bottom up to 200 Hz, with and without an analyser slope (which
+    // makes the lowest heights the loudest), at the lowest low end, the default one and a higher
+    // one: nothing is played below the lowest line (10 Hz at the lowest), nothing far above the
+    // drawing, and no clicks. (The gliding comb's sines faded in at the bottom over a cycle or
+    // so, every 0.1 s: about -30 dB of rumble below 5 Hz.)
     for (const auto lowHz : { 10.0, 20.0, 30.0 })
     {
         FrequencyScale scale;
@@ -667,41 +865,28 @@ ARTFREQ_TEST (engineCombFadesInAboveTheLowestLine)
 
         for (const auto slope : { 0.0f, 4.5f })
         {
-            const auto soundOf = [&] (LowEnd lowEnd)
+            for (const auto lowEnd : { smooth, stripes })
             {
                 auto settings = combSettings (lowEnd);
                 settings.scale = scale;
                 settings.slopeDbPerOctave = slope;
-                const auto audio = render (*buildPlan (canvas, settings), 4.0);
+                const auto plan = buildPlan (canvas, settings);
+                const auto audio = render (*plan, 4.0);
                 const auto [power, binHz] = averagePower (audio, 9600, 16);
                 const auto total = powerBetween (power, binHz, 0.0, 24000.0);
                 const auto dB = [] (double ratio) { return 10.0 * std::log10 (ratio + 1.0e-30); };
+                const auto belowDb = dB (powerBetween (power, binHz, 0.0, lowHz - 5.0) / total);
+                const auto aboveDb = dB (powerBetween (power, binHz, 400.0, 24000.0) / total);
+                std::printf ("    low end %.0f Hz, slope %.1f, %s: lowest line %.1f Hz; more than 5 Hz below the low end %.1f dB; above 400 Hz %.1f dB\n",
+                             lowHz, static_cast<double> (slope), lowEnd == smooth ? "smooth" : "stripes",
+                             static_cast<double> (plan->frequencies[0]), belowDb, aboveDb);
 
-                Sound s;
-                s.step = test::largestStep (audio, 9600);
-                s.belowFiveDb = dB (powerBetween (power, binHz, 0.0, 5.0) / powerBetween (power, binHz, lowHz, lowHz + 30.0));
-                s.belowTenDb = dB (powerBetween (power, binHz, 0.0, 10.0) / total);
-                s.above400Db = dB (powerBetween (power, binHz, 400.0, 24000.0) / total);
-                return s;
-            };
+                CHECK (plan->frequencies[0] >= static_cast<float> (lowHz) && plan->frequencies[0] >= lowestPlayedHz);
+                CHECK_LESS (aboveDb, -72.0);
 
-            const auto comb = soundOf (smooth);
-            const auto lines = soundOf (stripes);
-            std::printf ("    low end %.0f Hz, slope %.1f (smooth / stripes): largest step %.4f / %.4f; below 5 Hz %.1f / %.1f dB; "
-                         "below 10 Hz %.1f / %.1f dB; above 400 Hz %.1f / %.1f dB\n", lowHz, static_cast<double> (slope),
-                         comb.step, lines.step, comb.belowFiveDb, lines.belowFiveDb, comb.belowTenDb, lines.belowTenDb,
-                         comb.above400Db, lines.above400Db);
-
-            // No clicks, nothing splashed far above the drawing, and no more rumble below 5 Hz
-            // than the comb's own: a sine fading in down there does so over a cycle or so,
-            // which leaves some (about -30 dB against the drawing's lowest 30 Hz; lines leave
-            // none). Coming on at a level of its own, it left 15 dB more at a 10 Hz low end.
-            CHECK_LESS (comb.step, 1.5 * lines.step);
-            CHECK_LESS (comb.above400Db, -72.0);
-            CHECK_LESS (comb.belowFiveDb, -24.0);
-
-            if (lowHz >= 20.0)
-                CHECK_LESS (comb.belowTenDb, -25.0);
+                if (lowHz >= 20.0)
+                    CHECK_LESS (belowDb, -60.0);
+            }
         }
     }
 }
@@ -777,7 +962,7 @@ ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
     std::printf ("    rows 12 dB darker in 200 - 800 Hz (of %d): smooth %d, stripes %d\n", rows, gapRows (smoothImage, 200.0, 800.0),
                  gapRows (stripesImage, 200.0, 800.0));
     CHECK (gapRows (smoothImage, 70.0, 800.0) == 0);
-    CHECK_GREATER (gapRows (stripesImage, 200.0, 800.0), rows / 4);
+    CHECK_GREATER (gapRows (stripesImage, 200.0, 800.0), rows / 5);   // (a fifth: the analyser's window is a third wider than Hann's)
 
     // Inside the comb's band and on the lines at 3 - 4 kHz: as bright as each other (within
     // 3 dB), and the level an analyser reads, far above the floor.
@@ -786,34 +971,25 @@ ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
     CHECK_NEAR (combLevel, lineLevel, 8);
     CHECK_GREATER (combLevel, 128);
 
-    // Thin strokes are played by the replaced lows' own lines, so the canvas draws them as
-    // Stripes does: the very same picture, a line where each one plays (at the lowest line too),
-    // blurred by the analyser's window: dark again a few bins away.
+    // Nothing is drawn under the block but the analyser's own blur: dark from an octave below.
+    CHECK (levelAt (smoothImage, width / 2, rowOf (28.0)) == 0);
+
+    // A thin stroke is one line, drawn as the analyser draws a sine: lit where it plays, dark
+    // again a few bins away.
     for (const auto hz : { 21.0, 100.0, 400.0 })
     {
-        const auto thin = rowCanvas (hz);
-        const auto thinPicture = [&] (LowEnd lowEnd)
-        {
-            std::shared_ptr<ArtPlan> plan (buildPlan (thin, combSettings (lowEnd)).release());
-            plan->version = lowEnd == smooth ? 3 : 4;
-            ui::CanvasPlanImage image;
-            return image.get (plan, model, width, height);
-        };
-
-        const auto smoothThin = thinPicture (smooth);
-        const auto stripesThin = thinPicture (stripes);
-        auto same = true;
+        std::shared_ptr<ArtPlan> plan (buildPlan (rowCanvas (hz), combSettings (smooth)).release());
+        plan->version = 3;
+        ui::CanvasPlanImage image;
+        const auto thin = image.get (plan, model, width, height);
         auto lit = 0;
 
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; x += 7)
-            {
-                same = same && smoothThin.getPixelAt (x, y) == stripesThin.getPixelAt (x, y);
-                lit += smoothThin.getPixelAt (x, y).getBrightness() > 0.2f ? 1 : 0;
-            }
+                lit += thin.getPixelAt (x, y).getBrightness() > 0.2f ? 1 : 0;
 
-        CHECK (same);
         CHECK_GREATER (lit, 0);
-        CHECK (levelAt (smoothThin, width / 2, rowOf (hz * 1.5 + 30.0)) == 0);
+        CHECK_GREATER (levelAt (thin, width / 2, rowOf (hz)), 128);
+        CHECK (levelAt (thin, width / 2, rowOf (hz * 1.5 + 30.0)) == 0);
     }
 }

@@ -866,6 +866,7 @@ ARTFREQ_TEST (uiEffectCanvasShowsEachMode)
         ui::EffectPreviewImage::Settings settings;
         settings.mode = mode;
         settings.depthDb = depthDb;
+        settings.view.floorDb = -100.0f;   // the levels below are counted over -100 .. 0 dBFS
         return settings;
     };
     const auto picture = [&] (EffectMode mode, float depthDb, float levelDb, uint64_t key = 1)

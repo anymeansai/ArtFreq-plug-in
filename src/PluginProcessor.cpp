@@ -29,7 +29,9 @@ bool sameSettings (const PlanSettings& a, const PlanSettings& b) noexcept
         && juce::exactlyEqual (a.slopeDbPerOctave, b.slopeDbPerOctave)
         && juce::exactlyEqual (a.minLineSpacingHz, b.minLineSpacingHz)
         && juce::exactlyEqual (a.maxFrequencyHz, b.maxFrequencyHz)
-        && a.lowEnd == b.lowEnd;
+        && a.lowEnd == b.lowEnd
+        && juce::exactlyEqual (a.passSeconds, b.passSeconds)
+        && a.repeats == b.repeats;
 }
 
 uint64_t versionOf (const ArtPlan* plan) noexcept
@@ -964,6 +966,14 @@ PlanSettings ArtFreqProcessor::getPlanSettings() const
     // Lines above the top of the hearing range only cost CPU; the engine also keeps every line
     // below Nyquist.
     settings.maxFrequencyHz = 22000.0f;
+
+    // The fades in time are as long as a few cycles of each line, so the plan needs to know how
+    // long a column lasts. The length follows the tempo, which a host may ramp: it is taken to
+    // the nearest 24th of an octave (3 %), so a ramp rebuilds the plan now and then, not on every
+    // tick, and the fades are never more than 1.5 % off.
+    const auto seconds = juce::jlimit (0.05, 3600.0, getLengthSeconds());
+    settings.passSeconds = std::exp2 (std::round (std::log2 (seconds) * 24.0) / 24.0);
+    settings.repeats = repeatParam->load() >= 0.5f;
     return settings;
 }
 
@@ -978,10 +988,15 @@ void ArtFreqProcessor::rebuildPlanIfNeeded()
     // every tick.
     const auto haloChanged = isEffect() && wantedHaloColumns() != builtHaloColumns;
 
-    if (! documentDirty && ! parametersChanged && havePlan && ! haloChanged)
+    // ... and so do the plan's fades in time (and Repeat, which no host's change is listened to
+    // for here).
+    const auto settings = getPlanSettings();
+    const auto fadesChanged = ! juce::exactlyEqual (settings.passSeconds, lastBuiltSettings.passSeconds)
+                           || settings.repeats != lastBuiltSettings.repeats;
+
+    if (! documentDirty && ! parametersChanged && havePlan && ! haloChanged && ! fadesChanged)
         return;
 
-    const auto settings = getPlanSettings();
     const auto scaleChanged = settings.scale != lastBuiltSettings.scale;
     const auto planNeeded = ! havePlan || documentDirty || ! sameSettings (settings, lastBuiltSettings);
 

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <cmath>
 #include <cstring>
 
@@ -29,80 +30,6 @@ namespace
 
     constexpr float dbPerOctave = 6.0205999f;  // 20 log10 (2)
     constexpr float silentDb = -200.0f;
-
-    /** How far the lobes are drawn, in bins: at least four (the main lobe and the first side lobes,
-        to -44 dB), and where a bin is a small part of a row (the highs, a linear scale) as far as
-        the side lobes still show (32 bins: -100 dB), over at most about 24 rows: in the lows of a
-        log scale, where a bin covers many rows, the far side lobes would cost more than they
-        show. Lobes fainter than the floor are left out anyway. */
-    constexpr double minLobeReachBins = 4.0, maxLobeReachBins = 32.0, lobeReachRows = 24.0;
-
-    /** The faint haze under a shape in the comb's band (see renderGeometry): how far under the
-        shape it lies, by how far below the shape's lowest edge, in octaves. Measured (the truth
-        lab's scenarios, the median below the default drawing at FFT 8192): 52 dB a quarter of an
-        octave down, 62 at half an octave, 70 at one, 77 from two on. */
-    float combHazeDropDb (float octaves) noexcept
-    {
-        constexpr float at[] { 46.0f, 52.0f, 62.0f, 66.0f, 70.0f, 73.5f, 77.0f };   // 0, 0.25, 0.5, 0.75, 1, 1.5, 2
-        constexpr float octave[] { 0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f };
-
-        if (octaves >= 2.0f)
-            return at[6];
-
-        auto i = 0;
-
-        while (i < 5 && octaves > octave[i + 1])
-            ++i;
-
-        const auto t = juce::jlimit (0.0f, 1.0f, (octaves - octave[i]) / (octave[i + 1] - octave[i]));
-        return at[i] + (at[i + 1] - at[i]) * t;
-    }
-
-    /** ... and its streaks: the haze is not even but streaks in time, here a fixed pattern of
-        them (+-12 dB, a new value every 25 ms of the pass, the same from one picture to the next,
-        so it does not shimmer while dragging). */
-    float hazeStreakDb (double seconds) noexcept
-    {
-        auto bits = static_cast<uint32_t> (static_cast<int64_t> (std::floor (seconds / 0.025)) & 0xffffffff);
-        bits ^= bits >> 16;
-        bits *= 0x7feb352du;
-        bits ^= bits >> 15;
-        bits *= 0x846ca68bu;
-        bits ^= bits >> 16;
-        return 24.0f * static_cast<float> (bits & 0xffff) / 65535.0f - 12.0f;
-    }
-
-    constexpr float combTimeHazeDb = 44.0f;
-
-    /** The maximum of `values` within `reach` either side of each, into `out` (a running maximum:
-        O(count) whatever the reach). */
-    void slidingMax (const float* values, float* out, int count, int reach)
-    {
-        std::vector<int> window;   // indices of a falling run of values
-        window.reserve (static_cast<size_t> (2 * reach + 2));
-        size_t head = 0;
-
-        for (int i = 0, next = 0; i < count; ++i)
-        {
-            for (; next < count && next <= i + reach; ++next)
-            {
-                while (window.size() > head && values[window.back()] <= values[next])
-                    window.pop_back();
-
-                window.push_back (next);
-            }
-
-            while (window[head] < i - reach)
-                ++head;
-
-            out[i] = values[window[head]];
-        }
-    }
-
-    /** The comb's texture: its sines, combSpacingHz apart and gliding up together, show on an
-        analyser as stripes rising across the shape, about this many dB either way (the truth
-        lab: 6 to 8 dB between the 10th and 90th percentile inside low shapes). */
-    constexpr float combRippleDb = 3.5f;
 
     /** A box blur of `width` columns over `values` (zero beyond its ends), into `out`; `early`
         puts an even width's extra column before the centre rather than after it. */
@@ -160,28 +87,31 @@ float CanvasPlanImage::lobe (float bins) noexcept
 {
     const auto d = std::abs (bins);
 
-    if (d < 1.0e-4f)
-        return 1.0f;
+    if (d >= analysisWindowLobeBins)
+        return 0.0f;   // the side lobes, 92 dB down: under any floor
 
-    if (d < 2.0f)
+    // The window's transform: each of its cosines is a pair of sincs, k bins either side.
+    const auto sinc = [] (float x)
     {
-        // Hann's main lobe: sinc (d) / (1 - d^2); 0.5 at one bin (the limit).
-        if (std::abs (d - 1.0f) < 1.0e-3f)
-            return 0.5f;
+        const auto px = juce::MathConstants<float>::pi * x;
+        return std::abs (px) < 1.0e-4f ? 1.0f : std::sin (px) / px;
+    };
 
-        const auto pd = juce::MathConstants<float>::pi * d;
-        return std::abs (std::sin (pd) / (pd * (1.0f - d * d)));
-    }
+    auto sum = analysisWindow[0] * sinc (d);
 
-    // The side lobes' envelope, a little under their peaks (between them they dip to nothing).
-    const auto d2 = std::max (d, 2.5f);
-    return 0.7f / (juce::MathConstants<float>::pi * d2 * (d2 * d2 - 1.0f)) * juce::jlimit (0.0f, 1.0f, (d - 2.0f) * 2.0f);
+    for (size_t k = 1; k < std::size (analysisWindow); ++k)
+        sum += 0.5f * analysisWindow[k] * (sinc (d - static_cast<float> (k)) + sinc (d + static_cast<float> (k)));
+
+    return std::abs (sum) / analysisWindow[0];
 }
 
-float CanvasPlanImage::combBrightness (int fftSize) noexcept
+float CanvasPlanImage::combBrightness (int fftSize, double sampleRate, float spacingHz) noexcept
 {
-    // combGain makes the comb as bright as a line at 8192; each doubling darkens it by 3 dB.
-    return std::sqrt (8192.0f / static_cast<float> (std::max (256, fftSize))) / combGain;
+    // Lines closer than the window's noise bandwidth add up in every bin, in power, as their
+    // phases keep them from pulsing together (ArtPlan.h); lines further apart are each read at
+    // their own level.
+    const auto bandwidthHz = static_cast<double> (analysisWindowNoiseBins) * sampleRate / std::max (256, fftSize);
+    return static_cast<float> (std::sqrt (std::max (1.0, bandwidthHz / std::max (0.1, static_cast<double> (spacingHz)))));
 }
 
 void MeasuredPatch::prepare (int width)
@@ -300,9 +230,17 @@ void CanvasPlanImage::updateAmplitudes (const ArtPlan& plan, const AnalyserModel
     if (total == 0 || plan.amplitudes.size() < total || plan.silent)
         return;
 
-    // The comb's grid is drawn at the brightness the analyser shows it.
+    // The standing comb's lines are drawn at the brightness the analyser shows them: they stand
+    // closer than its bins are wide, so each bin holds several.
     const auto combLines = juce::jlimit (0, numLines, plan.combLines);
-    const auto comb = combBrightness (model.view.fftSize);
+    std::vector<float> comb (static_cast<size_t> (combLines), 1.0f);
+
+    for (int line = 0; line < combLines; ++line)
+    {
+        const auto at = [&plan] (int l) { return plan.frequencies[static_cast<size_t> (l)]; };
+        const auto spacing = line + 1 < combLines ? at (line + 1) - at (line) : (line > 0 ? at (line) - at (line - 1) : 1.0e6f);
+        comb[static_cast<size_t> (line)] = combBrightness (model.view.fftSize, model.sampleRate, spacing);
+    }
 
     // The plan is column by column, the blur below runs along each line: turned round in tiles,
     // so both sides stay in the cache (column by column, every write missed it: 1024 lines x 1024
@@ -323,16 +261,17 @@ void CanvasPlanImage::updateAmplitudes (const ArtPlan& plan, const AnalyserModel
 
                 for (int line = line0; line < lineEnd; ++line)
                     amplitudes[static_cast<size_t> (line) * static_cast<size_t> (numColumns) + static_cast<size_t> (column)]
-                        = line < combLines ? a[line] * comb : a[line];
+                        = line < combLines ? a[line] * comb[static_cast<size_t> (line)] : a[line];
             }
         }
     }
 
-    // In time, the analyser's window averages the sound over fftSize samples: a sine's loudness
-    // is seen through it (two boxes of half the window: a triangle as long as it, close to Hann).
+    // In time, the analyser's window weighs the sound over fftSize samples, most of it near the
+    // middle: a sine's loudness is seen through it (two boxes of a third of the window: a
+    // triangle as wide at half height as the window, 0.34 of its length).
     const auto columnSeconds = model.passSeconds / std::max (1, numColumns);
     const auto windowColumns = (model.view.fftSize / model.sampleRate) / std::max (1.0e-9, columnSeconds);
-    const auto boxWidth = std::max (1, static_cast<int> (std::lround (windowColumns * 0.5)));
+    const auto boxWidth = std::max (1, static_cast<int> (std::lround (windowColumns * 0.344)));
     std::vector<float> once (static_cast<size_t> (numColumns));
 
     for (int line = 0; line < numLines; ++line)
@@ -411,24 +350,6 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         int line, firstRow, lastRow;
     };
 
-    // The comb's sines glide (combSlope Hz a second) while the analyser's window looks at them:
-    // each is smeared over the Hz it glides through, so the comb's grid is drawn with a lobe
-    // that much wider (at 8192 points 1.8 times, at 16384 6 times: a soft fill, as measured).
-    const auto combGridLinesForReach = juce::jlimit (0, numLines, plan->combLines);
-    const auto glideInWindowHz = static_cast<double> (plan->combSlope) * model.view.fftSize / model.sampleRate;
-    const auto combWiden = std::sqrt (1.0 + std::pow (0.5 * glideInWindowHz / (2.0 * binHz), 2.0));
-
-    // ... and beyond the lobe a skirt the sines' entering and leaving shapes spreads (the truth
-    // lab, under low text at FFT 8192: 10 dB down 6 Hz beyond a shape's edge, 18 at 12 Hz, 28 at
-    // 20 Hz: about 1.4 dB a Hz, as much less steep as the window is longer).
-    const auto combSkirtDbPerHz = 1.4 * 34.0 / std::max (1.0, glideInWindowHz);
-    const auto combSkirtReachHz = (-model.view.floorDb + 20.0) / combSkirtDbPerHz;
-    const auto combWeight = [&] (double outsideHz)
-    {
-        return std::max (lobe (static_cast<float> (outsideHz / (binHz * combWiden))),
-                         static_cast<float> (std::pow (10.0, -combSkirtDbPerHz * outsideHz / 20.0)));
-    };
-
     std::vector<Reach> reaches;
     reaches.reserve (static_cast<size_t> (numLines));
     rowStart.assign (static_cast<size_t> (height) + 1, 0);
@@ -441,10 +362,7 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         if (! (loudest * lobe (0.0f) > faintest) || hz >= nyquistGuard)
             continue;
 
-        const auto hzPerRow = std::max (1.0e-6, rowHigh[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]
-                                                  - rowLow[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]);
-        const auto reachBins = juce::jlimit (minLobeReachBins, maxLobeReachBins, lobeReachRows * hzPerRow / binHz);
-        const auto reachHz = line < combGridLinesForReach ? std::max (reachBins * binHz * combWiden, combSkirtReachHz) : reachBins * binHz;
+        const auto reachHz = static_cast<double> (analysisWindowLobeBins) * binHz;   // the main lobe: all there is to see
         const auto first = juce::jmax (0, static_cast<int> (std::floor (rowAt (hz + reachHz))));
         const auto last = juce::jmin (height - 1, static_cast<int> (std::floor (rowAt (std::max (s.minHz * 0.5, hz - reachHz)))));
 
@@ -468,33 +386,19 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         const auto hz = static_cast<double> (plan->frequencies[static_cast<size_t> (r.line)]);
         const auto loudest = lineLoudest[static_cast<size_t> (r.line)];
 
-        const auto inComb = r.line < combGridLinesForReach;
-
         for (auto y = r.firstRow; y <= r.lastRow; ++y)
         {
             const auto outside = std::max (0.0, std::max (rowLow[static_cast<size_t> (y)] - hz, hz - rowHigh[static_cast<size_t> (y)]));
-            const auto weight = inComb ? combWeight (outside) : lobe (static_cast<float> (outside / binHz));
+            const auto weight = lobe (static_cast<float> (outside / binHz));
 
             if (weight * loudest > faintest)
                 contributions[static_cast<size_t> (fill[static_cast<size_t> (y)]++)] = { r.line, weight };
         }
     }
 
-    constexpr int rippleSteps = 64;
-    std::array<float, rippleSteps> ripple {};
-
-    for (int i = 0; i < rippleSteps; ++i)
-        ripple[static_cast<size_t> (i)] = std::pow (10.0f, combRippleDb / 20.0f * std::cos (juce::MathConstants<float>::twoPi * static_cast<float> (i) / rippleSteps));
-
-    const auto combGlideHz = plan->combLines > 1 ? (plan->combLines - 1) * static_cast<double> (plan->combGridHz) + 2.0 * plan->combEdgeHz : 1.0;
-    const auto combBaseHz = static_cast<double> (plan->combGridLowHz) - plan->combEdgeHz;
-
     // Pixels: each row shows the loudest of what reaches it (an analyser's row shows the loudest
     // bin inside it).
     accumulator.resize (static_cast<size_t> (width));
-    combAccumulator.resize (static_cast<size_t> (width));
-    const auto combGridLines = juce::jlimit (0, numLines, plan->combLines);
-    combDb.assign (combGridLines > 0 ? pixels : 0, silentDb);
     const auto oneToOne = width == numColumns;
     const auto* columns = columnOf.data();
     const auto* nextColumns = nextColumnOf.data();
@@ -509,16 +413,14 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
             continue;
 
         auto* acc = accumulator.data();
-        auto* combAcc = combAccumulator.data();
         std::fill (acc, acc + width, 0.0f);
-        std::fill (combAcc, combAcc + width, 0.0f);
 
         for (auto i = first; i < last; ++i)
         {
             const auto& c = contributions[static_cast<size_t> (i)];
             const auto* lineAmplitudes = amplitudes.data() + static_cast<size_t> (c.line) * static_cast<size_t> (numColumns);
             const auto w = c.weight;
-            auto* target = c.line < combGridLines ? combAcc : acc;   // the comb's grid apart: its haze (below)
+            auto* target = acc;
 
             if (oneToOne)
             {
@@ -541,99 +443,8 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         auto* rowDb = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
         const auto offset = rowOffset[static_cast<size_t> (y)];
 
-        // The comb's stripes: sine j is at base + (j L / sines + slope t) mod L, so at this
-        // row's Hz the phase among them moves on by slope t (the measured preview starts the
-        // pass at t = 0, as here).
-        if (combGridLines > 0 && plan->combSines > 0)
-        {
-            const auto rowHz = 0.5 * (rowLow[static_cast<size_t> (y)] + rowHigh[static_cast<size_t> (y)]);
-            const auto spacing = combGlideHz / plan->combSines;
-            const auto atStart = (rowHz - combBaseHz) / spacing;
-            const auto perColumn = static_cast<double> (plan->combSlope) * model.passSeconds / width / spacing;
-
-            for (int x = 0; x < width; ++x)
-            {
-                if (combAcc[x] <= 0.0f)
-                    continue;
-
-                const auto phase = atStart - perColumn * (x + 0.5);
-                const auto index = static_cast<int> ((phase - std::floor (phase)) * static_cast<double> (rippleSteps)) & (rippleSteps - 1);
-                combAcc[x] *= ripple[static_cast<size_t> (index)];
-            }
-        }
-
         for (int x = 0; x < width; ++x)
-        {
-            const auto value = std::max (acc[x], combAcc[x]);
-            rowDb[x] = value > 1.0e-10f ? dbPerOctave * fastLog2 (value) + offset : silentDb;
-        }
-
-        if (combGridLines > 0)
-        {
-            auto* combRow = combDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
-
-            for (int x = 0; x < width; ++x)
-                combRow[x] = combAcc[x] > 1.0e-10f ? dbPerOctave * fastLog2 (combAcc[x]) + offset : silentDb;
-        }
-    }
-
-    // ... and around them in time: where the sines enter and leave a shape, and as the window
-    // slides past its ends, energy spills into the gaps between shapes, about 44 dB under them
-    // (the truth lab, between low letters at FFT 8192: -83 dBFS beside letters at -39). Each row
-    // of the band is lit at least that far under its loudest within a window either side.
-    if (combGridLines > 0)
-    {
-        const auto combTopHz = static_cast<double> (plan->frequencies[static_cast<size_t> (combGridLines - 1)]) + 0.5 * plan->combGridHz;
-        const auto topRow = juce::jlimit (0, height, static_cast<int> (std::floor (rowAt (combTopHz))));
-        const auto reach = std::max (1, static_cast<int> (std::lround (model.view.fftSize / model.sampleRate / std::max (1.0e-6, model.passSeconds) * width)));
-        std::vector<float> spread (static_cast<size_t> (width));
-
-        for (int y = topRow; y < height; ++y)
-        {
-            auto* rowDb = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
-            const auto* combRow = combDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
-            slidingMax (combRow, spread.data(), width, reach);
-
-            for (int x = 0; x < width; ++x)
-                rowDb[x] = std::max (rowDb[x], spread[static_cast<size_t> (x)] - combTimeHazeDb);
-        }
-    }
-
-    // The haze under the comb's shapes: its sines glide up into a shape from below and spill
-    // energy as they enter it, so an analyser shows a faint haze under a bright shape in the
-    // lows, falling away below the shape (combHazeDropDb: about 52 dB under it a quarter of an
-    // octave down, 77 from two octaves on) and in streaks (hazeStreakDb). Each column of the
-    // band is followed from the top down: the brightest of the comb above, and the lowest row
-    // where it was about that bright (the shape's lowest edge).
-    if (combGridLines > 0)
-    {
-        const auto combTopHz = static_cast<double> (plan->frequencies[static_cast<size_t> (combGridLines - 1)]) + 0.5 * plan->combGridHz;
-        const auto topRow = juce::jlimit (0, height, static_cast<int> (std::floor (rowAt (combTopHz))));
-        std::vector<float> brightest (static_cast<size_t> (width), silentDb), edgeOctave (static_cast<size_t> (width), 0.0f), streak (static_cast<size_t> (width));
-
-        for (int x = 0; x < width; ++x)
-            streak[static_cast<size_t> (x)] = hazeStreakDb ((x + 0.5) / width * model.passSeconds);
-
-        for (int y = topRow; y < height; ++y)
-        {
-            auto* rowDb = geometryDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
-            const auto* combRow = combDb.data() + static_cast<size_t> (y) * static_cast<size_t> (width);
-            const auto octave = static_cast<float> (std::log2 (std::max (1.0, 0.5 * (rowLow[static_cast<size_t> (y)] + rowHigh[static_cast<size_t> (y)]))));
-
-            for (int x = 0; x < width; ++x)
-            {
-                auto& above = brightest[static_cast<size_t> (x)];
-
-                if (above > silentDb + 1.0f)
-                    rowDb[x] = std::max (rowDb[x], above - combHazeDropDb (edgeOctave[static_cast<size_t> (x)] - octave) + streak[static_cast<size_t> (x)]);
-
-                if (combRow[x] > above - 6.0f)
-                {
-                    above = std::max (above, combRow[x]);
-                    edgeOctave[static_cast<size_t> (x)] = octave;
-                }
-            }
-        }
+            rowDb[x] = acc[x] > 1.0e-10f ? dbPerOctave * fastLog2 (acc[x]) + offset : silentDb;
     }
 }
 

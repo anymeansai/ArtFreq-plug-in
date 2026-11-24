@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 
 namespace artfreq
 {
@@ -12,7 +13,7 @@ AnalyserView AnalyserView::sanitised() const noexcept
     v.fftSize = juce::isPowerOfTwo (v.fftSize) ? juce::jlimit (1024, 32768, v.fftSize) : 8192;
 
     if (! std::isfinite (v.floorDb))
-        v.floorDb = -100.0f;
+        v.floorDb = AnalyserView().floorDb;
 
     if (! std::isfinite (v.ceilingDb))
         v.ceilingDb = 0.0f;
@@ -33,12 +34,17 @@ SpectrumAnalyser::SpectrumAnalyser (int fftSize)
       window (static_cast<size_t> (size)),
       work (static_cast<size_t> (size) * 2, 0.0f)
 {
-    // Periodic Hann, the window analysers use by default.
+    // Blackman-Harris, four terms (periodic): see analysisWindow in the header.
     double sum = 0.0;
 
     for (int n = 0; n < size; ++n)
     {
-        const auto w = 0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * n / size);
+        const auto phase = juce::MathConstants<double>::twoPi * n / size;
+        auto w = 0.0;
+
+        for (size_t k = 0; k < std::size (analysisWindow); ++k)
+            w += (k % 2 == 0 ? 1.0 : -1.0) * static_cast<double> (analysisWindow[k]) * std::cos (static_cast<double> (k) * phase);
+
         window[static_cast<size_t> (n)] = static_cast<float> (w);
         sum += w;
     }

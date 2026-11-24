@@ -5,17 +5,23 @@
 **Yes, for screenshots taken with this version, once the canvas says so.** The canvas no longer
 shows an ideal picture of the drawing: a moment after each change it renders one pass of the
 plug-in's real output (the same sound as playback and Bounce WAV) and shows it as a spectrogram
-analyser with your settings shows it (Hann window, the FFT size and level range from Settings).
-So the blur and thickening below about 250 Hz, the faint haze under bright low shapes and the
-scan lines in the highs at the default Density are on the canvas, because they are in the sound
-and in every analyser. The Live view uses the same analysis and colours, so the same sound looks
+analyser with your settings shows it (a Blackman-Harris window, the FFT size and level range
+from Settings). So the blur and thickening below about 250 Hz and the scan lines in the highs at
+the default Density are on the canvas, because they are in the sound and in every analyser. (The
+haze and the streaks under low shapes, which this page's audit found in the sound of 0.5 and
+0.6, are gone from the sound: see [the lows](#the-lows-since-the-standing-comb) below.) The Live view uses the same analysis and colours, so the same sound looks
 the same in both.
 
 What it does not claim:
 
-- **The analyser's settings.** FFT 8192 and -100 to 0 dBFS are ArtFreq's defaults and its own
+- **The analyser's settings.** FFT 8192 and -90 to 0 dBFS are ArtFreq's defaults and its own
   assumptions, not MiniMeters' known defaults (MiniMeters was not available here and we found
   none published). The canvas is as right as these settings are: set them to the user's analyser.
+- **The analyser's window.** The canvas and the Live view analyse with a Blackman-Harris window,
+  which shows a clean tone as a clean line. Many analysers use Hann, which draws the lows a
+  little thinner and adds a faint skirt under every low tone, down to the bottom of the picture
+  where the display's range is deep (60 dB under a tone it is still seven bins wide). That skirt
+  is the analyser's, not the sound's, and the canvas does not show it.
 - **The colours.** The canvas shows the same *levels* as the analyser, in ArtFreq's own palette
   over the level range from Settings. The analyser's colour map is its own (and MiniMeters has
   settings such as a Brightness Boost that this does not model): the shapes and their relative
@@ -48,13 +54,150 @@ What it does not claim:
   quiet mix +20, on the bass-heavy one +9.
 - **The screenshots in `docs/screenshots` and the website's are of the old canvas**: re-shoot them
   with this version (`ArtFreqSnapshot`), and they are accurate for the plug-in's output at the
-  default analyser settings (FFT 8192, -100 to 0 dBFS, log 20 Hz - 20 kHz). ArtFreq FX's
+  default analyser settings (FFT 8192, -90 to 0 dBFS, log 20 Hz - 20 kHz). ArtFreq FX's
   screenshots carve the stand-in (the snapshot tool plays no song) except
   `artfreq-fx-carve-your-track.png`, which carves a bass track that played: caption the others
   "on a stand-in song". Until then the guidance below for the old screenshots stands.
 
-The rest of this page first gives the measurements of the new canvas, then the audit of the old
-one, which led to it.
+The rest of this page first gives the verdict on the lows since the standing comb, then the
+measurements of the measured canvas (made with 0.6: Hann, -100 to 0 dBFS, the gliding comb),
+then the audit of the old canvas, which led to it.
+
+## The lows since the standing comb
+
+The audit below measured, in the real output of 0.5: under bright low shapes a haze about 40 dB
+down reaching to 20 Hz, vertical streaks hanging under thin low shapes and under edges, and a
+dot at 40 - 65 Hz coming out as an upright streak from 23 to 81 Hz. The customer saw the same in
+a DAW: "a 'drip' from the image or text that drips into the lower frequencies, even if the canvas
+doesn't have anything drawn down there". **It was in the sound, and it no longer is.** (Why, and
+what replaced the gliding comb: docs/DESIGN.md, "Smooth lows".)
+
+Measured with `ArtFreqLab <dir> --drip` (tools/DripLab.h): eight drawings at Density 256, the
+real engine, looped; a 65536-point Blackman-Harris analysis, whose own side lobes are 92 dB down;
+the share of the sound's energy more than a sixth of an octave below the lowest frequency drawn
+under each analysis window (dB; in brackets, the loudest cell there against the loudest cell of
+the drawing):
+
+| drawing | Smooth, 0.6 | Smooth, now | Stripes, 0.6 | Stripes, now |
+| --- | --- | --- | --- | --- |
+| one row at 100 Hz (a single tone) | -30.7 (-30.5) | -50.1 (-42.3) | -30.6 (-30.4) | -49.8 (-42.2) |
+| block 60 - 250 Hz | -32.8 (-19.0) | -77.3 (-64.2) | -42.6 (-33.4) | -75.7 (-70.1) |
+| LOW in the Low band | -24.2 (-12.7) | -57.6 (-39.9) | -26.7 (-20.9) | -40.5 (-28.6) |
+| thin wavy stroke 130 - 350 Hz | -28.5 (-27.6) | -45.6 (-43.3) | -30.0 (-29.9) | -46.0 (-35.4) |
+| dot 40 - 65 Hz | -15.6 (-18.7) | -67.0 (-63.0) | -22.8 (-25.9) | -56.9 (-59.0) |
+| frame, bottom bar 80 - 90 Hz | -40.9 (-28.7) | -69.6 (-60.8) | -9.9 (0.0) | -71.8 (-64.0) |
+| MID in the Mid band | -52.0 (-36.4) | -66.3 (-55.2) | -49.7 (-39.0) | -66.1 (-58.4) |
+| portrait 40 Hz - 2 kHz | -43.8 (-33.5) | -74.3 (-60.6) | -39.0 (-30.9) | -73.7 (-64.2) |
+
+Verdict for the lows:
+
+- **Filled shapes, pictures, mid text, a dot: clean.** What lies below the drawing is 66 to 77
+  dB under the sound's energy (the target was 60); nothing is played below the lowest drawn
+  frequency.
+  The dot is a dot (35 - 90 Hz on an analyser of 8192 points, which cannot show it smaller).
+- **Low text: 58 dB, not 60.** The letters' lowest lines, at 40 - 50 Hz, fade in and out over a
+  quarter of a second at most, and a tone that short is a few Hz wide whatever plays it: some of
+  its energy lies just past the sixth-of-an-octave mark. No haze, no streaks.
+- **Thin strokes that move in pitch: 46 dB.** A stroke that climbs or falls is played by one
+  fixed line after another, and faint arcs run off it where it bends (the brightest 43 dB under
+  the stroke). 0.6 played such a stroke as a staircase with a streak to the bottom under every
+  step (28 dB). Visible on a display whose range is deeper than about 60 dB.
+- **A single tone: 50 dB**, all of it within a sixth of its frequency: the width of a tone that
+  starts and stops over 12 cycles.
+- **Stripes.** The same fades and the same rule (no line below the drawing), so it is as clean
+  as Smooth where its lines stand inside what is drawn. Where a stroke lies between two of its
+  lines, 25 Hz apart, it is played by one of them, the one that has more of it: that is Stripes
+  (the frame's bar at 80 - 90 Hz is played at 97 Hz; 0.6 played it at 72 and 97).
+- **The fill is kept**: ArtFreqLab's table in docs/DESIGN.md (fill .93/.93 at 4096 points,
+  .93/.94 at 8192, .91/.93 at 16384, .79/.90 at 32768, low / mid; the gliding comb: .93/.92,
+  .93/.93, .88/.91, .81/.90).
+- **What an analyser adds.** With a Hann window and a range deeper than about 70 dB, an analyser
+  still paints its own skirt under low shapes (side-by-side renders: `ArtFreqLab --drip`,
+  `*-hann8192.png` against `*-bh8192.png`). That is why the canvas and the Live view no longer
+  use Hann.
+
+### A second opinion
+
+Before launch the lows were checked again with other drawings, by someone who had not built
+them (`ArtFreqLab <dir> --skeptic`, tools/SkepticLab.h: the real engine's output written as raw
+floats, analysed outside the plug-in's code). Density 256, a 4-bar pass (8 s), looped, unless
+said; the share of the sound's energy more than a sixth of an octave below the lowest frequency
+drawn under each window of a 16384-point Blackman-Harris analysis (a third of a second, so each
+letter and each bend of a stroke is held to its own lowest edge), in dB, and in brackets the
+loudest cell there against the loudest cell of the drawing:
+
+| drawing (Smooth) | 0.6 | now |
+| --- | --- | --- |
+| the default text, ArtFreq, moved to the Low band | -30.0 (-17.9) | -63.9 (-43.6) |
+| ... at Density 64 / 1024 | -30.5 / -31.0 | -64.0 / -63.9 |
+| ... over 1 bar / 16 bars | -23.0 / -32.9 | -62.0 / -59.7 |
+| ... as a single pass (Repeat off) | -31.4 (-16.0) | -63.9 (-43.6) |
+| small text, 60 - 200 Hz | -23.8 (-15.0) | -59.1 (-53.2) |
+| large text, 60 - 200 Hz | -29.3 (-15.5) | -67.8 (-56.2) |
+| two soft blobs, 40 Hz - 2 kHz (every level, no hard edge) | -67.4 (-59.3) | -94.3 (-84.9) |
+| a filled blob with a soft rim, 80 - 300 Hz | -42.7 (-27.1) | -79.1 (-64.6) |
+| a portrait over the whole height | -53.6 (-32.7) | -91.3 (-66.3) |
+| blocks touching both ends of the pass, looped / once | -39.3 / -40.1 | -78.0 / -76.0 |
+| a thin stroke rising from 50 to 800 Hz | -24.5 (-12.0) | -44.2 (-41.5) |
+| thin level strokes at 62.5, 100 and 137.5 Hz | -28.8 (-19.4) | -46.6 (-30.8) |
+| linear scale, Density 1024: text over 200 Hz - 3 kHz | -60.1 (-35.0) | -70.8 (-50.4) |
+
+What it confirmed: the haze and the streaks are gone from the sound, at every Density and
+Length, looped and once, and at the wrap of a loop; Smooth kept its fill and is steadier than it
+was (a block over 30 Hz - 6 kHz: the level of every analyser row, averaged over half a second,
+moves by 1.2 dB at most at 4096 to 16384 points, where the gliding comb moved by up to 9 dB at
+16384; no beat where the comb's two grids meet at 500 Hz, none where the comb ends); the highs
+play as they did (text in the High band: its bright cells within 0.1 to 0.6 dB of 0.6 at 2048 to
+8192 points); the loudest moments are no louder (peaks at Level 0 dB, 0.6 -> now: the low text
+-3.8 -> -2.7 dBFS, the soft blobs -2.7 -> -6.4, the portrait -0.8 -> -3.1; a block over the whole
+height and dense text reach the safety clipper at Level 0 dB, as they did: +0.8 -> +0.4 dBFS
+going into it; at the default Level, -6 dB, nothing does); the canvas and the Live view at their defaults show the wave, the dot and the frame
+of the snapshot states with nothing under them, and agree.
+
+What it found, and what was done:
+
+- **Thin level strokes between two of the comb's lines beat.** A stroke that touched neither
+  line's own row and lay half in one line's span and half in the other's was played by both,
+  5 Hz apart, alone: a row of beads on an analyser, a tremolo to the ear. One in six of all
+  strokes 2 to 6 rows thick between 40 and 300 Hz. 0.6 did not do this (it played thin strokes
+  on separate lines of their own). Now such a stroke goes to the line that has more
+  of it: no stroke at any height from 40 Hz to 1.7 kHz, 1 to 24 rows thick, is played by two
+  lines, and none is lost (`strokes.txt`). In Stripes the same rule keeps a thin stroke on one
+  of its lines.
+- **Long passes kept streaks at the edges of low shapes.** At 16 bars a canvas column lasts 31
+  ms, and fades of two or three columns are too coarse to do their work. Low lines now fade
+  over four columns at least: the low text at 16 bars reads -59.7 dB below it (-57.6 before
+  this, -32.9 in 0.6) and -63.0 above (-57.5).
+
+What is still not perfect, and will stay so:
+
+- **Low shapes start and end softly.** A low line comes and goes over 12 cycles of its own sine,
+  half of that before the drawn edge and half after: at 60 Hz a tenth of a second either side.
+  Anything faster is a click, which is what the streaks were. Small text in the lows therefore
+  reads as a textured band with the tall letters showing, not as letters (it did not read in 0.6
+  either, under its haze): an analyser needs about as long to tell 60 Hz from 70.
+- **A thin stroke that moves quickly in pitch** has faint wisps beside it, the brightest 42 dB
+  under the stroke (12 dB in 0.6): each fixed line it crosses sounds for a moment, and the
+  engine moves loudness in straight strokes from one canvas column to the next, which leaves
+  traces at multiples of 128 Hz from the line at a 4-bar length (one over a column's 7.8 ms).
+  The ends of a level stroke have the same traces, 60 dB under it. Seen only on displays that
+  reach that far down.
+- **Thin level strokes play on the comb's grid**: a stroke drawn at 62.5 Hz sounds at 60 or 65.
+- **At 32768 points** an analyser begins to tell the comb's lines apart below 500 Hz (5 Hz
+  apart): fill 0.79 in the lows where the gliding comb had 0.81, with half the flicker.
+- **Pressing play or stop in the middle of a low shape** cuts it within 5 ms, which is a click:
+  one upright streak at that moment, as in every version.
+- **A Hann analyser with a range of 80 dB or more** still paints its own skirt under low shapes
+  (thin streaks from the shape's lower edge towards 20 Hz at -100 dBFS): it is in the analyser,
+  not in the sound (the same sound through a Blackman-Harris window shows none).
+
+The numbers in the next two sections were measured with 0.6 (Hann, -100 to 0 dBFS, the gliding
+comb). Run again on this build (`ArtFreqTruthLab`, now with the canvas's window; FFT 8192, the
+canvas against the real processor's output analysed separately): ArtFreq's default, rich, layers
+and linear states, correlation 0.99 - 1.00 in every band, mean difference within 0.1 dB, excess
+contrast within 0.3 dB; ArtFreq FX once a pass has played, 0.97 - 1.00, within 0.2 dB and 0.2 dB.
+The canvas is still the real output, analysed.
+
 
 ## The new canvas against the real output
 
@@ -342,6 +485,8 @@ xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --drag      
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --scenarios scenarios          # other songs, rates, tempos
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --scenarios standin --standin  # ArtFreq FX before a pass
 xvfb-run -a build/ArtFreqTruthLab_artefacts/Release/ArtFreqTruthLab --marketing docs/marketing
+build/ArtFreqLab_artefacts/Release/ArtFreqLab drip --drip --lows smooth    # the lows: what sounds outside the drawing (drip.txt, PNGs)
+build/ArtFreqLab_artefacts/Release/ArtFreqLab second --skeptic --lows smooth  # ... other drawings, as raw sound (strokes.txt, .f32, .json)
 ```
 
 `--states a,b`, `--ffts 4096,8192,16384`, `--range -100,0` and `--wav` choose what is measured

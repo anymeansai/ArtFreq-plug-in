@@ -30,7 +30,7 @@
 // It checks that the picture is the sound: the live view's newest column ("now") in every
 // frame, and every column of the whole live picture in the last frame, against an analysis of
 // the clip's sound made here separately (as the live view analyses with the default settings:
-// 8192 points, Hann, a column every 512 samples, the same rows and colours). A frame early or late, or a
+// 8192 points, Blackman-Harris, a column every 512 samples, the same rows and colours). A frame early or late, or a
 // column dropped or doubled, would not match. And, with ffprobe, the encoded files: frames,
 // durations, the sound.
 //
@@ -794,7 +794,7 @@ void checkFiles (const ClipSpec& clip, const juce::String& ffprobe, const juce::
 // ---- the picture against the sound ------------------------------------------------------------
 // The live view's colour window and analysis, as src/ui/LiveView.cpp and src/dsp/LiveAnalyzer.h
 // define them with the default analyser settings (a full-scale sine reads 0 dB; the colours run
-// from -100 to 0 dB; FFT 8192, Hann, a column every sixteenth of it).
+// from -100 to 0 dB; FFT 8192, Blackman-Harris, a column every sixteenth of it).
 constexpr float viewFloorDb = -100.0f;
 constexpr float viewCeilingDb = 0.0f;
 
@@ -825,7 +825,7 @@ int levelOfPixel (juce::Colour c)
 }
 
 /** An analysis of the clip's sound made here, independently of the live view's code: an analyser
-    of 8192 points (Hann) with a column every 512 samples from when the view was turned
+    of 8192 points (Blackman-Harris) with a column every 512 samples from when the view was turned
     on (nothing before that), each column as the colour-map levels of the view's rows (`rows`
     tall over the scale). */
 class SoundAnalysis
@@ -844,7 +844,7 @@ public:
         for (int i = 0; i < size; ++i)
         {
             const auto x = juce::MathConstants<double>::twoPi * i / size;
-            window[static_cast<size_t> (i)] = static_cast<float> (0.5 - 0.5 * std::cos (x));
+            window[static_cast<size_t> (i)] = static_cast<float> (0.35875 - 0.48829 * std::cos (x) + 0.14128 * std::cos (2.0 * x) - 0.01168 * std::cos (3.0 * x));
             sum += window[static_cast<size_t> (i)];
         }
 
