@@ -464,6 +464,8 @@ int runDripLab (const Options& options)
         written = writePng (dripPicture (audio, 8192, WindowShape::hann, -100.0f), file ("-hann8192.png")) && written;
         written = writePng (dripPicture (audio, 8192, WindowShape::hann, -80.0f), file ("-hann8192-floor80.png")) && written;
         written = writePng (dripPicture (audio, 8192, WindowShape::blackmanHarris, -100.0f), file ("-bh8192.png")) && written;
+        written = writePng (dripPicture (audio, 8192, WindowShape::blackmanHarris, -80.0f), file ("-bh8192-floor80.png")) && written;
+        written = writePng (dripPicture (audio, 4096, WindowShape::hann, -80.0f), file ("-hann4096-floor80.png")) && written;
         written = writePng (dripPicture (audio, 4096, WindowShape::blackmanHarris, -100.0f), file ("-bh4096.png")) && written;
     }
 

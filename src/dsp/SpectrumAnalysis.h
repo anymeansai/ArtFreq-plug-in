@@ -1,6 +1,6 @@
 #pragma once
 
-// What a spectrogram analyser (MiniMeters, or any scrolling spectrogram) shows of a sound: a Hann
+// What a spectrogram analyser (MiniMeters, or any scrolling spectrogram) shows of a sound: a
 // windowed FFT of the last few thousand samples, its bins in dB, read off at the heights of the
 // picture's rows and coloured over a fixed range of levels.
 //
@@ -18,6 +18,22 @@
 namespace artfreq
 {
 
+/** The window: Blackman-Harris, four terms (w[n] = a0 - a1 cos (2 pi n / N) + a2 cos (4 pi n / N)
+    - a3 cos (6 pi n / N)), side lobes 92 dB down.
+
+    Why not Hann (as up to 0.6): Hann's side lobes start 31 dB under a tone and fall slowly (60 dB
+    down seven bins away), so on a log scale every low tone, however clean, was drawn with a skirt
+    hanging under it to the bottom of the picture: at 8192 points and 48 kHz a 50 Hz tone 60 dB
+    above the darkest colour showed from 10 to 90 Hz, and the customer read that as sound "dripping"
+    below the drawing. This window shows a tone as its main lobe and nothing else, four bins
+    either side at the very faintest (the same 50 Hz tone: 27 to 73 Hz), at the price of a main
+    lobe about a third wider near its top (2.7 bins at half height against Hann's 2). What it
+    shows under a shape is then in the sound. An analyser that uses Hann draws the lows a little
+    thinner and adds that skirt; nothing else differs. */
+constexpr float analysisWindow[] { 0.35875f, 0.48829f, 0.14128f, 0.01168f };
+constexpr float analysisWindowNoiseBins = 2.0f;   // its noise bandwidth: what closely spaced sines add up over
+constexpr float analysisWindowLobeBins = 4.0f;    // its main lobe ends this many bins from a sine
+
 /** How the user's analyser draws (Settings, "Match your analyser"): the size of its FFT, which
     sets how sharp it is in pitch and how blurred in time (and how blurred the lows are: a bin is
     sampleRate / fftSize wide at every height), and the levels its colours span. A full-scale sine
@@ -25,7 +41,7 @@ namespace artfreq
 struct AnalyserView
 {
     int fftSize = 8192;
-    float floorDb = -100.0f;     // shown as the darkest colour, and everything quieter
+    float floorDb = -80.0f;      // shown as the darkest colour, and everything quieter
     float ceilingDb = 0.0f;      // shown as the brightest colour, and everything louder
 
     /** A power of two from 1024 to 32768, and a range at least minSpanDb wide. */
@@ -53,8 +69,9 @@ inline uint8_t colourLevelFor (float db, float floorDb, float ceilingDb) noexcep
     return static_cast<uint8_t> (t >= 1.0f ? 255 : static_cast<int> (t * 255.0f + 0.5f));
 }
 
-/** One analyser column: Hann window, FFT, the magnitude of each bin in dBFS, scaled so that a
-    full-scale sine centred on a bin reads 0 dB. Allocates in the constructor only. */
+/** One analyser column: the window (analysisWindow), FFT, the magnitude of each bin in dBFS,
+    scaled so that a full-scale sine centred on a bin reads 0 dB. Allocates in the constructor
+    only. */
 class SpectrumAnalyser
 {
 public:

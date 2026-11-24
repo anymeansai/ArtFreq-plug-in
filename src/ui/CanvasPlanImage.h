@@ -6,9 +6,10 @@
 // stays still; this one is made to look as much like it as can be had cheaply, so the swap is
 // gentle:
 //
-//  - each sine line is drawn as the analyser draws a sine: its window's main lobe and side lobes
-//    (Hann), as many Hz wide at every height (sampleRate / fftSize a bin), so at low density the
-//    highs show scan lines one pixel tall with dark gaps, and the lows are blurred and thick;
+//  - each sine line is drawn as the analyser draws a sine: its window's main lobe
+//    (dsp/SpectrumAnalysis.h), as many Hz wide at every height (sampleRate / fftSize a bin), so at
+//    low density the highs show scan lines one pixel tall with dark gaps, and the lows are blurred
+//    and thick;
 //  - in time, each line's loudness is blurred by the analyser's window (fftSize samples);
 //  - the standing comb's lines (Smooth lows) stand closer than the analyser's bins are wide, so
 //    each is drawn as much brighter as the lines sharing a bin add up to (combBrightness);
@@ -115,8 +116,7 @@ public:
     uint64_t getRenderCount() const noexcept { return renderCount; }
 
     /** How the analyser's window spreads a sine over frequency: the amplitude it reads `bins` FFT
-        bins away from the sine (Hann: 1 at 0, 0.5 at one bin, 0 at two, then side lobes, here
-        their envelope, -32 dB at 2.5 bins and falling 18 dB an octave). */
+        bins away from the sine (1 at 0, 0.68 at one bin, 0.2 at two, nothing from four on). */
     static float lobe (float bins) noexcept;
 
     /** How much brighter than its own amplitude an analyser of fftSize points shows a line of the

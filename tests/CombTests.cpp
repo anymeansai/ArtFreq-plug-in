@@ -862,7 +862,7 @@ ARTFREQ_TEST (canvasShowsSmoothLowsAsAFilledBand)
     std::printf ("    rows 12 dB darker in 200 - 800 Hz (of %d): smooth %d, stripes %d\n", rows, gapRows (smoothImage, 200.0, 800.0),
                  gapRows (stripesImage, 200.0, 800.0));
     CHECK (gapRows (smoothImage, 70.0, 800.0) == 0);
-    CHECK_GREATER (gapRows (stripesImage, 200.0, 800.0), rows / 4);
+    CHECK_GREATER (gapRows (stripesImage, 200.0, 800.0), rows / 5);   // (a fifth: the analyser's window is a third wider than Hann's)
 
     // Inside the comb's band and on the lines at 3 - 4 kHz: as bright as each other (within
     // 3 dB), and the level an analyser reads, far above the floor.

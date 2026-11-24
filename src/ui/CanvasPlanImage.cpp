@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <iterator>
 #include <cmath>
 #include <cstring>
 
@@ -29,13 +30,6 @@ namespace
 
     constexpr float dbPerOctave = 6.0205999f;  // 20 log10 (2)
     constexpr float silentDb = -200.0f;
-
-    /** How far the lobes are drawn, in bins: at least four (the main lobe and the first side lobes,
-        to -44 dB), and where a bin is a small part of a row (the highs, a linear scale) as far as
-        the side lobes still show (32 bins: -100 dB), over at most about 24 rows: in the lows of a
-        log scale, where a bin covers many rows, the far side lobes would cost more than they
-        show. Lobes fainter than the floor are left out anyway. */
-    constexpr double minLobeReachBins = 4.0, maxLobeReachBins = 32.0, lobeReachRows = 24.0;
 
     /** A box blur of `width` columns over `values` (zero beyond its ends), into `out`; `early`
         puts an even width's extra column before the centre rather than after it. */
@@ -93,30 +87,30 @@ float CanvasPlanImage::lobe (float bins) noexcept
 {
     const auto d = std::abs (bins);
 
-    if (d < 1.0e-4f)
-        return 1.0f;
+    if (d >= analysisWindowLobeBins)
+        return 0.0f;   // the side lobes, 92 dB down: under any floor
 
-    if (d < 2.0f)
+    // The window's transform: each of its cosines is a pair of sincs, k bins either side.
+    const auto sinc = [] (float x)
     {
-        // Hann's main lobe: sinc (d) / (1 - d^2); 0.5 at one bin (the limit).
-        if (std::abs (d - 1.0f) < 1.0e-3f)
-            return 0.5f;
+        const auto px = juce::MathConstants<float>::pi * x;
+        return std::abs (px) < 1.0e-4f ? 1.0f : std::sin (px) / px;
+    };
 
-        const auto pd = juce::MathConstants<float>::pi * d;
-        return std::abs (std::sin (pd) / (pd * (1.0f - d * d)));
-    }
+    auto sum = analysisWindow[0] * sinc (d);
 
-    // The side lobes' envelope, a little under their peaks (between them they dip to nothing).
-    const auto d2 = std::max (d, 2.5f);
-    return 0.7f / (juce::MathConstants<float>::pi * d2 * (d2 * d2 - 1.0f)) * juce::jlimit (0.0f, 1.0f, (d - 2.0f) * 2.0f);
+    for (size_t k = 1; k < std::size (analysisWindow); ++k)
+        sum += 0.5f * analysisWindow[k] * (sinc (d - static_cast<float> (k)) + sinc (d + static_cast<float> (k)));
+
+    return std::abs (sum) / analysisWindow[0];
 }
 
 float CanvasPlanImage::combBrightness (int fftSize, double sampleRate, float spacingHz) noexcept
 {
-    // Lines closer than the window's noise bandwidth (Hann: 1.5 bins) add up in every bin, in
-    // power, as their phases keep them from pulsing together (ArtPlan.h); lines further apart
-    // are each read at their own level.
-    const auto bandwidthHz = 1.5 * sampleRate / std::max (256, fftSize);
+    // Lines closer than the window's noise bandwidth add up in every bin, in power, as their
+    // phases keep them from pulsing together (ArtPlan.h); lines further apart are each read at
+    // their own level.
+    const auto bandwidthHz = static_cast<double> (analysisWindowNoiseBins) * sampleRate / std::max (256, fftSize);
     return static_cast<float> (std::sqrt (std::max (1.0, bandwidthHz / std::max (0.1, static_cast<double> (spacingHz)))));
 }
 
@@ -272,11 +266,12 @@ void CanvasPlanImage::updateAmplitudes (const ArtPlan& plan, const AnalyserModel
         }
     }
 
-    // In time, the analyser's window averages the sound over fftSize samples: a sine's loudness
-    // is seen through it (two boxes of half the window: a triangle as long as it, close to Hann).
+    // In time, the analyser's window weighs the sound over fftSize samples, most of it near the
+    // middle: a sine's loudness is seen through it (two boxes of a third of the window: a
+    // triangle as wide at half height as the window, 0.34 of its length).
     const auto columnSeconds = model.passSeconds / std::max (1, numColumns);
     const auto windowColumns = (model.view.fftSize / model.sampleRate) / std::max (1.0e-9, columnSeconds);
-    const auto boxWidth = std::max (1, static_cast<int> (std::lround (windowColumns * 0.5)));
+    const auto boxWidth = std::max (1, static_cast<int> (std::lround (windowColumns * 0.344)));
     std::vector<float> once (static_cast<size_t> (numColumns));
 
     for (int line = 0; line < numLines; ++line)
@@ -367,10 +362,7 @@ void CanvasPlanImage::renderGeometry (const ArtPlan* plan, const AnalyserModel& 
         if (! (loudest * lobe (0.0f) > faintest) || hz >= nyquistGuard)
             continue;
 
-        const auto hzPerRow = std::max (1.0e-6, rowHigh[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]
-                                                  - rowLow[static_cast<size_t> (juce::jlimit (0, height - 1, static_cast<int> (rowAt (hz))))]);
-        const auto reachBins = juce::jlimit (minLobeReachBins, maxLobeReachBins, lobeReachRows * hzPerRow / binHz);
-        const auto reachHz = reachBins * binHz;
+        const auto reachHz = static_cast<double> (analysisWindowLobeBins) * binHz;   // the main lobe: all there is to see
         const auto first = juce::jmax (0, static_cast<int> (std::floor (rowAt (hz + reachHz))));
         const auto last = juce::jmin (height - 1, static_cast<int> (std::floor (rowAt (std::max (s.minHz * 0.5, hz - reachHz)))));
 

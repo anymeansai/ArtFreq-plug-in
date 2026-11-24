@@ -58,8 +58,9 @@ namespace
     /** What the synthesis below gives an analyser of its own frame size, against the level asked
         for: the median of the dB it reads over a long stretch of noise asked to be at 0 dB, in
         dB (measured with SpectrumAnalyser: see the test standInSongHasTheTexturesLevels). The
-        frames are scaled by its inverse, so the analyser reads the texture's levels. */
-    constexpr float synthesisGainDb = 2.2f;
+        frames are scaled by its inverse, so the analyser reads the texture's levels. (2.2 dB
+        with the Hann window of 0.6; the Blackman-Harris window reads noise 1.25 dB higher.) */
+    constexpr float synthesisGainDb = 3.45f;
 
     /** The lows' noise bed is this much quieter at 60 Hz and below, and the tones' levels (peak
         amplitudes): together they give the lows the test master's levels on an analyser of 8192
