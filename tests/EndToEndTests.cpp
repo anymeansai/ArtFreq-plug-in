@@ -458,8 +458,8 @@ ARTFREQ_TEST (endToEndTextInTheLows)
 ARTFREQ_TEST (endToEndSmoothLowsFillWhereStripesShowGaps)
 {
     // The customer's case: an analyser with a long FFT (MiniMeters at 8192 or 16384 points)
-    // resolves the lows' lines, 25 Hz apart, into stripes with dark gaps. Smooth (the rising
-    // comb) fills the drawing there and reads closer to it, and does not pulse instead: the
+    // resolves the lows' lines, 25 Hz apart, into stripes with dark gaps. Smooth (the standing
+    // comb) fills the drawing there and reads as it was drawn, and does not pulse instead: the
     // drawn band's level holds steady from frame to frame, with no regular beat.
     ArtDocument block;   // a solid block over 50 - 250 Hz, 10 % - 90 % of the length
     const FrequencyScale scale;
@@ -484,13 +484,17 @@ ARTFREQ_TEST (endToEndSmoothLowsFillWhereStripesShowGaps)
 
         CHECK_LESS (stripesBlock.fill, 0.6);
         CHECK_GREATER (smoothBlock.fill, 0.85);
-        CHECK_GREATER (smoothBlock.fidelity, stripesBlock.fidelity + 0.1);
+        // (Until Stripes' lines kept inside the drawing too, a plain block read 0.3 to 0.5
+        // worse in Stripes than in Smooth, which was the check here. Now its few lines trace the
+        // block's outline as well as the comb fills it; the difference left is the fill, above,
+        // and anything with detail, as the text shows. The gliding comb read the block at 0.79.)
+        CHECK_GREATER (smoothBlock.fidelity, 0.8);
         CHECK_GREATER (smoothText.fidelity, stripesText.fidelity + 0.1);
         CHECK_GREATER (smoothText.fill, stripesText.fill);
 
-        // A solid block's level is steady: no regular pulse (the comb's sines pass each height ten
-        // times a second, out of step with each other). The text's level follows its letters;
-        // the comb adds no pulse of its own to that.
+        // A solid block's level is steady: no regular pulse (the comb's lines beat five and ten
+        // times a second, each pair out of step with the next). The text's level follows its
+        // letters; the comb adds no pulse of its own to that.
         CHECK_LESS (smoothBlock.pulseDb, 1.0);
         CHECK_LESS (smoothBlock.pulsePeakDb, 0.5);
         CHECK_LESS (smoothText.pulsePeakDb, stripesText.pulsePeakDb + 0.25);

@@ -83,6 +83,16 @@ constexpr float combPhaseLines = 2.618034f;   // lines the sweep passes in one b
                                               // sum never peaks (whole numbers and halves, 2, 3.5, 4,
                                               // make it a train of clicks 5 to 10 dB taller; measured)
 
+// Thin strokes. A few of the comb's lines on their own (a stroke a row or two tall, an outline,
+// thin lettering) are too few for the sweep to even out. Two lines alone beat as one pulse, five
+// or ten times a second (8 to 14 dB on an analyser of 4096 or 8192 points, a tremolo to the ear):
+// where, in a column, drawn rows join two lines and no third, the louder of the two plays for
+// both, steadily. Three lines play, the outer two at combThinEdge of their level (that shimmers by
+// 4 dB at 4096 points and 3 dB at 8192; all three at full level, by 6 dB). The narrowest runs
+// played as they are (four or five lines) shimmer by about 6 dB at 4096 points and 3 dB at 8192;
+// from six lines on, as any shape does.
+constexpr float combThinEdge = 0.5f;
+
 // Nothing is played below this: lower lines are dropped (nothing so low is heard or shown).
 constexpr float lowestPlayedHz = 10.0f;
 

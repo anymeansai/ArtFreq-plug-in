@@ -94,77 +94,123 @@ uint64_t hashFrequencies (const std::vector<float>& frequencies, int combLines) 
     return hash != 0 ? hash : 1;  // 0 is left to mean "no layout"
 }
 
-/** Never below the drawing (see buildPlan), for one column of the lows.
+constexpr int stripColumns = 16;   // buildPlan works through the canvas in strips this wide
 
-    `rows` holds the canvas over the lows' rows, bottom up (rows[0] is row `firstRow` from the
-    bottom); line l of the `lines` lows has its own row at ownRow[l] and its span ends at row
-    spanLast[l] (counted from the bottom of the canvas, ascending with l). Writes each line's
-    value to values[l * stride]. */
-void coverLows (const float* rows, int numRows, int firstRow, int lines, const int* ownRow, const int* spanLast,
-                float* values, size_t stride) noexcept
+/** Never below the drawing (see buildPlan), for the lows of one strip of the canvas: columns c0
+    to c0 + width - 1.
+
+    Line l of the `lines` lows has its own row at ownRow[l], and its span runs from row
+    spanFirst[l] to spanLast[l] (rows counted from the bottom of the canvas, ascending with l).
+    Writes each line's value in the strip's column i to values[l * stripColumns + i].
+
+    The rows between two neighbouring lines are looked at in two halves, the lower line's and the
+    upper line's (where their spans meet). Each half is its line's, as everywhere on the canvas,
+    with one exception: where one of the two lines' own rows is drawn and the other's is not, and
+    every row of the drawn line's half is drawn too, the drawing reaches on into the other half
+    from the drawn side: an edge of a shape. Then the drawn line plays both halves, and the other
+    one, which the drawing does not reach, stays silent. A stroke that touches neither line's row
+    is thus played by the nearer line, as before.
+
+    `comb`: the lines are the standing comb's, where two or three lines joined by drawn rows, and
+    joined to no further line, are a thin stroke (see combThinEdge). */
+void coverLows (const Canvas& canvas, int c0, int width, int lines, const int* ownRow, const int* spanFirst, const int* spanLast,
+                bool comb, float* values, std::vector<uint8_t>& joined) noexcept
 {
-    for (int l = 0; l < lines; ++l)
-        values[static_cast<size_t> (l) * stride] = 0.0f;
+    constexpr auto strip = stripColumns;
 
-    int next = 0;   // the first line whose own row is not below the rows looked at so far
-
-    for (int r = 0; r < numRows;)
+    const auto rowOf = [&canvas, c0] (int rowFromBottom)
     {
-        if (! (rows[r] > silenceThreshold))
+        return canvas.values.data() + static_cast<size_t> (Canvas::height - 1 - rowFromBottom) * Canvas::width + static_cast<size_t> (c0);
+    };
+
+    // The loudest and the quietest value of rows `from` to `to`, column by column (no rows:
+    // silence, and "every row drawn").
+    const auto over = [&rowOf, width] (int from, int to, float* loudest, float* quietest)
+    {
+        std::fill (loudest, loudest + strip, 0.0f);
+        std::fill (quietest, quietest + strip, 1.0f);
+
+        for (int row = from; row <= to; ++row)
         {
-            ++r;
-            continue;
+            const auto* v = rowOf (row);
+
+            for (int i = 0; i < width; ++i)
+            {
+                loudest[i] = std::max (loudest[i], v[i]);
+                quietest[i] = std::min (quietest[i], v[i]);
+            }
+        }
+    };
+
+    float own[strip] {}, ownAbove[strip] {}, lowLoudest[strip], lowQuietest[strip], highLoudest[strip], highQuietest[strip];
+    const auto at = [values] (int line) { return values + static_cast<size_t> (line) * strip; };
+
+    // The lowest line also plays what lies below its own row (there is no line down there).
+    over (spanFirst[0], ownRow[0], at (0), lowQuietest);
+    std::copy (rowOf (ownRow[0]), rowOf (ownRow[0]) + width, own);
+
+    for (int l = 0; l + 1 < lines; ++l)
+    {
+        const auto meet = std::clamp (spanLast[l], ownRow[l], ownRow[l + 1] - 1);
+        over (ownRow[l] + 1, meet, lowLoudest, lowQuietest);
+        over (meet + 1, ownRow[l + 1] - 1, highLoudest, highQuietest);
+        std::copy (rowOf (ownRow[l + 1]), rowOf (ownRow[l + 1]) + width, ownAbove);
+
+        auto* below = at (l);
+        auto* above = at (l + 1);
+        auto* join = joined.data() + static_cast<size_t> (l) * strip;
+
+        for (int i = 0; i < width; ++i)
+        {
+            const auto belowDrawn = own[i] > silenceThreshold, aboveDrawn = ownAbove[i] > silenceThreshold;
+            const auto lowDrawn = lowQuietest[i] > silenceThreshold, highDrawn = highQuietest[i] > silenceThreshold;
+            const auto both = std::max (lowLoudest[i], highLoudest[i]);
+
+            // (all four are worked out and one chosen, so that noisy drawings cost no more)
+            const auto edgeFromBelow = belowDrawn && ! aboveDrawn && lowDrawn;
+            const auto edgeFromAbove = aboveDrawn && ! belowDrawn && highDrawn;
+            below[i] = std::max (below[i], edgeFromBelow ? both : (edgeFromAbove ? 0.0f : lowLoudest[i]));
+            above[i] = std::max (ownAbove[i], edgeFromAbove ? both : (edgeFromBelow ? 0.0f : highLoudest[i]));
+            join[i] = belowDrawn && aboveDrawn && lowDrawn && highDrawn ? 1 : 0;
         }
 
-        const auto start = r;
+        std::copy (ownAbove, ownAbove + strip, own);
+    }
 
-        while (r < numRows && rows[r] > silenceThreshold)
-            ++r;
+    // ... and the highest of the lows what lies above its own row, up to the end of its span.
+    over (ownRow[lines - 1] + 1, spanLast[lines - 1], lowLoudest, lowQuietest);
 
-        const auto runFirst = firstRow + start, runLast = firstRow + r - 1;
+    for (int i = 0; i < width; ++i)
+        at (lines - 1)[i] = std::max (at (lines - 1)[i], lowLoudest[i]);
 
-        while (next < lines && ownRow[next] < runFirst)
-            ++next;
+    if (! comb)
+        return;
 
-        const auto loudestIn = [rows, firstRow] (int from, int to)
+    // Thin strokes: two or three joined lines on their own.
+    for (int i = 0; i < width; ++i)
+    {
+        for (int first = 0; first + 1 < lines;)
         {
-            auto loudest = 0.0f;
+            auto last = first;
 
-            for (int row = from; row <= to; ++row)
-                loudest = std::max (loudest, rows[row - firstRow]);
+            while (last + 1 < lines && joined[static_cast<size_t> (last) * strip + static_cast<size_t> (i)] != 0)
+                ++last;
 
-            return loudest;
-        };
-
-        if (next < lines && ownRow[next] <= runLast)
-        {
-            // The lines inside the run: each plays the part of it in its span, the lowest of them
-            // also what is below its span and the highest what is above (a bright stroke with a
-            // faint fringe that reaches a line is played by that line, not lost).
-            for (auto from = runFirst; next < lines && ownRow[next] <= runLast; ++next)
+            if (last == first + 1)
             {
-                const auto isLast = next + 1 == lines || ownRow[next + 1] > runLast;
-                const auto to = isLast ? runLast : std::min (runLast, spanLast[next]);
-                auto& value = values[static_cast<size_t> (next) * stride];
-                value = std::max (value, loudestIn (std::min (from, to), to));
-                from = std::min (runLast, std::max (from, to));
+                // Two lines alone beat as one pulse: the louder plays for both.
+                const auto loudest = std::max (at (first)[i], at (last)[i]);
+                const auto keep = at (last)[i] > at (first)[i] ? last : first;
+                at (first)[i] = at (last)[i] = 0.0f;
+                at (keep)[i] = loudest;
+            }
+            else if (last == first + 2)
+            {
+                at (first)[i] *= combThinEdge;
+                at (last)[i] *= combThinEdge;
             }
 
-            continue;
-        }
-
-        // A stroke between two lines: the one nearest its middle (twice the middle row, to stay
-        // in whole numbers).
-        const auto middle = runFirst + runLast;
-        auto nearest = next < lines ? next : lines - 1;
-
-        if (next > 0 && next < lines && middle - 2 * ownRow[next - 1] <= 2 * ownRow[next] - middle)
-            nearest = next - 1;
-
-        if (nearest >= 0)
-        {
-            auto& value = values[static_cast<size_t> (nearest) * stride];
-            value = std::max (value, loudestIn (runFirst, runLast));
+            first = last + 1;
         }
     }
 }
@@ -469,35 +515,49 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
                      * finalLines[l].gain;
     }
 
-    // The canvas is row-major and the plan column-major, and the fades run along each line: the
-    // work goes in strips of a few columns into a copy that is line-major (the strip's values for
-    // every line stay in cache while they are turned around), turned into the plan at the end.
-    constexpr int strip = 16;
-    std::vector<float> stripValues (lines * strip);
-    std::vector<float> byLine (lines * static_cast<size_t> (numColumns));
+    // ---- Fades in time (see fadeCycles): which lines, and how long ----------------------------
+    // Only the lines whose fade is longer than two columns change at all (at the default length,
+    // those below about 770 Hz); they are kept line by line as well, as the fades run along them.
+    const auto passSeconds = std::isfinite (settings.passSeconds) ? settings.passSeconds : 0.0;
+    std::vector<double> fadeColumns;    // per faded line, the length of its fade in columns
+    std::vector<size_t> fadedLines;
 
-    // The lows' rows of the strip, column by column and bottom up, for coverLows.
-    const auto lowFirstRow = lowLines > 0 ? firstRow[0] : 0;
-    const auto lowRows = lowLines > 0 ? lastRow[static_cast<size_t> (lowLines) - 1] - lowFirstRow + 1 : 0;
-    std::vector<float> lowColumns (static_cast<size_t> (lowRows) * strip);
+    if (passSeconds > 0.0)
+    {
+        const auto columnSeconds = passSeconds / numColumns;
+        const auto longest = std::min (static_cast<double> (longestFadeSeconds), passSeconds * static_cast<double> (longestFadeOfPass));
+
+        for (size_t l = 0; l < lines; ++l)
+        {
+            const auto seconds = std::min (static_cast<double> (fadeCycles) / std::max (1.0, finalLines[l].hz), longest);
+
+            if (seconds > 2.0 * columnSeconds)
+            {
+                fadedLines.push_back (l);
+                fadeColumns.push_back (seconds / columnSeconds);
+            }
+        }
+    }
+
+    std::vector<float> byLine (fadedLines.size() * static_cast<size_t> (numColumns));
+
+    // The canvas is row-major and the plan column-major, so the work goes in strips of a few
+    // columns: the strip's values for every line stay in cache while they are turned around.
+    constexpr auto strip = stripColumns;
+    std::vector<float> stripValues (lines * strip);
+    std::vector<double> columnPower (static_cast<size_t> (numColumns), 0.0);
+    auto& amplitudes = plan->amplitudes;
+
+    std::vector<uint8_t> joined (static_cast<size_t> (lowLines) * strip);   // coverLows' scratch
 
     for (int c0 = 0; c0 < numColumns; c0 += strip)
     {
         const auto width = std::min (strip, numColumns - c0);
         std::fill (stripValues.begin(), stripValues.end(), 0.0f);
 
-        for (int r = 0; r < lowRows; ++r)
-        {
-            const auto* row = canvas.values.data() + static_cast<size_t> (Canvas::height - 1 - (lowFirstRow + r)) * Canvas::width
-                            + static_cast<size_t> (c0);
-
-            for (int i = 0; i < width; ++i)
-                lowColumns[static_cast<size_t> (i) * static_cast<size_t> (lowRows) + static_cast<size_t> (r)] = row[i];
-        }
-
-        for (int i = 0; i < width && lowLines > 0; ++i)
-            coverLows (lowColumns.data() + static_cast<size_t> (i) * static_cast<size_t> (lowRows), lowRows, lowFirstRow, lowLines,
-                       ownRow.data(), lastRow.data(), stripValues.data() + i, static_cast<size_t> (strip));
+        if (lowLines > 0)
+            coverLows (canvas, c0, width, lowLines, ownRow.data(), firstRow.data(), lastRow.data(), plan->combLines > 0,
+                       stripValues.data(), joined);
 
         for (auto l = static_cast<size_t> (lowLines); l < lines; ++l)
         {
@@ -513,56 +573,62 @@ std::unique_ptr<ArtPlan> buildPlan (const Canvas& canvas, const PlanSettings& se
             }
         }
 
-        for (size_t l = 0; l < lines; ++l)
+        for (int i = 0; i < width; ++i)
         {
+            auto* column = amplitudes.data() + static_cast<size_t> (c0 + i) * lines;
+
+            for (size_t l = 0; l < lines; ++l)
+                column[l] = loudness (stripValues[l * strip + static_cast<size_t> (i)]) * slopeGain[l];
+
+            auto power = 0.0;
+
+            for (size_t l = 0; l < lines; ++l)
+                power += static_cast<double> (column[l]) * static_cast<double> (column[l]);
+
+            columnPower[static_cast<size_t> (c0 + i)] = power;
+        }
+
+        for (size_t f = 0; f < fadedLines.size(); ++f)
+        {
+            const auto l = fadedLines[f];
             const auto* values = stripValues.data() + l * strip;
-            auto* out = byLine.data() + l * static_cast<size_t> (numColumns) + static_cast<size_t> (c0);
+            auto* out = byLine.data() + f * static_cast<size_t> (numColumns) + static_cast<size_t> (c0);
 
             for (int i = 0; i < width; ++i)
                 out[i] = loudness (values[i]) * slopeGain[l];
         }
     }
 
-    // ---- Fades in time (see fadeCycles) ---------------------------------------------------------
-    const auto passSeconds = std::isfinite (settings.passSeconds) ? settings.passSeconds : 0.0;
-
-    if (passSeconds > 0.0)
+    if (! fadedLines.empty())
     {
-        const auto columnSeconds = passSeconds / numColumns;
-        const auto longest = std::min (static_cast<double> (longestFadeSeconds), passSeconds * static_cast<double> (longestFadeOfPass));
         std::vector<float> kernel, scratch;
 
-        for (size_t l = 0; l < lines; ++l)
+        // (each column's power follows: less the line as drawn, plus the line as faded)
+        const auto addPower = [&columnPower, numColumns] (const float* line, double sign)
         {
-            const auto seconds = std::min (static_cast<double> (fadeCycles) / std::max (1.0, finalLines[l].hz), longest);
-            fadeInTime (byLine.data() + l * static_cast<size_t> (numColumns), numColumns, seconds / columnSeconds,
-                        settings.repeats, kernel, scratch);
+            for (int c = 0; c < numColumns; ++c)
+                columnPower[static_cast<size_t> (c)] += sign * static_cast<double> (line[c]) * static_cast<double> (line[c]);
+        };
+
+        for (size_t f = 0; f < fadedLines.size(); ++f)
+        {
+            auto* line = byLine.data() + f * static_cast<size_t> (numColumns);
+            addPower (line, -1.0);
+            fadeInTime (line, numColumns, fadeColumns[f], settings.repeats, kernel, scratch);
+            addPower (line, 1.0);
         }
-    }
 
-    // ---- Into the plan, column by column; the loudest column ---------------------------------
-    auto& amplitudes = plan->amplitudes;
-    std::vector<double> columnPower (static_cast<size_t> (numColumns), 0.0);
-    constexpr int tile = 64;
-
-    for (int c0 = 0; c0 < numColumns; c0 += tile)
-    {
-        const auto cEnd = std::min (numColumns, c0 + tile);
-
-        for (size_t l0 = 0; l0 < lines; l0 += tile)
+        // Back into the plan, a strip of columns at a time (the plan's part stays in cache).
+        for (int c0 = 0; c0 < numColumns; c0 += strip)
         {
-            const auto lEnd = std::min (lines, l0 + tile);
+            const auto cEnd = std::min (numColumns, c0 + strip);
 
-            for (auto l = l0; l < lEnd; ++l)
+            for (size_t f = 0; f < fadedLines.size(); ++f)
             {
-                const auto* in = byLine.data() + l * static_cast<size_t> (numColumns);
+                const auto* in = byLine.data() + f * static_cast<size_t> (numColumns);
 
                 for (int c = c0; c < cEnd; ++c)
-                {
-                    const auto a = in[c];
-                    amplitudes[static_cast<size_t> (c) * lines + l] = a;
-                    columnPower[static_cast<size_t> (c)] += static_cast<double> (a) * static_cast<double> (a);
-                }
+                    amplitudes[static_cast<size_t> (c) * lines + fadedLines[f]] = in[c];
             }
         }
     }

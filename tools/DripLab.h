@@ -6,7 +6,7 @@
 // frequencies, even if the canvas doesn't have anything drawn down there." This measures it, in
 // the real output, with an analysis that adds nothing of its own:
 //
-//   1. draws seven drawings with something low in them and nothing under it (see dripDrawings);
+//   1. draws eight drawings with something low in them and nothing under it (see dripDrawings);
 //   2. builds each one's plan at Density 256 and plays it with the real ArtEngine, looped, as a
 //      DAW plays it (8 s, 48 kHz);
 //   3. BELOW and ABOVE: an STFT of 65536 points (0.73 Hz a bin) with a 4-term Blackman-Harris
@@ -23,8 +23,10 @@
 //      the drawing's;
 //   5. writes drip.txt (the table, also printed) and, per drawing, what an analyser shows of it:
 //      <name>-hann4096.png and <name>-hann8192.png (Hann, log 20 Hz - 20 kHz, the colours over
-//      -100 .. 0 dBFS at Level -6 dB, as ArtFreq 0.6's live view), <name>-clean8192.png (as the
-//      live view draws it now, see dsp/SpectrumAnalysis.h) and <name>-canvas.png (the drawing).
+//      -100 .. 0 dBFS at Level -6 dB, as ArtFreq 0.6's live view), <name>-hann8192-floor80.png
+//      (the same over -80 .. 0 dBFS), <name>-bh4096.png and <name>-bh8192.png (Blackman-Harris,
+//      -100 .. 0 dBFS: as the canvas and the live view draw it now, see dsp/SpectrumAnalysis.h)
+//      and <name>-canvas.png (the drawing).
 
 struct DripDrawing
 {
@@ -68,6 +70,15 @@ std::vector<DripDrawing> dripDrawings (const Options& options)
         drawings.back().canvas.clear();
         return drawings.back().canvas;
     };
+
+    {
+        // One canvas row: a single steady sine, the simplest thing there is to look clean.
+        auto& canvas = add ("tone", "one canvas row at 100 Hz, 25 - 75 % of the time: a single steady tone");
+        const auto y = static_cast<int> (std::floor (canvasYForHz (100.0)));
+
+        for (int x = Canvas::width / 4; x < Canvas::width * 3 / 4; ++x)
+            canvas.at (x, y) = 1.0f;
+    }
 
     dripFill (add ("block", "a filled block, 60 - 250 Hz, 25 - 75 % of the time"), 60.0, 250.0, 0.25, 0.75);
     dripText (add ("low", "the word LOW in the Low band (40 - 250 Hz)"), "LOW", Band::low);
@@ -451,7 +462,9 @@ int runDripLab (const Options& options)
         written = writePng (dripCanvasPicture (drawing.canvas), file ("-canvas.png")) && written;
         written = writePng (dripPicture (audio, 4096, WindowShape::hann, -100.0f), file ("-hann4096.png")) && written;
         written = writePng (dripPicture (audio, 8192, WindowShape::hann, -100.0f), file ("-hann8192.png")) && written;
-        written = writePng (dripPicture (audio, 8192, WindowShape::blackmanHarris, -90.0f), file ("-clean8192.png")) && written;
+        written = writePng (dripPicture (audio, 8192, WindowShape::hann, -80.0f), file ("-hann8192-floor80.png")) && written;
+        written = writePng (dripPicture (audio, 8192, WindowShape::blackmanHarris, -100.0f), file ("-bh8192.png")) && written;
+        written = writePng (dripPicture (audio, 4096, WindowShape::blackmanHarris, -100.0f), file ("-bh4096.png")) && written;
     }
 
     table << "\nbelow / above     the share of the sound's energy more than a sixth of an octave below the lowest (above the\n"
