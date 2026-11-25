@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # Must be set before project(): the oldest macOS the plug-in will load on.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.15" CACHE STRING "Minimum macOS version")
 
-project(ArtFreq VERSION 0.7.0 LANGUAGES C CXX)
+project(ArtFreq VERSION 0.8.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -103,9 +103,23 @@ list(APPEND ARTFREQ_JUCE_MODULES juce::juce_cryptography)
 #
 # The same processor and editor (PluginProcessor.h: a Variant flag); each target only adds
 # its own createPluginFilter (src/plugin/).
+#
+# Formats: VST3 everywhere, and on macOS an Audio Unit (version 2) as well, for Logic Pro,
+# GarageBand and MainStage, which load no VST3. An Audio Unit's type decides where Logic
+# offers it, as a VST3's category does elsewhere: the instrument is a music device ('aumu',
+# an instrument track's instrument slot), the effect a plain effect ('aufx', an insert on
+# audio tracks, buses and the output). JUCE's default for an effect that takes MIDI would be
+# a music effect ('aumf'), which Logic lists only as a "MIDI-controlled effect" in an
+# instrument slot; a plain effect gets no MIDI from the host, so in Logic ArtFreq FX starts
+# with the transport (Trigger: Transport, the default).
 # ---------------------------------------------------------------------------
+set(ARTFREQ_PLUGIN_FORMATS VST3)
+if(APPLE)
+    list(APPEND ARTFREQ_PLUGIN_FORMATS AU)
+endif()
+
 function(artfreq_add_plugin target)
-    cmake_parse_arguments(ARG "" "PRODUCT_NAME;PLUGIN_CODE;BUNDLE_ID;DESCRIPTION;IS_SYNTH;ENTRY" "VST3_CATEGORIES" ${ARGN})
+    cmake_parse_arguments(ARG "" "PRODUCT_NAME;PLUGIN_CODE;BUNDLE_ID;DESCRIPTION;IS_SYNTH;ENTRY;AU_MAIN_TYPE" "VST3_CATEGORIES" ${ARGN})
 
     juce_add_plugin(${target}
         VERSION                     ${PROJECT_VERSION}
@@ -114,7 +128,7 @@ function(artfreq_add_plugin target)
         BUNDLE_ID                   "${ARG_BUNDLE_ID}"
         PLUGIN_MANUFACTURER_CODE    Anym
         PLUGIN_CODE                 ${ARG_PLUGIN_CODE}
-        FORMATS                     VST3
+        FORMATS                     ${ARTFREQ_PLUGIN_FORMATS}
         PRODUCT_NAME                "${ARG_PRODUCT_NAME}"
         DESCRIPTION                 "${ARG_DESCRIPTION}"
         IS_SYNTH                    ${ARG_IS_SYNTH}
@@ -123,6 +137,7 @@ function(artfreq_add_plugin target)
         IS_MIDI_EFFECT              FALSE
         EDITOR_WANTS_KEYBOARD_FOCUS TRUE
         VST3_CATEGORIES             ${ARG_VST3_CATEGORIES}
+        AU_MAIN_TYPE                ${ARG_AU_MAIN_TYPE}
         COPY_PLUGIN_AFTER_BUILD     ${ARTFREQ_COPY_PLUGIN_AFTER_BUILD})
 
     target_sources(${target} PRIVATE
@@ -150,6 +165,7 @@ artfreq_add_plugin(ArtFreq
     DESCRIPTION     "Draw text, images and brush strokes into the spectrogram"
     IS_SYNTH        TRUE
     VST3_CATEGORIES Instrument Generator
+    AU_MAIN_TYPE    kAudioUnitType_MusicDevice
     ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/ArtFreqEntry.cpp)
 
 artfreq_add_plugin(ArtFreqFX
@@ -159,6 +175,7 @@ artfreq_add_plugin(ArtFreqFX
     DESCRIPTION     "Carve text, images and brush strokes into the spectrogram of a song"
     IS_SYNTH        FALSE
     VST3_CATEGORIES Fx Filter
+    AU_MAIN_TYPE    kAudioUnitType_Effect
     ENTRY           ${CMAKE_CURRENT_SOURCE_DIR}/src/plugin/ArtFreqFXEntry.cpp)
 
 # Definitions the plug-in wrapper normally provides, for the console apps that compile the

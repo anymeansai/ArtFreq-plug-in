@@ -4,15 +4,17 @@
 #   installer/macos/build-pkg.sh <build-dir> <output-dir> [version]
 #
 # Produces <output-dir>/ArtFreq-<version>-macOS.pkg: a standard Apple installer with a welcome
-# page, the licence, and a conclusion page with the first steps. It installs both plug-ins into
-# /Library/Audio/Plug-Ins/VST3 (ArtFreq.vst3, the instrument, and "ArtFreq FX.vst3", the effect;
-# each is a choice of its own, both on by default), then offers to move the downloaded installer
-# to the Trash. The version defaults to the one in CMakeLists.txt (project(ArtFreq VERSION x.y.z)).
+# page, the licence, and a conclusion page with the first steps. It installs both plug-ins
+# (ArtFreq, the instrument, and "ArtFreq FX", the effect; each is a choice of its own, both on by
+# default), each in both formats: the VST3 into /Library/Audio/Plug-Ins/VST3 and the Audio Unit
+# (.component, for Logic Pro and GarageBand) into /Library/Audio/Plug-Ins/Components. Then it
+# offers to move the downloaded installer to the Trash. The version defaults to the one in
+# CMakeLists.txt (project(ArtFreq VERSION x.y.z)).
 #
 # <build-dir> is a CMake build folder with a Release build of the ArtFreq and ArtFreqFX targets,
-# i.e. one that contains ArtFreq_artefacts/Release/VST3/ArtFreq.vst3 and
-# ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3. macOS only (pkgbuild, productbuild). The
-# package is not signed with a Developer ID or notarised.
+# i.e. one that contains ArtFreq_artefacts/Release/VST3/ArtFreq.vst3, .../AU/ArtFreq.component,
+# ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3 and .../AU/ArtFreq FX.component. macOS only
+# (pkgbuild, productbuild). The package is not signed with a Developer ID or notarised.
 set -euo pipefail
 
 USAGE="usage: build-pkg.sh <build-dir> <output-dir> [version]"
@@ -39,17 +41,27 @@ fi
 # Digits and dots only: the version also goes into file names and through sed below.
 [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+)*$ ]] || die "could not determine a version (got '$VERSION')"
 
-# The two plug-ins: bundle name (it has a space in the effect's), CMake target, package id.
+# The two plug-ins: bundle name (it has a space in the effect's), CMake target, package id's stem.
 PLUGINS=(
-    "ArtFreq|ArtFreq|com.anymeans.artfreq.vst3"
-    "ArtFreq FX|ArtFreqFX|com.anymeans.artfreqfx.vst3"
+    "ArtFreq|ArtFreq|com.anymeans.artfreq"
+    "ArtFreq FX|ArtFreqFX|com.anymeans.artfreqfx"
+)
+
+# The two formats of each: the build's folder, the bundle's extension, the end of the package's
+# id and file name, and where it is installed.
+FORMATS=(
+    "VST3|vst3|vst3|/Library/Audio/Plug-Ins/VST3"
+    "AU|component|au|/Library/Audio/Plug-Ins/Components"
 )
 
 for entry in "${PLUGINS[@]}"; do
     IFS='|' read -r NAME TARGET _ <<< "$entry"
-    PLUGIN="$BUILD_DIR/${TARGET}_artefacts/Release/VST3/$NAME.vst3"
-    [ -f "$PLUGIN/Contents/MacOS/$NAME" ] || die "missing plug-in: $PLUGIN (build the $TARGET target in Release first)"
-    [ -f "$PLUGIN/Contents/Info.plist" ] || die "not a complete bundle (no Info.plist): $PLUGIN"
+    for format in "${FORMATS[@]}"; do
+        IFS='|' read -r FOLDER EXTENSION _ _ <<< "$format"
+        PLUGIN="$BUILD_DIR/${TARGET}_artefacts/Release/$FOLDER/$NAME.$EXTENSION"
+        [ -f "$PLUGIN/Contents/MacOS/$NAME" ] || die "missing plug-in: $PLUGIN (build the $TARGET target in Release first)"
+        [ -f "$PLUGIN/Contents/Info.plist" ] || die "not a complete bundle (no Info.plist): $PLUGIN"
+    done
 done
 
 WORK="$(mktemp -d)"
@@ -62,19 +74,24 @@ plist_set_false()
         || /usr/libexec/PlistBuddy -c "Add $2 bool false" "$1"
 }
 
-# One component package per plug-in, so the installer can offer each as a choice.
+# One component package per plug-in and format (the installer offers each plug-in as a choice,
+# which installs both of its formats).
 for entry in "${PLUGINS[@]}"; do
-    IFS='|' read -r NAME TARGET IDENTIFIER <<< "$entry"
-    PLUGIN="$BUILD_DIR/${TARGET}_artefacts/Release/VST3/$NAME.vst3"
+  for format in "${FORMATS[@]}"; do
+    IFS='|' read -r NAME TARGET IDENTIFIER_STEM <<< "$entry"
+    IFS='|' read -r FOLDER EXTENSION SUFFIX LOCATION <<< "$format"
+    PLUGIN="$BUILD_DIR/${TARGET}_artefacts/Release/$FOLDER/$NAME.$EXTENSION"
+    IDENTIFIER="$IDENTIFIER_STEM.$SUFFIX"
+    PACKAGE="$TARGET-$SUFFIX"   # ArtFreq-vst3.pkg, ArtFreqFX-au.pkg, ... (distribution.xml)
 
-    ROOT="$WORK/root-$TARGET"   # becomes /Library/Audio/Plug-Ins/VST3
+    ROOT="$WORK/root-$PACKAGE"   # becomes $LOCATION
     mkdir -p "$ROOT"
     # The payload's top folder stands for the install location, and its permissions can end up on
-    # /Library/Audio/Plug-Ins/VST3: make sure it is a normal 755 folder whatever the umask.
+    # that folder: make sure it is a normal 755 folder whatever the umask.
     chmod 755 "$ROOT"
 
     # ---- the plug-in --------------------------------------------------------------------------
-    STAGED="$ROOT/$NAME.vst3"
+    STAGED="$ROOT/$NAME.$EXTENSION"
     ditto "$PLUGIN" "$STAGED"
     # Extended attributes (quarantine, provenance) do not belong in an installer payload.
     xattr -cr "$STAGED"
@@ -93,10 +110,10 @@ for entry in "${PLUGINS[@]}"; do
     fi
 
     # ---- its component package ----------------------------------------------------------------
-    # Always install into the system VST3 folder: mark the bundle non-relocatable, so the
+    # Always install into the system plug-in folder: mark the bundle non-relocatable, so the
     # installer never "updates" a stray copy found elsewhere on the disk instead, and not
     # version-checked, so it can install over any other version (older or newer).
-    PLIST="$WORK/$TARGET.plist"
+    PLIST="$WORK/$PACKAGE.plist"
     pkgbuild --analyze --root "$ROOT" "$PLIST" > /dev/null
 
     entries=0
@@ -107,12 +124,13 @@ for entry in "${PLUGINS[@]}"; do
     done
     # Only bundles can be relocated, so if pkgbuild did not see one there is nothing to switch off.
     if [ "$entries" -eq 0 ]; then
-        echo "warning: pkgbuild did not list $NAME.vst3 as a bundle; it will be installed as plain files." >&2
+        echo "warning: pkgbuild did not list $NAME.$EXTENSION as a bundle; it will be installed as plain files." >&2
     fi
 
     pkgbuild --root "$ROOT" --component-plist "$PLIST" \
              --identifier "$IDENTIFIER" --version "$VERSION" \
-             --install-location "/Library/Audio/Plug-Ins/VST3" "$WORK/pkgs/$TARGET.pkg"
+             --install-location "$LOCATION" "$WORK/pkgs/$PACKAGE.pkg"
+  done
 done
 
 # The last step: no files, only the postinstall script. Copied so its permissions do not depend

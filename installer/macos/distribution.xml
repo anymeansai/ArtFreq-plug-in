@@ -11,7 +11,8 @@
     <conclusion file="conclusion.html" mime-type="text/html"/>
 
     <!-- One plug-in, registered twice: hosts offer an instrument only on MIDI tracks and an
-         effect only on audio tracks, so both are installed by default. -->
+         effect only on audio tracks, so both are installed by default. Each choice installs
+         its plug-in in both formats: the VST3, and the Audio Unit for Logic Pro and GarageBand. -->
     <choices-outline>
         <line choice="vst3"/>
         <line choice="fx"/>
@@ -19,12 +20,14 @@
     </choices-outline>
 
     <choice id="vst3" title="ArtFreq (instrument)" start_selected="true"
-            description="ArtFreq, the instrument by AnyMeans, for MIDI and instrument tracks: it plays the drawing. For Ableton Live, FL Studio, Reaper, Cubase, Studio One, Bitwig and other VST3 hosts. Installed in /Library/Audio/Plug-Ins/VST3.">
+            description="ArtFreq, the instrument by AnyMeans, for MIDI and instrument tracks: it plays the drawing. As a VST3 for Ableton Live, FL Studio, Reaper, Cubase, Studio One, Bitwig and other VST3 hosts, and as an Audio Unit for Logic Pro and GarageBand. Installed in /Library/Audio/Plug-Ins/VST3 and /Library/Audio/Plug-Ins/Components.">
         <pkg-ref id="com.anymeans.artfreq.vst3"/>
+        <pkg-ref id="com.anymeans.artfreq.au"/>
     </choice>
     <choice id="fx" title="ArtFreq FX (audio effect)" start_selected="true"
-            description="ArtFreq FX, the same plug-in as an audio effect, for audio tracks, buses and the master: it carves the drawing into the song (or plays it on top). Installed in /Library/Audio/Plug-Ins/VST3.">
+            description="ArtFreq FX, the same plug-in as an audio effect, for audio tracks, buses and the master: it carves the drawing into the song (or plays it on top). As a VST3 and as an Audio Unit (Logic Pro, GarageBand). Installed in /Library/Audio/Plug-Ins/VST3 and /Library/Audio/Plug-Ins/Components.">
         <pkg-ref id="com.anymeans.artfreqfx.vst3"/>
+        <pkg-ref id="com.anymeans.artfreqfx.au"/>
     </choice>
     <!-- Hidden, always on: a payload-free package whose postinstall offers to move the
          downloaded installer to the Trash. It is listed last so it runs last. -->
@@ -32,7 +35,9 @@
         <pkg-ref id="com.anymeans.artfreq.finish"/>
     </choice>
 
-    <pkg-ref id="com.anymeans.artfreq.vst3"   version="@VERSION@" onConclusion="none">ArtFreq.pkg</pkg-ref>
-    <pkg-ref id="com.anymeans.artfreqfx.vst3" version="@VERSION@" onConclusion="none">ArtFreqFX.pkg</pkg-ref>
+    <pkg-ref id="com.anymeans.artfreq.vst3"   version="@VERSION@" onConclusion="none">ArtFreq-vst3.pkg</pkg-ref>
+    <pkg-ref id="com.anymeans.artfreq.au"     version="@VERSION@" onConclusion="none">ArtFreq-au.pkg</pkg-ref>
+    <pkg-ref id="com.anymeans.artfreqfx.vst3" version="@VERSION@" onConclusion="none">ArtFreqFX-vst3.pkg</pkg-ref>
+    <pkg-ref id="com.anymeans.artfreqfx.au"   version="@VERSION@" onConclusion="none">ArtFreqFX-au.pkg</pkg-ref>
     <pkg-ref id="com.anymeans.artfreq.finish" version="@VERSION@" onConclusion="none">finish.pkg</pkg-ref>
 </installer-gui-script>

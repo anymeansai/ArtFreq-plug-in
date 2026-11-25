@@ -2,7 +2,7 @@
 
 **by AnyMeans**
 
-A plug-in (VST3, for macOS and Windows) that turns text, pictures and brush strokes into sound whose **spectrogram shows them**. Put it on an instrument track, open a spectrogram such as MiniMeters on its output, press play, and your drawing scrolls past.
+A plug-in (VST3 for macOS and Windows, and an Audio Unit for Logic Pro and GarageBand on macOS) that turns text, pictures and brush strokes into sound whose **spectrogram shows them**. Put it on an instrument track, open a spectrogram such as MiniMeters on its output, press play, and your drawing scrolls past.
 
 **Renamed in 0.4:** ArtFreq and ArtFreq FX were called FreqArt and FreqArt FX before. Old projects keep working (they open with the renamed plug-ins); after updating, rescan plug-ins in your DAW.
 
@@ -224,7 +224,7 @@ Downloads are on the repository's **Releases** page, under **Assets**: an instal
 
 ### macOS: installer
 
-Download `ArtFreq-<version>-macOS.pkg` and open it. It installs both plug-ins, `ArtFreq.vst3` (the instrument) and `ArtFreq FX.vst3` (the effect), into `/Library/Audio/Plug-Ins/VST3/` (**Customize** can leave one out). Then rescan plug-ins in your DAW. It runs on Apple Silicon and Intel Macs with macOS 10.15 or later.
+Download `ArtFreq-<version>-macOS.pkg` and open it. It installs both plug-ins, `ArtFreq.vst3` (the instrument) and `ArtFreq FX.vst3` (the effect), into `/Library/Audio/Plug-Ins/VST3/`, and their Audio Units (`ArtFreq.component`, `ArtFreq FX.component`, for Logic Pro and GarageBand) into `/Library/Audio/Plug-Ins/Components/` (**Customize** can leave one plug-in out). Then rescan plug-ins in your DAW; in Logic Pro they are under AU Instruments > AnyMeans and Audio Units > AnyMeans (if they are missing, restart the Mac once). In Logic Pro and GarageBand ArtFreq FX starts with the transport: a host sends an effect Audio Unit no MIDI notes, so Trigger: MIDI needs a VST3 host. It runs on Apple Silicon and Intel Macs with macOS 10.15 or later.
 
 The installer is not notarised by Apple, so macOS will not open it with a double-click the first time:
 
@@ -299,7 +299,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
 ```
 
-The plug-ins are written to `build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3` (target `ArtFreq`) and `build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3` (target `ArtFreqFX`; mind the space when you script it). For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring. On Windows the same two commands use Visual Studio's generator (add `-A x64` when configuring to be sure of a 64-bit build); each `.vst3` is a folder with the plug-in itself at `Contents/x86_64-win/<name>.vst3`, and the C runtime is linked in, so it needs no Visual C++ redistributable.
+The plug-ins are written to `build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3` (target `ArtFreq`) and `build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3` (target `ArtFreqFX`; mind the space when you script it); on macOS the Audio Units are built next to them, in `.../Release/AU/ArtFreq.component` and `.../Release/AU/ArtFreq FX.component`. For a universal binary (Apple Silicon and Intel), as released, add `-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"` when configuring. On Windows the same two commands use Visual Studio's generator (add `-A x64` when configuring to be sure of a 64-bit build); each `.vst3` is a folder with the plug-in itself at `Contents/x86_64-win/<name>.vst3`, and the C runtime is linked in, so it needs no Visual C++ redistributable.
 
 | CMake option | Default | Purpose |
 | --- | --- | --- |

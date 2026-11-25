@@ -1,7 +1,8 @@
 #!/bin/bash
-# Final step of the ArtFreq installer (by AnyMeans). Runs as root once ArtFreq.vst3 is in
-# /Library/Audio/Plug-Ins/VST3: removes the old FreqArt bundles it replaces, and offers to move
-# the downloaded installer to the Trash.
+# Final step of the ArtFreq installer (by AnyMeans). Runs as root once the plug-ins are in
+# /Library/Audio/Plug-Ins/VST3 and /Library/Audio/Plug-Ins/Components: removes the old FreqArt
+# bundles they replace, makes macOS look for the new Audio Units, and offers to move the
+# downloaded installer to the Trash.
 #
 # Nothing here may fail the installation: the plug-in is already in place, so every step is
 # optional and the script always exits 0 (which is also why it does not use set -e).
@@ -17,6 +18,14 @@ for pair in "FreqArt|ArtFreq" "FreqArt FX|ArtFreq FX"; do
         rm -rf "$VST3_DIR/$OLD_NAME.vst3" || true
     fi
 done
+
+# macOS keeps a list of the installed Audio Units and may not notice new ones until the next
+# login: its registrar is restarted here (it starts again by itself), so Logic Pro and
+# GarageBand find ArtFreq the next time they are opened.
+if [ -d "${3%/}/Library/Audio/Plug-Ins/Components/ArtFreq.component" ] \
+    || [ -d "${3%/}/Library/Audio/Plug-Ins/Components/ArtFreq FX.component" ]; then
+    killall -9 AudioComponentRegistrar > /dev/null 2>&1 || true
+fi
 
 # Graphical installs only: `sudo installer -pkg ...` (and management tools) set
 # COMMAND_LINE_INSTALL, and there is nobody to ask.

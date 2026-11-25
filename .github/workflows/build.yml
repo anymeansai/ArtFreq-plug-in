@@ -172,6 +172,8 @@ jobs:
           for binary in \
             "build/ArtFreq_artefacts/Release/VST3/ArtFreq.vst3/Contents/MacOS/ArtFreq" \
             "build/ArtFreqFX_artefacts/Release/VST3/ArtFreq FX.vst3/Contents/MacOS/ArtFreq FX" \
+            "build/ArtFreq_artefacts/Release/AU/ArtFreq.component/Contents/MacOS/ArtFreq" \
+            "build/ArtFreqFX_artefacts/Release/AU/ArtFreq FX.component/Contents/MacOS/ArtFreq FX" \
             "build/ArtFreqTests_artefacts/Release/ArtFreqTests" \
             "build/ArtFreqSnapshot_artefacts/Release/ArtFreqSnapshot"; do
             lipo -info "$binary"
@@ -249,6 +251,14 @@ jobs:
             if [ ! -f "$plugin/Contents/Resources/moduleinfo.json" ]; then
               echo "::warning::$plugin has no Contents/Resources/moduleinfo.json; VST 3.7.5+ hosts scan it more slowly."
             fi
+            codesign --force --sign - "$plugin"
+            codesign --verify --strict --verbose=2 "$plugin"
+          done
+          # The Audio Units (Logic Pro, GarageBand): an Apple Silicon Mac loads no unsigned code.
+          for plugin in \
+            "build/ArtFreq_artefacts/Release/AU/ArtFreq.component" \
+            "build/ArtFreqFX_artefacts/Release/AU/ArtFreq FX.component"; do
+            test -f "$plugin/Contents/Info.plist"
             codesign --force --sign - "$plugin"
             codesign --verify --strict --verbose=2 "$plugin"
           done
@@ -434,6 +444,40 @@ jobs:
           }
           check_installed "ArtFreq" ArtFreq com.anymeans.artfreq.vst3
           check_installed "ArtFreq FX" ArtFreqFX com.anymeans.artfreqfx.vst3
+
+          # The Audio Units, as Logic Pro meets them: installed in the system's Components folder,
+          # found by the system's registry of Audio Units (restarted, so it looks at the folder
+          # now) and passed by auval, Apple's validation tool, which Logic runs on every Audio Unit
+          # before it offers it. The instrument is a music device (aumu), the effect a plain effect
+          # (aufx), so Logic lists it as an insert for audio tracks, buses and the output. Then
+          # pluginval on the installed components, as on the VST3s.
+          check_installed_au()
+          {
+            local name="$1" target="$2" package="$3" type="$4" code="$5"
+            local installed="/Library/Audio/Plug-Ins/Components/$name.component"
+            test -d "$installed"
+            test -f "$installed/Contents/MacOS/$name"
+            cmp "$installed/Contents/MacOS/$name" "build/${target}_artefacts/Release/AU/$name.component/Contents/MacOS/$name"
+            codesign --verify --strict "$installed"
+            pkgutil --pkg-info "$package"
+            # The registry can take a moment to list a component that was just installed.
+            local passed=false
+            for attempt in 1 2 3; do
+              if auval -v "$type" "$code" Anym > "auval-$code.log" 2>&1; then passed=true; break; fi
+              echo "::warning::auval $type $code Anym failed (attempt $attempt of 3)."
+              tail -n 40 "auval-$code.log"
+              killall -9 AudioComponentRegistrar 2> /dev/null || true
+              sleep 10
+            done
+            if [ "$passed" != true ]; then cat "auval-$code.log"; exit 1; fi
+            tail -n 12 "auval-$code.log"
+            grep -q "AU VALIDATION SUCCEEDED" "auval-$code.log"
+            "./${{ matrix.pluginval_bin }}" --strictness-level 10 --validate-in-process --output-dir pluginval-logs --validate "$installed"
+          }
+          killall -9 AudioComponentRegistrar 2> /dev/null || true
+          sleep 5
+          check_installed_au "ArtFreq" ArtFreq com.anymeans.artfreq.au aumu FqAr
+          check_installed_au "ArtFreq FX" ArtFreqFX com.anymeans.artfreqfx.au aufx FqFx
 
       - name: Upload macOS installer
         if: runner.os == 'macOS'
@@ -676,11 +720,15 @@ jobs:
           cat > notes.md <<EOF
           ArtFreq $version by AnyMeans, built from commit ${GITHUB_SHA::7}. Turns text, pictures and brush strokes into sound whose spectrogram shows them, as two VST3 plug-ins from the same code: **ArtFreq**, an instrument for MIDI / instrument tracks that plays the drawing, and **ArtFreq FX**, an audio effect for audio tracks, buses and the master that carves the drawing into the song (Carve), keeps only it (Stencil), plays it in a hole carved for it (Carve + Draw) or plays it on top (Draw).
 
-          **macOS** (10.15 or later, Apple Silicon and Intel): download \`ArtFreq-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`. Or by hand: unzip \`ArtFreq-VST3-macOS.zip\` and copy both into \`~/Library/Audio/Plug-Ins/VST3\`; if your DAW will not load them, run \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 ~/Library/Audio/Plug-Ins/VST3/ArtFreq\\ FX.vst3\` once.
+          **macOS** (10.15 or later, Apple Silicon and Intel): download \`ArtFreq-$version-macOS.pkg\` and open it. It is not notarised by Apple, so the first time right-click it and choose **Open**, or (macOS 15 and later) try to open it, then go to **System Settings > Privacy & Security** and click **Open Anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`/Library/Audio/Plug-Ins/VST3\`, and their Audio Units for Logic Pro and GarageBand (\`ArtFreq.component\`, \`ArtFreq FX.component\`) into \`/Library/Audio/Plug-Ins/Components\`. Or by hand: unzip \`ArtFreq-VST3-macOS.zip\` and copy both into \`~/Library/Audio/Plug-Ins/VST3\`; if your DAW will not load them, run \`xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/ArtFreq.vst3 ~/Library/Audio/Plug-Ins/VST3/ArtFreq\\ FX.vst3\` once.
 
           **Windows** (10 or 11, 64-bit): download \`ArtFreq-$version-Windows.exe\` and run it. It is not code-signed, so your browser may warn that it is not commonly downloaded (keep it; in Edge: **...** > **Keep**, then **Show more** > **Keep anyway**), and Windows SmartScreen may say "Windows protected your PC": click **More info**, then **Run anyway**. It installs \`ArtFreq.vst3\` and \`ArtFreq FX.vst3\` into \`C:\Program Files\Common Files\VST3\` (replacing any earlier ArtFreq, or FreqArt, there) and can be removed again under **Settings > Apps**. Or by hand: right-click \`ArtFreq-VST3-Windows.zip\`, choose **Extract All**, close your DAW and copy both folders into \`C:\Program Files\Common Files\VST3\` (\`How to install.txt\` in the zip says how). **Ableton Live** finds them only with **Use VST3 Plug-In System Folders** on (Preferences > Plug-ins; Settings > Plug-ins in Live 12), then **Rescan**.
 
-          Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects. Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
+          Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects (in Logic Pro: AU Instruments > AnyMeans, and Audio Units > AnyMeans in an audio track's or the output's effect slots). Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
+
+          **New in 0.8**
+          - **Audio Units for Logic Pro and GarageBand** (macOS): the installer now also puts ArtFreq (an instrument) and ArtFreq FX (an effect for audio tracks, buses and the output) into \`/Library/Audio/Plug-Ins/Components\`. Both pass Apple's validation (auval). If Logic does not list them, restart the Mac once, or rescan in Logic's Plug-in Manager.
+          - In Logic Pro and GarageBand, ArtFreq FX starts with the transport (Trigger: Transport, the default): a host sends an effect Audio Unit no MIDI notes, so Trigger: MIDI needs a VST3 host there.
 
           **New in 0.7**
           - **Clean lows.** Nothing is played below (or beside) what you drew any more: the "drip" under low text, pictures and strokes is gone. Smooth lows now use steady tones placed only where the drawing is, instead of gliding ones, and low shapes fade in and out gently instead of clicking.
