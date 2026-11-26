@@ -1056,7 +1056,9 @@ while visible.
 
 - **Layers** (always with nothing selected): title "Layers" with a summary ("5 objects, 1 hidden");
   buttons "Add text", "Add image..."; the layer list; a one-line hint ("Double-click to edit,
-  drag to reorder"); then the Keys (shortcut caps) while they fit under the list, or the brush
+  drag to reorder"); then the Keys (shortcut caps: Delete, Arrows, Shift-drag on one axis,
+  Shift-corner keeping the proportions, [ ] turning 15 degrees, Alt-click, Esc, Double-click)
+  while they fit under the list, or the brush
   settings mirrored when Brush/Erase is active; at the foot, always in the same place, **Lows**: a
   caps label and a segmented Smooth | Stripes (168 px, 28 tall, right-aligned, 13 px under a
   hairline; its tooltip says what each does). Lows belongs to the whole drawing, neither to an
@@ -1264,7 +1266,10 @@ after each change the canvas shows the real sound, as the analyser will); choose
 play in the DAW (it plays once from wherever you start; Preview plays it with the DAW stopped);
 Trigger modes and Repeat explained (once on play or from a bar, loops with Repeat; stop the DAW
 and it stops); bounce to WAV. Layers: the list (select, settings, reorder, hide) and
-overlapping objects (Alt-click or click again, the right-click menu). Plus tips: highs show the
+overlapping objects (Alt-click or click again, the right-click menu), turning and resizing (the
+round handle, Shift's 15 degree steps, Shift-drag a corner to keep the proportions; ArtFreq FX's
+step 3 says a click on an object lets it be changed or turned, the rest is in the Rotation and
+Shape tooltips there). Plus tips: highs show the
 sharpest detail; the lows are blurry in every analyser (the canvas shows it); Lows (Smooth fills shapes
 below about 2 kHz, Stripes plays separate lines there); raise Density for solid shapes, lower for
 a scan-line look. Shortcuts, with "Space: plays your DAW (a space while you type)". Across the
