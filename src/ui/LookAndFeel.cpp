@@ -181,9 +181,23 @@ void ArtFreqLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int 
         auto filled = bounds;
 
         if (style == juce::Slider::LinearBar)
-            filled.setRight (sliderPos);
+        {
+            // A range either side of 0 (a rotation) fills from 0 to the value.
+            if (slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0)
+            {
+                const auto zero = static_cast<float> (slider.getPositionOfValue (0.0));
+                filled.setLeft (juce::jmin (zero, sliderPos));
+                filled.setRight (juce::jmax (zero, sliderPos));
+            }
+            else
+            {
+                filled.setRight (sliderPos);
+            }
+        }
         else
+        {
             filled.setTop (sliderPos);
+        }
 
         const auto colour = enabled ? theme::accent : theme::textFaint;
 

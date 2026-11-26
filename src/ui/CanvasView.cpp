@@ -1813,7 +1813,9 @@ CanvasView::CanvasView (ArtFreqProcessor& processor, EditorState& state)
     setKeepsKeyFocus (*this);   // Delete, the arrows and Esc act on the selection from here
     setTitle ("Canvas");
     setDescription ("The drawing: time across, frequency up. Click an object to select it; Alt-click, or click "
-                    "again, for the one underneath; right-click for its menu.");
+                    "again, for the one underneath; right-click for its menu. Drag the round handle above the "
+                    "selection to turn it (Shift: 15 degree steps; [ and ] too); Shift-drag a corner to keep the "
+                    "proportions.");
 
     processor.addChangeListener (this);
     state.addChangeListener (this);

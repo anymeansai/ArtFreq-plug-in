@@ -21,9 +21,28 @@ code is also built as **ArtFreq FX**, an audio effect that carves the drawing in
    Objects are kept back to front; the order decides which one a click on the canvas picks where
    they overlap (never the sound: layers combine by their maximum). Any object, and the paint
    layer, can be hidden: it stays in the drawing and is saved with it, but is silent (documents
-   from before this load with everything shown).
+   from before this load with everything shown). An object can be **turned** (`rotation`,
+   degrees clockwise on screen, -180..180, saved only when it is not 0, so documents from before
+   load upright and upright objects save as before): its placement stays the unrotated box, and
+   its content is fitted to that box as always and then turned about the box's centre **in
+   display space**: x scaled by `ArtDocument::displayAspect`, turned, scaled back
+   (`rotationTransform`). displayAspect is ArtFreq's drawing area at its default size, 764 x 462
+   logical pixels (1.654); the window scales uniformly, so it is the instrument's at every size,
+   and one constant for both plug-ins keeps a drawing identical in both and independent of the
+   window. ArtFreq FX shows the canvas at other proportions (652 x 300, 2.17; 652 x 268, 2.43 with
+   the Sound strip; about 1.4 when the canvas moves beside the drawer), so there a turned box is a
+   parallelogram on screen and a 1:1 picture is stretched by the same factor as everything else on
+   that canvas (31 % / 47 % wider, 15 % narrower). Picture shapes (the inspector's Shape) are
+   display aspects in the same space.
 3. **The compositor** (`core/Compositor.h`) flattens the document into a 1024 x 1024 canvas of
-   loudness values 0..1 (max of all shown layers).
+   loudness values 0..1 (max of all shown layers). A turned text is its path, fitted to the box
+   and then turned (the outline style stroked after the turn); a turned picture is resampled to
+   the grid of canvas pixels its turned sides span (area-averaged or bilinear, as upright) and
+   then read bilinearly at each canvas pixel's centre taken back into the box, which anti-aliases
+   its edges. Content that leaves the canvas is clipped. An upright object takes the code path it
+   always did: the canvas is bit for bit the same as before rotation (a test compares hashes
+   taken at that commit). The plan, ArtFreq FX's masks, the fast preview and the measured preview
+   all start from this canvas, so they follow a turn with no code of their own.
 4. **The plan** (`core/ArtPlan.h`) turns the canvas into a bank of sine "lines". Density =
    number of lines across the canvas height (few = scan lines, many = solid); lines closer than
    25 Hz are merged, and every canvas row plays on its nearest line. Each line's amplitude per
@@ -973,6 +992,22 @@ focus/active = accent outline or fill. Hover states on everything clickable.
   so it can be moved even where another lies over it; else the front-most shown object whose
   rectangle contains the point); selected object shows its rectangle (1 px accent) and 8
   handles; drag inside to move, drag a handle to resize, click empty canvas to deselect.
+  A turned object's outline, handles, hit testing (a click, Alt-click, the hover cursor) and
+  moves use its turned box; a resize happens in the object's own frame (the mouse's movement
+  turned back into it, the dragged edges moved there, the new centre turned out again), so the
+  opposite edge or corner stays put on screen; the resize cursors follow the turn. **Rotate
+  handle**: a 4.5 px knob on a 16 px stem off the middle of the (turned) top edge; below the
+  bottom edge, or else just inside the top edge, where that would leave the view. Dragging it
+  turns the object by the angle the mouse goes round the box's centre, measured in display
+  space (so grabbing it off its middle does not jump); Shift snaps to 15 degrees; one undo step
+  per drag; a four-way move cursor; a small tag shows the angle while turning. [ and ] turn the
+  selection 15 degrees (Shift: 1), presses less than 1 s apart being one undo step, only while
+  the canvas has the keyboard focus. **Shift while resizing** keeps the box's shape: a corner
+  scales it from the opposite corner, following the axis the mouse moved along more; an edge
+  scales it about the middle of that edge (both sides follow); letting go of Shift mid-drag
+  resizes freely again. Upright, it stops where the box would leave the canvas (or where it
+  already was); turned, the box's centre stays on the canvas. The frequency read-outs and the
+  Band describe the unrotated box. Shift while moving still keeps to one axis.
   Alt/Option-click, or clicking again on the same spot without moving the mouse in between,
   picks the next object down under the mouse (round to the front again; on release, so a press
   and drag still moves the selection). Right-click on an object selects it and opens its menu:
@@ -990,10 +1025,12 @@ focus/active = accent outline or fill. Hover states on everything clickable.
 - New text and pictures ("Add text", "Add image...") go where no object is yet: the mid band
   across the length (4 % to 96 %), else the high or low band, else half the length in one of
   them; if all of that is taken, never exactly on top of another object (the start moves along).
+  A picture keeps that band's height and takes the length its own proportions ask for (at most
+  the spot's), centred in the spot, so it is not stretched and still sits exactly on its band.
 - **Brush / Erase**: paint with the toolbar's Size (2..64 px, screen), Softness (0..100 %),
   Strength (0..100 %). A circular cursor preview shows the brush. One stroke = one undo step.
 - Drop an image file onto the canvas to add it as a picture where it was dropped (in the band
-  under the cursor). Pictures: PNG, JPEG, GIF, and on a Mac also HEIC, WebP, TIFF and BMP (macOS
+  under the cursor, in its own proportions at that height, at most 92 % of the length). Pictures: PNG, JPEG, GIF, and on a Mac also HEIC, WebP, TIFF and BMP (macOS
   decodes them). A file that cannot be read shows a short message over the bottom of the canvas
   for a few seconds.
 - Empty state (no objects, nothing painted): centred hint "Add text, drop an image, or paint
@@ -1052,12 +1089,23 @@ while visible.
   art font has no glyph: see TextRaster.cpp); Font (combo of art fonts); Style (segmented Solid | Outline); **Band** (segmented
   Low | Mid | High | Full, highlights the matching band if the object sits exactly on it);
   Position: "Fill length" button (sets time 4 %..96 %); Intensity slider (0..100 %; a drag, or a
-  run of mouse-wheel steps without a 1 s pause, is one undo step); Delete button.
+  run of mouse-wheel steps without a 1 s pause, is one undo step) and beside it Rotation (a bar
+  over -180..180 degrees, filled from 0, double-click for 0, the same undo steps; its tooltip
+  names the canvas handle and Shift's 15 degrees); Delete button. In ArtFreq FX's drawer Font and
+  Style share a row (their names say what they are), which leaves a row for Rotation.
 - Image selected: title "Image"; thumbnail of the processed result; Mode (segmented Auto |
   Original | Negative | Outline | B&W, short labels in ArtFreq FX's narrow drawer, with Auto
   showing what it picked, e.g. "Auto (Negative)"; B&W thresholds the Auto-resolved picture at
   Otsu's level into loud or silent, see ImageProcessing.h);
-  Clean-up slider (0..90 %); Band; Fill length; Intensity; "Replace..."; Delete.
+  Clean-up slider (0..90 %) and beside it **Shape** (a menu: Free, which is not a choice but says
+  the box has none of the shapes, Original, 1:1, 4:3, 3:4, 16:9, 9:16; showing the one the box
+  has within 2 %, Original first): a one-shot reshape of the box in display space about its
+  centre, keeping its area (the geometric mean of its sides), shrunk about the centre to stay on
+  the canvas (to half its size at most, then moved in), one undo step, no state kept; Band; Fill
+  length; Intensity and Rotation; "Replace..." (keeps the box, unless it had the old picture's
+  own proportions: then the new picture's); Delete. In ArtFreq FX's drawer the thumbnail sits in
+  the captions' column beside Shape and Rotation (in a drawer too short for that, both strips
+  there, the thumbnail is left out and the two share a row).
 - Frequency read-out of the selected object ("3.5 kHz - 16 kHz") in mono.
 
 ### Footer
@@ -1387,7 +1435,17 @@ deactivations per key in a period (say three in 30 days), then support.
 ## Tests
 
 `ArtFreqTests` (no host): scale maths; document round trip; image modes (auto-invert on a white
-background, transparency, outline); text rendering coverage; compositor placement; plan
+background, transparency, outline); text rendering coverage; compositor placement; turning and
+shapes (`TransformTests.cpp`: the angle saved, loaded and normalised, drawings from before it
+upright; upright objects drawn bit for bit as before rotation, against hashes of the canvas taken
+at that commit on Linux x86-64; a bar turned 90 degrees standing where it should, text and
+picture; the plan, ArtFreq FX's masks, the fast and the measured previews following it; the
+shapes' aspect, centre, area and canvas edges; the Shape menu, a dropped picture's proportions,
+ArtFreq's canvas aspect being displayAspect; and, in both plug-ins through the canvas, a turned
+object picked by its turned box, the rotate handle with and without Shift and as one undo step,
+[ and ], a turned object's resize keeping the opposite corner, Shift keeping the proportions on a
+corner and an edge and letting go of Shift, Shift still moving on one axis, the Rotation bar);
+plan
 (frequencies, spacing, normalisation, contrast, slope); Smooth lows, the standing comb (the lines it
 replaces, its grid, gains and phases; low lines never below the drawing, in Stripes too; thin
 strokes; the fades in time, with and without Repeat; the band filled at 16384 and 32768 points

@@ -1851,6 +1851,137 @@ void checkEmojiAndBlackAndWhite (artfreq::ArtFreqEditor& editor, artfreq::ArtFre
            "undo takes the drawing back to the one before the emoji");
 }
 
+/** Turning and the picture shapes, the same in ArtFreq and ArtFreq FX: a text and a picture
+    take the processor's drawing for a moment; the text is turned 25 degrees by its Rotation bar
+    (its rotate handle and handles must sit on the turned box) and saved selected ("rotated");
+    the picture, turned a little in the drawing, is given the Square shape by its Shape menu and
+    saved selected ("image-square"). The drawing that was there before is put back by undoing
+    these steps. `layout` checks the window in each state. */
+template <typename Save, typename Layout>
+void checkRotationAndShape (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor, float pixelScale,
+                            Save&& save, Layout&& layout)
+{
+    using namespace artfreq;
+
+    const auto before = processor.getDocument();
+    const auto scale = processor.getScale();
+    const auto shown = [&] (const char* id)
+    {
+        auto* c = findComponentWithId (editor, id);
+        return c != nullptr && c->isVisible();
+    };
+
+    ArtDocument document;
+    const auto mid = bandRange (Band::mid, scale);
+    auto text = ArtDocument::makeTextObject ("Turn", static_cast<float> (mid.low), static_cast<float> (mid.high));
+    text.startTime = 0.10f;
+    text.endTime = 0.42f;
+    const auto textId = text.id;
+    document.objects.push_back (text);
+
+    auto picture = ArtDocument::makeImageObject (prepareImportedImage (makeTestPicture()), 120.0f, 1400.0f);
+    picture.fileName = "photo.png";
+    picture.startTime = 0.60f;
+    picture.endTime = 0.90f;
+    picture.rotation = -12.0f;
+    const auto imageId = picture.id;
+    document.objects.push_back (picture);
+
+    processor.setDocument (document);
+    pump (60);
+
+    auto* canvas = find<ui::CanvasView> (editor, "canvas");
+    check (canvas != nullptr, "the canvas is there to turn objects on");
+
+    if (canvas == nullptr)
+        return;
+
+    // The text, turned by its Rotation bar.
+    editor.selectObject (textId);
+    pump (60);
+    checkSoon ([&] { return shown ("inspector-rotation") && shown ("inspector-text"); },
+               "selecting the text shows its Rotation");
+
+    if (auto* rotation = find<juce::Slider> (editor, "inspector-rotation"))
+    {
+        rotation->setValue (25.0, juce::sendNotificationSync);
+        check (processor.getDocument().find (textId) != nullptr
+                   && juce::approximatelyEqual (processor.getDocument().find (textId)->rotation, 25.0f),
+               "the Rotation bar turns the text 25 degrees");
+        check (rotation->getTextFromValue (rotation->getValue()).startsWith ("25"), "... and reads 25 degrees");
+    }
+    else
+    {
+        check (false, "the text's Rotation bar is there");
+    }
+
+    pump (60);
+
+    // The handles on the turned box: each corner handle at its turned corner, the rotate
+    // handle a stem's length out from the middle of the turned top edge.
+    if (const auto* turned = processor.getDocument().find (textId))
+    {
+        const auto a = canvas->getDrawingArea();
+        const auto toScreen = [&a] (juce::Point<float> n) { return juce::Point<float> (a.getX() + n.x * a.getWidth(), a.getY() + n.y * a.getHeight()); };
+        const auto corners = objectCornersNorm (*turned, scale);
+        const auto handles = canvas->getHandleCentres (textId);
+        auto onCorners = true;
+
+        for (size_t i = 0; i < 4; ++i)
+            onCorners = onCorners && handles[i * 2].getDistanceFrom (toScreen (corners[i])) < 0.75f;
+
+        const auto topMiddle = (toScreen (corners[0]) + toScreen (corners[1])) * 0.5f;
+        const auto knob = canvas->getRotateHandle (textId);
+        const auto centre = toScreen (objectRectNorm (*turned, scale).getCentre());
+
+        check (onCorners && handles[1].getDistanceFrom (topMiddle) < 0.75f,
+               "the turned text's handles sit on its turned box");
+        check (knob.getDistanceFrom (topMiddle) > 12.0f && knob.getDistanceFrom (centre) > topMiddle.getDistanceFrom (centre)
+                   && knob.x > topMiddle.x,
+               "... and its rotate handle stands out from the turned top edge, leaning with it");
+    }
+
+    layout ("a turned text selected");
+    save ("rotated", pixelScale);
+
+    // The picture, made square by its Shape menu.
+    editor.selectObject (imageId);
+    pump (60);
+    checkSoon ([&] { return shown ("inspector-shape") && shown ("inspector-mode"); }, "selecting the picture shows its Shape");
+
+    if (auto* shape = find<juce::ComboBox> (editor, "inspector-shape"))
+    {
+        check (shape->getText() == "Free", "a stretched picture's Shape reads Free (" + shape->getText() + ")");
+        shape->setSelectedId (3, juce::sendNotificationSync);   // 1:1
+        pump (60);
+        const auto* square = processor.getDocument().find (imageId);
+        check (square != nullptr && std::abs (displayAspectOf (*square, scale) - 1.0f) < 0.01f
+                   && juce::approximatelyEqual (square->rotation, -12.0f),
+               "Shape 1:1 makes the picture square on screen, still turned");
+        checkSoon ([&] { return shape->getText() == "1:1"; }, "... and the Shape menu shows 1:1");
+    }
+    else
+    {
+        check (false, "the picture's Shape menu is there");
+    }
+
+    layout ("a square picture selected");
+    save ("image-square", pixelScale);
+
+    // The drawing that was there before, by undoing these steps (the drawing, the rotation, the
+    // shape), so the undo history is as it was for the checks that follow.
+    editor.selectObject (juce::Uuid::null());
+
+    for (int step = 0; step < 5 && ! (processor.getDocument().objects.size() == before.objects.size()
+                                      && processor.getDocument().find (textId) == nullptr); ++step)
+        processor.undo();
+
+    pump (60);
+    check (processor.getDocument().find (textId) == nullptr && processor.getDocument().objects.size() == before.objects.size()
+               && (before.objects.empty() || processor.getDocument().find (before.objects.front().id) != nullptr),
+           "undo takes the drawing back to the one before the turned text");
+}
+
 void checkEffect (const juce::File& outputDir, float pixelScale)
 {
     using namespace artfreq;
@@ -2170,6 +2301,8 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     // Emoji in text and a picture in B&W, as in the instrument; then the drawing above again.
     checkEmojiAndBlackAndWhite (*editor, processor, pixelScale, save,
                                 [&] (const juce::String& state) { checkEffectLayout (*editor, state); });
+    checkRotationAndShape (*editor, processor, pixelScale, save,
+                           [&] (const juce::String& state) { checkEffectLayout (*editor, state); });
     clickOn (*canvas, objectAt (imageId).getCentre());
     pump (60);
     checkSoon ([&] { return editor->getSelectedObject() == imageId && editor->isDrawerOpen(); },
@@ -4039,6 +4172,13 @@ int main (int argc, char* argv[])
 
         // Emoji in text and a picture in B&W (then the rich drawing again).
         checkEmojiAndBlackAndWhite (*editor, processor, pixelScale, save, [&] (const juce::String& state)
+        {
+            if (auto* inspector = findComponentWithId (*editor, "inspector"))
+                checkNoOverlap (*inspector, state);
+        });
+
+        // Turning and the picture shapes (then the rich drawing again).
+        checkRotationAndShape (*editor, processor, pixelScale, save, [&] (const juce::String& state)
         {
             if (auto* inspector = findComponentWithId (*editor, "inspector"))
                 checkNoOverlap (*inspector, state);

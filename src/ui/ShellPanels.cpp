@@ -656,7 +656,7 @@ namespace
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
             { "1", { "Put ArtFreq FX on a track, a bus or the master,", "before the final limiter." } },
             { "2", { "Open a spectrogram after it", "(MiniMeters) and match it in Settings, the gear." } },
-            { "3", { "Draw:", "add text (emoji too) or a picture, or paint. Click one to change it." } },
+            { "3", { "Draw:", "add text (emoji too) or a picture, or paint. Click one to change or turn it." } },
             { "4", { "Choose a Mode.", "Depth is how far carved frequencies drop: -80 dB looks black." } },
             { "5", { "Press play in your DAW.", "It runs once from there; Carve and Stencil wait for the "
                                                 "track's audio. Repeat loops it." } },
@@ -722,10 +722,12 @@ namespace
        #endif
 
         static const std::vector<Paragraph> list {
-            { "The Layers list", "on the right shows every text and picture, front first. Click to select, "
-                                 "double-click for settings, drag to reorder; the eye hides one (silent, but kept)." },
-            { "Overlapping objects.", altClick + ", or click again on the same spot, to pick the one underneath. "
-                                      "Right-click for Bring to front, Send to back, Hide and Delete." },
+            { "The Layers list", "shows every text and picture, front first. Click to select, "
+                                 "double-click for settings, drag to reorder; the eye hides one." },
+            { "Overlapping objects.", altClick + ", or click again, for the one underneath. Right-click for "
+                                      "its menu." },
+            { "Turn and resize.", "Drag the round handle above a selection to turn it (Shift: 15 degree "
+                                  "steps). Shift-drag a corner: keep the proportions." },
         };
         return list;
     }

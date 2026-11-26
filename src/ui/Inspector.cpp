@@ -1220,7 +1220,7 @@ struct Inspector::Impl
 
             g.setColour (theme::textDim);
             g.setFont (fonts::ui (12.5f));
-            g.drawText (shortcut.action, row.withTrimmedLeft (keyColumn + 10.0f), juce::Justification::centredLeft, true);
+            g.drawText (juce::String (juce::CharPointer_UTF8 (shortcut.action)), row.withTrimmedLeft (keyColumn + 10.0f), juce::Justification::centredLeft, true);
         }
     }
 
@@ -1276,7 +1276,7 @@ struct Inspector::Impl
     struct Shortcut
     {
         const char* keys;
-        const char* action;
+        const char* action;   // UTF-8
     };
 
     static constexpr int shortcutRowHeight = 26;
@@ -1284,6 +1284,8 @@ struct Inspector::Impl
         { "Delete", "Remove the selection" },
         { "Arrows", "Nudge (Shift: 10 px)" },
         { "Shift-drag", "Move on one axis" },
+        { "Shift-corner", "Keep the proportions" },
+        { "[  ]", "Turn 15\xc2\xb0 (Shift: 1\xc2\xb0)" },
        #if JUCE_MAC
         { "Option-click", "Pick the one underneath" },
        #else
