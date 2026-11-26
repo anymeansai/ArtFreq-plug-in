@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <initializer_list>
+#include <iostream>
 #include <memory>
 
 using namespace artfreq;
@@ -371,6 +372,17 @@ ARTFREQ_TEST (emojiUnknownCharactersDoNoHarm)
 
             const auto framed = boundsOf ("AB" + odd + "CD", font);
             CHECK (framed.isFinite());
+
+            if (! (framed.getWidth() > boundsOf ("AB", font).getWidth()))
+            {
+                juce::String codes;
+
+                for (auto p = odd.getCharPointer(); ! p.isEmpty();)
+                    codes << "U+" << juce::String::toHexString (static_cast<int> (p.getAndAdvance())).toUpperCase() << " ";
+
+                std::cout << "    (font " << font << ", AB " << codes << "CD)" << std::endl;
+            }
+
             CHECK_GREATER (framed.getWidth(), boundsOf ("AB", font).getWidth());
 
             auto image = singleChannel (200, 80);

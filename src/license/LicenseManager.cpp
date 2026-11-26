@@ -746,7 +746,11 @@ void LicenseManager::reload()
         {
             const auto since = timeOf (entry.deactivatingSince);
 
-            if (since > 0 && now >= since && now - since < markGraceMs)
+            // A mark a little ahead of this clock is still one in progress: the clock can be set
+            // back a moment (time sync) between the mark and now. Further ahead, it is bogus.
+            constexpr juce::int64 clockSlackMs = 10 * 1000;
+
+            if (since > 0 && since - now < clockSlackMs && now - since < markGraceMs)
                 nextReload = nextReload == 0 ? since + markGraceMs : juce::jmin (nextReload, since + markGraceMs);
             else
                 interruptedHere = true;

@@ -19,6 +19,8 @@
 
 #include <juce_events/juce_events.h>
 
+#include <iostream>
+
 #if ! JUCE_WINDOWS
  #include <sys/stat.h>
 #endif
@@ -1419,7 +1421,25 @@ ARTFREQ_TEST (licenseADeactivationTheServerDidNotDoChangesNothing)
         CHECK (effect.deactivate (recordInto (recorded)));
 
         auto otherStayed = true;
-        CHECK (pumpUntil ([&] { otherStayed = otherStayed && other.isActivated() && effect.isActivated(); return recorded.calls > 0; }));
+        juce::String lapse;
+        CHECK (pumpUntil ([&]
+        {
+            if (otherStayed && ! (other.isActivated() && effect.isActivated()))
+            {
+                otherStayed = false;
+                lapse = "case " + juce::String (failure) + ": " + (other.isActivated() ? "" : "the other instance ")
+                      + (effect.isActivated() ? "" : "the deactivating one ") + "locked; the file holds "
+                      + juce::String (static_cast<int> (store.read().activations.size())) + " activation(s), marked "
+                      + (store.read().activations.empty() ? juce::String ("-") : store.read().activations[0].deactivatingSince)
+                      + " at " + juce::Time::getCurrentTime().toISO8601 (true);
+            }
+
+            return recorded.calls > 0;
+        }));
+
+        if (! otherStayed)
+            std::cout << "    (" << lapse << ")" << std::endl;
+
         CHECK (otherStayed);
         CHECK (recorded.result.message.endsWith ("This computer stays activated."));
         CHECK (store.read().activations.size() == 1 && store.read().activations[0].deactivatingSince.isEmpty());

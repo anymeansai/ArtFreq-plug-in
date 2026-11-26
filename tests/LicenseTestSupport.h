@@ -299,8 +299,17 @@ public:
             if (token.setAbortAction ([&wake] { wake.signal(); }))
             {
                 started.signal();
-                wake.wait (step.delayMs);
+                // As a real transport: no answer after its own timeout is no connection.
+                const auto waited = timeoutMs > 0 && timeoutMs < step.delayMs ? timeoutMs : step.delayMs;
+                const auto answered = ! wake.wait (waited) && waited == step.delayMs;
                 token.clearAbortAction();
+
+                if (! answered && ! token.isCancelled())
+                {
+                    anymeans::license::HttpReply timedOut;
+                    timedOut.outcome = anymeans::license::HttpReply::Outcome::noConnection;
+                    return timedOut;
+                }
             }
 
             if (token.isCancelled())

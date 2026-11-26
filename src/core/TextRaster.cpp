@@ -3,6 +3,7 @@
 #include "Fonts.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <vector>
 
@@ -73,6 +74,7 @@ struct TextRun
 {
     juce::String text;
     bool emoji = false;
+    bool foreign = false;   // text the art font has no glyphs for (the system's fonts may draw it)
 };
 
 /** Splits a line into text and emoji runs. A character is an emoji when the art font has no
@@ -129,8 +131,12 @@ std::vector<TextRun> splitRuns (const juce::String& line, const juce::Typeface::
         if (! emoji && inEmoji && isTag (c))
             continue;
 
-        if (runs.empty() || runs.back().emoji != emoji)
-            runs.push_back ({ {}, emoji });
+        // Text the art font cannot draw is shaped on its own, with whatever font the system
+        // finds for it, so however that font lays it out the letters after it still follow it.
+        const auto foreign = ! emoji && c >= 0x80 && ! hasGlyph (artTypeface, c);
+
+        if (runs.empty() || runs.back().emoji != emoji || runs.back().foreign != foreign)
+            runs.push_back ({ {}, emoji, foreign });
 
         runs.back().text += juce::String::charToString (c);
         inEmoji = emoji;
@@ -182,17 +188,31 @@ EmojiPlacement emojiPlacementFor (const juce::Typeface::Ptr& artTypeface)
     return { fonts::emoji (size), size * boxCentreAboveBaseline - capHeight * 0.5f };
 }
 
-/** Adds a run of ordinary text at the pen; returns where the pen ends up. */
+/** Adds a run of ordinary text at the pen; returns where the pen ends up. The run starts at the
+    pen whichever way the shaper laid it out: a run that begins with a right-to-left letter (or
+    a fallback font's glyph for one) can come back laid out leftwards from where it was asked
+    to start, over the run before it. */
 float addTextRun (juce::Path& path, const juce::String& text, const juce::Font& font, float pen, float baseline)
 {
     juce::GlyphArrangement glyphs;
-    glyphs.addLineOfText (font, text, pen, baseline);
-    glyphs.createPath (path);
+    glyphs.addLineOfText (font, text, 0.0f, baseline);
+
+    if (glyphs.getNumGlyphs() == 0)
+        return pen;
+
+    auto left = std::numeric_limits<float>::max();
+    auto right = std::numeric_limits<float>::lowest();
 
     for (const auto& glyph : glyphs)
-        pen = std::max (pen, glyph.getRight());
+    {
+        left = std::min (left, glyph.getLeft());
+        right = std::max (right, glyph.getRight());
+    }
 
-    return pen;
+    juce::Path run;
+    glyphs.createPath (run);
+    path.addPath (run, juce::AffineTransform::translation (pen - left, 0.0f));
+    return pen + std::max (0.0f, right - left);
 }
 
 /** Adds a run of emoji at the pen; returns where the pen ends up. */
@@ -266,9 +286,9 @@ juce::Path makeTextPath (const juce::String& text, int fontIndex)
         const auto runs = splitRuns (lines[i], artTypeface);
         juce::Path linePath;
 
-        if (runs.size() == 1 && ! runs.front().emoji)
+        if (runs.size() == 1 && ! runs.front().emoji && ! runs.front().foreign)
         {
-            // No emoji: the line is shaped in one piece.
+            // Only the art font's own letters: the line is shaped in one piece.
             juce::GlyphArrangement glyphs;
             glyphs.addLineOfText (font, lines[i], 0.0f, baseline);
             glyphs.createPath (linePath);
