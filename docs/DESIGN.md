@@ -1048,12 +1048,15 @@ while visible.
   hover) goes back to the list with the object still selected. New objects (Add text, Add
   image, a dropped picture) go in front and are selected, with their settings shown.
 - Text selected: title "Text"; multi-line text field (live updates, one undo step per typing
-  session); Font (combo of art fonts); Style (segmented Solid | Outline); **Band** (segmented
+  session; emoji are kept, and drawn from the bundled monochrome Noto Emoji Bold wherever the
+  art font has no glyph: see TextRaster.cpp); Font (combo of art fonts); Style (segmented Solid | Outline); **Band** (segmented
   Low | Mid | High | Full, highlights the matching band if the object sits exactly on it);
   Position: "Fill length" button (sets time 4 %..96 %); Intensity slider (0..100 %; a drag, or a
   run of mouse-wheel steps without a 1 s pause, is one undo step); Delete button.
 - Image selected: title "Image"; thumbnail of the processed result; Mode (segmented Auto |
-  Original | Negative | Outline, with Auto showing what it picked, e.g. "Auto (Negative)");
+  Original | Negative | Outline | B&W, short labels in ArtFreq FX's narrow drawer, with Auto
+  showing what it picked, e.g. "Auto (Negative)"; B&W thresholds the Auto-resolved picture at
+  Otsu's level into loud or silent, see ImageProcessing.h);
   Clean-up slider (0..90 %); Band; Fill length; Intensity; "Replace..."; Delete.
 - Frequency read-out of the selected object ("3.5 kHz - 16 kHz") in mono.
 

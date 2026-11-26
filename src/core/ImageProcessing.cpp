@@ -203,7 +203,7 @@ void cleanUp (std::vector<float>& values, float cleanup)
     it is loud if that level is at least half, silent otherwise, and so is one nobody can see. */
 void splitInTwo (std::vector<float>& values, const std::vector<float>& alpha, bool alphaIsDrawn)
 {
-    constexpr int numLevels = 256;
+    static constexpr int numLevels = 256;
     const auto levelOf = [] (float v) { return juce::jlimit (0, numLevels - 1, juce::roundToInt (v * static_cast<float> (numLevels - 1))); };
 
     std::array<double, numLevels> histogram {};

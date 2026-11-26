@@ -129,7 +129,7 @@ void writeEmojiText (const juce::File& folder)
     {
         for (int row = 0; row < 2; ++row)
         {
-            auto object = ArtDocument::makeTextObject (text, 150.0f, 14000.0f);
+            auto object = ArtDocument::makeTextObject (text, 40.0f, 17000.0f);
             object.startTime = 0.05f;
             object.endTime = 0.95f;
             object.fontIndex = fontIndices[column];

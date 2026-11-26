@@ -682,7 +682,7 @@ void checkInteractions (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcesso
     if (auto* modeControl = find<ui::SegmentedControl> (editor, "inspector-mode"))
     {
         check (shown ("inspector-mode") && ! shown ("inspector-text"), "selecting the picture shows the picture's settings");
-        clickOn (*modeControl, { static_cast<float> (modeControl->getWidth()) * 0.875f, static_cast<float> (modeControl->getHeight()) * 0.5f });
+        clickOn (*modeControl, modeControl->getSegmentBounds (static_cast<int> (ImageMode::outline)).getCentre());
         check (object (imageId).imageMode == ImageMode::outline, "Mode: Outline draws the picture's edges");
         undo();
         check (object (imageId).imageMode == ImageMode::automatic, "... and undo goes back to Auto");
@@ -1729,6 +1729,128 @@ void checkEffectLayout (artfreq::ArtFreqEditor& editor, const juce::String& stat
     shows (and that nothing is greyed), the canvas in each mode, the strips, the drawer (an
     object's settings, the layer list, which side it opens on), the bottom bar's line, the
     settings that hold the timing, the live view of a carved song, the help, the window sizes. */
+/** Emoji in a text and a picture in B&W, the same in ArtFreq and ArtFreq FX: a text that mixes
+    letters and emoji and the test picture take the processor's drawing for a moment, the
+    canvas must draw both, the picture's Mode is set to B&W by a click on it, and the window is
+    saved with the text selected ("emoji") and with the picture selected ("image-bw"). The
+    drawing that was there before is put back. `layout` checks the window in each state. */
+template <typename Save, typename Layout>
+void checkEmojiAndBlackAndWhite (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProcessor& processor, float pixelScale,
+                                 Save&& save, Layout&& layout)
+{
+    using namespace artfreq;
+
+    const auto before = processor.getDocument();
+    const auto scale = processor.getScale();
+    const auto shown = [&] (const char* id)
+    {
+        auto* c = findComponentWithId (editor, id);
+        return c != nullptr && c->isVisible();
+    };
+
+    // (Code points, not characters in the source: fire, thumbs up, red heart.)
+    const auto fire = juce::String::charToString (static_cast<juce::juce_wchar> (0x1f525));
+    const auto thumbsUp = juce::String::charToString (static_cast<juce::juce_wchar> (0x1f44d));
+    const auto heart = juce::String::charToString (static_cast<juce::juce_wchar> (0x2764))
+                     + juce::String::charToString (static_cast<juce::juce_wchar> (0xfe0f));
+    const auto words = fire + " DROP " + thumbsUp + "\nI " + heart + " NY";
+
+    ArtDocument document;
+    const auto mid = bandRange (Band::mid, scale);
+    auto text = ArtDocument::makeTextObject (words, static_cast<float> (mid.low), static_cast<float> (mid.high));
+    text.startTime = 0.04f;
+    text.endTime = 0.50f;
+    const auto textId = text.id;
+    document.objects.push_back (text);
+
+    auto picture = ArtDocument::makeImageObject (prepareImportedImage (makeTestPicture()), 70.0f, 2200.0f);
+    picture.fileName = "photo.png";
+    picture.startTime = 0.56f;
+    picture.endTime = 0.96f;
+    const auto imageId = picture.id;
+    document.objects.push_back (picture);
+
+    processor.setDocument (document);
+    pump (60);
+
+    check (processor.getDocument().find (textId) != nullptr && processor.getDocument().find (textId)->text == words,
+           "a text with emoji keeps them in the drawing");
+
+    // The canvas draws the emoji: the first line starts with one, so the left of the text's box
+    // is loud in its upper half.
+    {
+        Compositor compositor;
+        Canvas canvas;
+        ArtDocument textOnly;
+        textOnly.objects.push_back (*processor.getDocument().find (textId));
+        compositor.render (textOnly, scale, canvas);
+
+        const auto box = objectRectNorm (textOnly.objects.front(), scale);
+        const auto x0 = juce::jlimit (0, Canvas::width - 1, juce::roundToInt (box.getX() * Canvas::width));
+        const auto x1 = juce::jlimit (x0 + 1, Canvas::width, juce::roundToInt ((box.getX() + box.getWidth() * 0.12f) * Canvas::width));
+        const auto y0 = juce::jlimit (0, Canvas::height - 1, juce::roundToInt (box.getY() * Canvas::height));
+        const auto y1 = juce::jlimit (y0 + 1, Canvas::height, juce::roundToInt ((box.getY() + box.getHeight() * 0.5f) * Canvas::height));
+        auto loudest = 0.0f;
+
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x)
+                loudest = std::max (loudest, canvas.values[static_cast<size_t> (y) * Canvas::width + static_cast<size_t> (x)]);
+
+        check (loudest > 0.5f, "the canvas draws the emoji at the start of the text");
+    }
+
+    editor.selectObject (textId);
+    pump (60);
+    checkSoon ([&] { return shown ("inspector-text"); }, "selecting the text with emoji shows its settings");
+
+    if (auto* field = find<juce::TextEditor> (editor, "inspector-text"))
+        check (field->getText() == words, "... and its text box holds the emoji");
+
+    layout ("a text with emoji selected");
+    save ("emoji", pixelScale);
+
+    // The picture, in B&W.
+    editor.selectObject (imageId);
+    pump (60);
+    checkSoon ([&] { return shown ("inspector-mode"); }, "selecting the picture shows its Mode");
+
+    if (auto* mode = find<ui::SegmentedControl> (editor, "inspector-mode"))
+    {
+        check (mode->getShownLabels().size() == numImageModes && mode->getShownLabels()[numImageModes - 1] == "B&W",
+               "Mode offers B&W, last");
+        check (mode->labelsFit(), "... and every Mode label fits, in this window (" + mode->getShownLabels().joinIntoString (" | ") + ")");
+        clickOn (*mode, mode->getSegmentBounds (static_cast<int> (ImageMode::blackAndWhite)).getCentre());
+        pump (60);
+        checkSoon ([&] { return processor.getDocument().find (imageId) != nullptr
+                                && processor.getDocument().find (imageId)->imageMode == ImageMode::blackAndWhite
+                                && mode->getSelectedIndex() == static_cast<int> (ImageMode::blackAndWhite); },
+                   "a click on B&W puts the picture in black and white, and it shows as selected");
+
+        if (auto* client = dynamic_cast<juce::TooltipClient*> (mode))
+            check (client->getTooltip().contains ("B&W"), "... the Mode control's tooltip explains B&W");
+    }
+    else
+    {
+        check (false, "the picture's Mode control is there");
+    }
+
+    layout ("a picture in B&W selected");
+    save ("image-bw", pixelScale);
+
+    // The drawing that was there before, by undoing these steps (setting the drawing, then the
+    // Mode), so the undo history is as it was for the checks that follow.
+    editor.selectObject (juce::Uuid::null());
+
+    for (int step = 0; step < 4 && ! (processor.getDocument().objects.size() == before.objects.size()
+                                      && processor.getDocument().find (textId) == nullptr); ++step)
+        processor.undo();
+
+    pump (60);
+    check (processor.getDocument().find (textId) == nullptr && processor.getDocument().objects.size() == before.objects.size()
+               && (before.objects.empty() || processor.getDocument().find (before.objects.front().id) != nullptr),
+           "undo takes the drawing back to the one before the emoji");
+}
+
 void checkEffect (const juce::File& outputDir, float pixelScale)
 {
     using namespace artfreq;
@@ -2044,6 +2166,14 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     check (drawer->getRight() < juce::roundToInt (objectAt (imageId).getX()) + canvas->getX(), "... clear of the picture");
     checkEffectLayout (*editor, "a picture selected");
     save ("image-selected", pixelScale);
+
+    // Emoji in text and a picture in B&W, as in the instrument; then the drawing above again.
+    checkEmojiAndBlackAndWhite (*editor, processor, pixelScale, save,
+                                [&] (const juce::String& state) { checkEffectLayout (*editor, state); });
+    clickOn (*canvas, objectAt (imageId).getCentre());
+    pump (60);
+    checkSoon ([&] { return editor->getSelectedObject() == imageId && editor->isDrawerOpen(); },
+               "... and the picture is selected again");
 
     // The close button puts the drawer away and keeps the selection (and its handles).
     if (auto* close = find<juce::Button> (*editor, "inspector-close"))
@@ -3906,6 +4036,13 @@ int main (int argc, char* argv[])
 
         editor->selectObject (imageId);
         save ("image-selected", pixelScale);
+
+        // Emoji in text and a picture in B&W (then the rich drawing again).
+        checkEmojiAndBlackAndWhite (*editor, processor, pixelScale, save, [&] (const juce::String& state)
+        {
+            if (auto* inspector = findComponentWithId (*editor, "inspector"))
+                checkNoOverlap (*inspector, state);
+        });
 
         editor->selectObject (juce::Uuid::null());
 

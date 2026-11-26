@@ -295,6 +295,8 @@ struct Inspector::Impl
         textField.setIndents (8, 6);
         textField.setTitle ("Text");
         textField.setDescription ("Return when done, Shift+Return for a new line.");
+        textField.setTooltip ("The words. Emoji work too: they are drawn as black-and-white outlines, "
+                              "the same on every computer");
         textField.onTextChange = [this] { textTyped(); };
         textField.onFocusGained = [this]
         {

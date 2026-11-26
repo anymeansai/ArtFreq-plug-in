@@ -174,6 +174,13 @@ namespace
     }
 } // namespace
 
+juce::Rectangle<float> SegmentedControl::getSegmentBounds (int index) const
+{
+    const auto rects = segmentRects (getShownLabels(), getLocalBounds().toFloat().reduced (2.0f), getHeight());
+    return juce::isPositiveAndBelow (index, static_cast<int> (rects.size())) ? rects[static_cast<size_t> (index)]
+                                                                            : juce::Rectangle<float>();
+}
+
 int SegmentedControl::indexAt (juce::Point<float> position) const
 {
     const auto rects = segmentRects (getShownLabels(), getLocalBounds().toFloat().reduced (2.0f), getHeight());

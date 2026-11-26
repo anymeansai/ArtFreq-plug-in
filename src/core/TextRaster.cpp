@@ -169,12 +169,12 @@ EmojiPlacement emojiPlacementFor (const juce::Typeface::Ptr& artTypeface)
 {
     // Noto Emoji draws every emoji in the same square: 2100 units high in a 2048 unit em, from
     // 350 units under the baseline to 1750 above it.
-    constexpr float boxHeight = 2100.0f / 2048.0f;
-    constexpr float boxCentreAboveBaseline = 700.0f / 2048.0f;
+    static constexpr float boxHeight = 2100.0f / 2048.0f;
+    static constexpr float boxCentreAboveBaseline = 700.0f / 2048.0f;
 
     // An emoji is a little taller than a capital letter and centred on the capitals, as
     // operating systems set them: it reaches as far over the capitals as under the baseline.
-    constexpr float heightInCapitals = 1.3f;
+    static constexpr float heightInCapitals = 1.3f;
 
     const auto capHeight = capHeightOf (artTypeface) * layoutHeight;
     const auto size = capHeight * heightInCapitals / boxHeight;

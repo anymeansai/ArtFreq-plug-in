@@ -34,6 +34,9 @@ public:
     /** True if every label drawn has its padding at the type size used: none is squeezed. */
     bool labelsFit() const;
 
+    /** Where option `index` is drawn, in this control's coordinates (empty if there is none). */
+    juce::Rectangle<float> getSegmentBounds (int index) const;
+
     void setSelectedIndex (int index, juce::NotificationType notification = juce::sendNotificationSync);
     int getSelectedIndex() const noexcept { return selected; }
 

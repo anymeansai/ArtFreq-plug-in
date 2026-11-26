@@ -637,7 +637,7 @@ namespace
             { "3", { "Match your analyser.", "In Settings (the gear), choose the scale, range, slope, FFT size and "
                                              "levels your analyser uses. MiniMeters: Log, 20 Hz to 20 kHz. Colours "
                                              "depend on your analyser." } },
-            { "4", { "Draw.", "Add text, drop in a picture, or paint. A moment after each change the canvas shows "
+            { "4", { "Draw.", "Add text (emoji too), drop in a picture, or paint. A moment after each change the canvas shows "
                               "the real sound, as your analyser will." } },
             { "5", { "Choose a band and the density.", "Put each text or picture in the Low, Mid, High or Full band "
                                                        "in the panel on the right. Density sets how many lines draw it." } },
@@ -656,7 +656,7 @@ namespace
         static const std::vector<std::pair<juce::String, Paragraph>> steps {
             { "1", { "Put ArtFreq FX on a track, a bus or the master,", "before the final limiter." } },
             { "2", { "Open a spectrogram after it", "(MiniMeters) and match it in Settings, the gear." } },
-            { "3", { "Draw:", "add text or a picture, or paint. Click one to change it." } },
+            { "3", { "Draw:", "add text (emoji too) or a picture, or paint. Click one to change it." } },
             { "4", { "Choose a Mode.", "Depth is how far carved frequencies drop: -80 dB looks black." } },
             { "5", { "Press play in your DAW.", "It runs once from there; Carve and Stencil wait for the "
                                                 "track's audio. Repeat loops it." } },

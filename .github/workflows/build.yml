@@ -726,6 +726,10 @@ jobs:
 
           Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects (in Logic Pro: AU Instruments > AnyMeans, and Audio Units > AnyMeans in an audio track's or the output's effect slots). Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
 
+          **New in 0.9**
+          - **Emoji in text**, in ArtFreq and ArtFreq FX: type or paste them next to your words. A spectrogram has no colour, so they are drawn as black-and-white outlines from a bundled emoji font (Noto Emoji), the same on every computer and in every font and style.
+          - **B&W**, a new Mode for pictures: black and white, every part of the picture loud or silent with no greys in between, at a threshold picked for each picture. Photos read crisply where their midtones used to blur.
+
           **New in 0.8**
           - **Audio Units for Logic Pro and GarageBand** (macOS): the installer now also puts ArtFreq (an instrument) and ArtFreq FX (an effect for audio tracks, buses and the output) into \`/Library/Audio/Plug-Ins/Components\`. Both pass Apple's validation (auval). If Logic does not list them, restart the Mac once, or rescan in Logic's Plug-in Manager.
           - In Logic Pro and GarageBand, ArtFreq FX starts with the transport (Trigger: Transport, the default): a host sends an effect Audio Unit no MIDI notes, so Trigger: MIDI needs a VST3 host there.

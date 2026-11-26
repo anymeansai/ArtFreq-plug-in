@@ -131,10 +131,10 @@ Hiding, reordering and deleting are one undo step each; selecting is none (nor i
 
 | Control | What it does |
 | --- | --- |
-| **Text** | The words; several lines are allowed. |
+| **Text** | The words; several lines are allowed. **Emoji** work too, typed or pasted: they are drawn from the bundled Noto Emoji font as black-and-white outlines (a spectrogram has no colour), the same on every computer, next to the letters in any font and style. |
 | **Font** | Inter Bold, Space Grotesk, Jost, Fraunces or DM Mono. |
 | **Style** | **Solid** letters, or **Outline** (only the edges of the letters sound). |
-| **Mode** (images) | **Auto** (picks one of the next three and says which), **Original** (bright is loud), **Negative** (dark is loud), **Outline** (only the edges). Under Auto, a picture with a transparent background draws its shape. |
+| **Mode** (images) | **Auto** (picks one of the next three and says which), **Original** (bright is loud), **Negative** (dark is loud), **Outline** (only the edges), **B&W** (black and white: every part of the subject loud or silent, no greys, at a threshold picked for each picture; reads crisply where a photo's midtones blur). Under Auto, a picture with a transparent background draws its shape. |
 | **Clean-up** (images) | 0–90 %. Silences faint backgrounds, grain and noise. |
 | **Band** | **Low** 40–250 Hz, **Mid** 300 Hz–3 kHz, **High** 3.5–16 kHz, **Full** the whole visible range. Lit when the object sits exactly on a band. |
 | **Fill length** | Stretches the object across the drawing (4 % to 96 % of the length). |
@@ -384,4 +384,4 @@ When every build succeeds, all the downloads are published as the release `v<ver
 - **ArtFreq** is © 2026 AnyMeans and released under the GNU AGPLv3; see `LICENSE`.
 - **JUCE 8** is dual-licensed: AGPLv3, or a commercial licence from JUCE. Distributing ArtFreq without publishing its source under the AGPLv3 requires a JUCE licence.
 - The **VST3 SDK** bundled with JUCE is used under its own licence. VST is a trademark of Steinberg Media Technologies GmbH.
-- The embedded fonts (Inter, Space Grotesk, Jost, Fraunces, DM Mono) are used under the SIL Open Font License 1.1; see `assets/fonts/OFL-*.txt`.
+- The embedded fonts (Inter, Space Grotesk, Jost, Fraunces, DM Mono, and Noto Emoji for emoji in text) are used under the SIL Open Font License 1.1; see `assets/fonts/OFL-*.txt`.
