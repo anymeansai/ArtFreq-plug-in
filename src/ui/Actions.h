@@ -4,6 +4,7 @@
 
 #include "EditorState.h"
 #include "PluginProcessor.h"
+#include "core/Compositor.h"
 #include "core/FrequencyScale.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -20,16 +21,25 @@ void addText (ArtFreqProcessor& processor, EditorState& state);
 
 /** Opens an async file chooser for a picture (isPictureFile). The chosen file becomes a new
     image object at newObjectPlacement (or replaces the picture of the selected image object if
-    `replaceSelected`), which is then selected; a file that cannot be read is reported with
+    `replaceSelected`: the box is kept, unless it had the old picture's own proportions, which
+    it then changes to the new one's), which is then selected; a file that cannot be read is
+    reported with
     state.showNotice. The chooser is owned by `owner` and the callback is ignored if `owner`
     has been deleted. */
 void chooseImage (ArtFreqProcessor& processor, EditorState& state, juce::Component& owner, bool replaceSelected);
 
 /** Adds an image file as an object centred on `normPosition` (x = time 0..1, y = 0 top..1
-    bottom): the band containing that height, a time span of 40 % of the length (clamped to the
-    canvas). Returns false if the file is not a readable image. */
+    bottom): the band containing that height, and as long as the picture's own proportions make
+    it at that height (withPictureProportions; at most 92 % of the length), clamped to the
+    canvas. Returns false if the file is not a readable image. */
 bool addImageFile (ArtFreqProcessor& processor, EditorState& state, const juce::File& file,
                    juce::Point<float> normPosition);
+
+/** A new picture's place in a band: the band's height kept, the time span made as long as the
+    picture's own proportions ask (ShapePreset::original) but no longer than [start, end],
+    centred on `centre` and kept inside [start, end]. So a new picture is not stretched, and
+    still sits exactly on its band. */
+void withPictureProportions (ArtObject& picture, float start, float end, float centre, const FrequencyScale& scale);
 
 /** Where a new object goes (startTime, endTime, lowHz, highHz in an ArtObject): the first of
     the mid, high and low bands across the length (4 % to 96 %), then the halves of each, that
@@ -101,6 +111,9 @@ namespace menuItems
         remove
     };
 } // namespace menuItems
+
+/** Gives the selected picture a shape (applyShapeAspect about its centre, one undo step). */
+void setSelectedShape (ArtFreqProcessor& processor, EditorState& state, ShapePreset preset);
 
 /** Moves the selected object to a band (keeps its time span). */
 void setSelectedBand (ArtFreqProcessor& processor, EditorState& state, Band band);

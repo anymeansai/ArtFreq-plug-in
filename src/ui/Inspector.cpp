@@ -44,6 +44,17 @@ namespace
 
     juce::String percent (double value) { return juce::String (juce::roundToInt (value)) + "%"; }
 
+    /** "30°" */
+    juce::String degreesText (double value)
+    {
+        return juce::String (juce::roundToInt (value)) + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0"));
+    }
+
+    // The Shape menu: "Free" (the box has none of the shapes; not a choice), then the presets
+    // in the order of ShapePreset, from id 2.
+    constexpr int freeShapeId = 1;
+    const juce::StringArray shapeNames { "Original", "1:1", "4:3", "3:4", "16:9", "9:16" };
+
     /** "3.5 kHz – 16 kHz" (an en dash: a range, not a minus). */
     juce::String hzRange (float low, float high)
     {
@@ -348,6 +359,14 @@ struct Inspector::Impl
 
         deleteButton.onClick = [this] { actions::deleteSelected (processor, state); };
 
+        setUpSlider (rotationSlider, -180.0, 180.0, 1.0, degreesText);
+        rotationSlider.setTitle ("Rotation");
+        rotationSlider.setDoubleClickReturnValue (true, 0.0);
+        rotationSlider.setTooltip ("Rotation: turns the object clockwise about its middle, in degrees. "
+                                   "Drag, scroll or type; double-click for 0. On the canvas, drag the round "
+                                   "handle above the object (Shift snaps to 15 degrees), or press [ and ].");
+        setUpObjectSlider (rotationSlider, [] (ArtObject& o, double v) { o.rotation = ArtDocument::normaliseRotation (static_cast<float> (v)); });
+
         // ---- image ----
         modeControl.setTitle ("Mode");
         modeControl.setTooltip ("Mode: what in the picture is loud. Auto: the subject, not its background. "
@@ -365,6 +384,24 @@ struct Inspector::Impl
         cleanupSlider.setDoubleClickReturnValue (true, 8.0);
         cleanupSlider.setTooltip ("Silences faint backgrounds, grain and JPEG noise");
         setUpObjectSlider (cleanupSlider, [] (ArtObject& o, double v) { o.cleanup = static_cast<float> (v / 100.0); });
+
+        shapeBox.addItem ("Free", freeShapeId);
+        shapeBox.setItemEnabled (freeShapeId, false);
+
+        for (int i = 0; i < shapeNames.size(); ++i)
+            shapeBox.addItem (shapeNames[i], freeShapeId + 1 + i);
+
+        shapeBox.setTitle ("Shape");
+        shapeBox.setTooltip ("Shape: gives the picture's box a shape on screen, about its middle and keeping its size: "
+                             "Original (the picture's own proportions), square, 4:3, 3:4, 16:9 or 9:16. "
+                             "Free: the box has none of these. Shift-drag a corner on the canvas to keep the shape it has.");
+        shapeBox.onChange = [this]
+        {
+            const auto preset = shapeBox.getSelectedId() - freeShapeId - 1;
+
+            if (! updating && preset >= 0 && preset < numShapePresets)
+                actions::setSelectedShape (processor, state, static_cast<ShapePreset> (preset));
+        };
 
         replaceButton.setButtonText ("Replace...");
         replaceButton.setTooltip ("Choose another picture for this object");
@@ -390,6 +427,8 @@ struct Inspector::Impl
         modeControl.setComponentID ("inspector-mode");
         cleanupSlider.setComponentID ("inspector-cleanup");
         replaceButton.setComponentID ("inspector-replace");
+        rotationSlider.setComponentID ("inspector-rotation");
+        shapeBox.setComponentID ("inspector-shape");
 
         for (auto* c : allControls())
             owner.addChildComponent (c);
@@ -399,7 +438,7 @@ struct Inspector::Impl
     {
         return { &layerList, &lowsControl, &backButton, &addTextButton, &addImageButton, &sizeSlider, &softnessSlider,
                  &strengthSlider, &textField, &fontBox, &styleControl, &bandControl, &fillButton, &intensitySlider,
-                 &deleteButton, &modeControl, &cleanupSlider, &replaceButton, &closeButton };
+                 &deleteButton, &modeControl, &cleanupSlider, &replaceButton, &closeButton, &rotationSlider, &shapeBox };
     }
 
     void setUpSlider (juce::Slider& slider, double low, double high, double step, std::function<juce::String (double)> format)
@@ -550,8 +589,8 @@ struct Inspector::Impl
 
         // A value being typed into a bar is let go of: its label is modal while it is edited,
         // and a modal component that is hidden would go on swallowing every key.
-        for (auto* bar : { &sizeSlider, &softnessSlider, &strengthSlider,
-                           static_cast<juce::Slider*> (&intensitySlider), static_cast<juce::Slider*> (&cleanupSlider) })
+        for (auto* bar : { &sizeSlider, &softnessSlider, &strengthSlider, static_cast<juce::Slider*> (&intensitySlider),
+                           static_cast<juce::Slider*> (&cleanupSlider), static_cast<juce::Slider*> (&rotationSlider) })
             bar->hideTextBox (true);
 
         // The compact layout leaves adding, the brush and Lows to the window's bars and strips.
@@ -572,10 +611,12 @@ struct Inspector::Impl
         modeControl.setVisible (image);
         cleanupSlider.setVisible (image);
         replaceButton.setVisible (image);
+        shapeBox.setVisible (image);
 
         bandControl.setVisible (! layers);
         fillButton.setVisible (! layers);
         intensitySlider.setVisible (! layers);
+        rotationSlider.setVisible (! layers);
         deleteButton.setVisible (! layers);
     }
 
@@ -628,6 +669,7 @@ struct Inspector::Impl
     {
         bandControl.setSelectedIndex (actions::bandOf (object, processor.getScale()), juce::dontSendNotification);
         setSliderValue (intensitySlider, static_cast<double> (object.intensity) * 100.0);
+        setSliderValue (rotationSlider, static_cast<double> (ArtDocument::normaliseRotation (object.rotation)));
 
         const auto time = percent (object.startTime * 100.0) + juce::String (juce::CharPointer_UTF8 (" \xe2\x80\x93 "))
                         + percent (object.endTime * 100.0);
@@ -682,6 +724,10 @@ struct Inspector::Impl
 
         modeControl.setSelectedIndex (static_cast<int> (object.imageMode), juce::dontSendNotification);
         setSliderValue (cleanupSlider, static_cast<double> (object.cleanup) * 100.0);
+
+        // The shape the box has now, if it is one of the presets.
+        const auto shape = matchingShapePreset (object, processor.getScale());
+        shapeBox.setSelectedId (shape >= 0 ? freeShapeId + 1 + shape : freeShapeId, juce::dontSendNotification);
         updateShared (object);
     }
 
@@ -809,6 +855,20 @@ struct Inspector::Impl
             return r;
         };
 
+        /** Two controls side by side, each with its caption over it. */
+        const auto pair = [&] (const juce::String& leftCaption, juce::Component& left,
+                               const juce::String& rightCaption, juce::Component& right)
+        {
+            auto labels = area.removeFromTop (labelHeight);
+            auto controls = area.removeFromTop (controlHeight);
+            area.removeFromTop (sectionGap);
+            const auto half = (controls.getWidth() - 8) / 2;
+            captions.push_back ({ leftCaption, labels.removeFromLeft (half) });
+            captions.push_back ({ rightCaption, labels.removeFromRight (half) });
+            left.setBounds (controls.removeFromLeft (half));
+            right.setBounds (controls.removeFromRight (half));
+        };
+
         if (mode == Mode::layers)
         {
             // Lows at the foot, always in the same place; the list and what follows it take the
@@ -868,7 +928,9 @@ struct Inspector::Impl
             area.removeFromTop (sectionGap + 2);
             modeControl.setBounds (section ("Mode", controlHeight));
             modeCaptionArea = captions.back().area;
-            cleanupSlider.setBounds (section ("Clean-up", controlHeight));
+
+            // The picture's own settings above, what every object has below.
+            pair ("Clean-up", cleanupSlider, "Shape", shapeBox);
         }
 
         bandControl.setBounds (section ("Band", controlHeight));
@@ -877,7 +939,7 @@ struct Inspector::Impl
         fillButton.setBounds (position.removeFromLeft (104));
         timeReadoutArea = position.withTrimmedLeft (10);
 
-        intensitySlider.setBounds (section ("Intensity", controlHeight));
+        pair ("Intensity", intensitySlider, "Rotation", rotationSlider);
 
         auto buttons = area.removeFromTop (controlHeight);
 
@@ -935,12 +997,34 @@ struct Inspector::Impl
             captions.push_back ({ "Text", typingHintArea });
             textField.setBounds (area.removeFromTop (compactTextHeight));
             area.removeFromTop (6);
-            row ("Font", fontBox);
-            row ("Style", styleControl);
+
+            // The font and the style side by side (their names say what they are), which
+            // leaves a row for the rotation.
+            auto r = area.removeFromTop (compactControl);
+            fontBox.setBounds (r.removeFromLeft ((r.getWidth() - 6) * 13 / 24));
+            styleControl.setBounds (r.withTrimmedLeft (6));
+            area.removeFromTop (rowHeight - compactControl);
         }
         else
         {
-            thumbnailArea = area.removeFromTop (compactThumbnailHeight);
+            // The thumbnail in the captions' column, the shape and the rotation beside it. A
+            // drawer too short for that (both strips there) leaves the thumbnail out and puts
+            // the two side by side.
+            if (area.getHeight() >= compactImageHeight)
+            {
+                auto block = area.removeFromTop (2 * compactControl + 4);
+                thumbnailArea = block.removeFromLeft (compactCaptionWidth - 6);
+                block.removeFromLeft (6);
+                shapeBox.setBounds (block.removeFromTop (compactControl));
+                rotationSlider.setBounds (block.removeFromBottom (compactControl));
+            }
+            else
+            {
+                auto r = area.removeFromTop (compactControl);
+                shapeBox.setBounds (r.removeFromLeft ((r.getWidth() - 6) / 2));
+                rotationSlider.setBounds (r.withTrimmedLeft (6));
+            }
+
             area.removeFromTop (6);
             modeCaptionArea = area.removeFromTop (compactCaptionHeight);
             captions.push_back ({ "Mode", modeCaptionArea });
@@ -959,6 +1043,10 @@ struct Inspector::Impl
         }
 
         row ("Intensity", intensitySlider);
+
+        if (mode == Mode::text)
+            row ("Rotation", rotationSlider);
+
         area.removeFromTop (2);
 
         auto buttons = area.removeFromTop (compactControl);
@@ -1168,7 +1256,8 @@ struct Inspector::Impl
     static constexpr int compactCaptionWidth = 74;
     static constexpr int compactCaptionHeight = 15;
     static constexpr int compactTextHeight = 46;
-    static constexpr int compactThumbnailHeight = 44;
+    static constexpr int compactImageHeight = 2 * compactControl + 4 + 6 + compactCaptionHeight + compactControl + 6
+                                            + 2 * (compactControl + 6) + compactControl + 14 + 6 + 2 + compactControl;
     juce::Rectangle<int> compactTitleRow, bandReadoutArea;
 
     Mode mode = Mode::layers;
@@ -1240,11 +1329,11 @@ struct Inspector::Impl
     IconButton addTextButton, addImageButton;
     juce::Slider sizeSlider, softnessSlider, strengthSlider;
     InspectorTextField textField;
-    juce::ComboBox fontBox;
+    juce::ComboBox fontBox, shapeBox;
     SegmentedControl styleControl, bandControl;
     ModeControl modeControl;
     juce::TextButton fillButton, replaceButton;
-    ObjectSlider intensitySlider, cleanupSlider;
+    ObjectSlider intensitySlider, cleanupSlider, rotationSlider;
     InspectorDeleteButton deleteButton;
 };
 

@@ -23,7 +23,7 @@ namespace
 {
     constexpr float defaultStart = 0.04f;     // new objects span the length, less a small margin
     constexpr float defaultEnd = 0.96f;
-    constexpr float droppedSpan = 0.4f;       // a dropped picture covers 40 % of the length
+    constexpr float droppedSpanLimit = 0.92f; // a dropped picture covers at most 92 % of the length
     constexpr double bandTolerance = 0.01;    // bandOf: 1 % of the canvas height
     constexpr float placementStep = 0.04f;    // newObjectPlacement: how far each fallback start moves
     constexpr int maxPlacementSteps = 11;     // ... up to 48 % of the length
@@ -209,12 +209,19 @@ void chooseImage (ArtFreqProcessor& processor, EditorState& state, juce::Compone
 
             if (selected != nullptr && selected->type == ArtObject::Type::image)
             {
-                processor.editDocument ([id, image, name = file.getFileName()] (ArtDocument& document)
+                // A box with the old picture's own proportions gets the new one's.
+                const auto scale = processor.getScale();
+                const auto hadOwnShape = matchingShapePreset (*selected, scale) == static_cast<int> (ShapePreset::original);
+
+                processor.editDocument ([id, image, name = file.getFileName(), hadOwnShape, scale] (ArtDocument& document)
                 {
                     if (auto* object = document.find (id))
                     {
                         object->image = image;
                         object->fileName = name;
+
+                        if (hadOwnShape)
+                            applyShapeAspect (*object, shapeAspect (ShapePreset::original, *object), scale);
                     }
                 });
                 return;
@@ -224,6 +231,8 @@ void chooseImage (ArtFreqProcessor& processor, EditorState& state, juce::Compone
         auto object = ArtDocument::makeImageObject (image, 0.0f, 1.0f);
         object.fileName = file.getFileName();
         placeNewObject (object, processor);
+        withPictureProportions (object, object.startTime, object.endTime, (object.startTime + object.endTime) * 0.5f,
+                                processor.getScale());
         addAndSelect (processor, state, object);
     });
 }
@@ -243,11 +252,50 @@ bool addImageFile (ArtFreqProcessor& processor, EditorState& state, const juce::
 
     auto object = ArtDocument::makeImageObject (image, static_cast<float> (band.low), static_cast<float> (band.high));
     object.fileName = file.getFileName();
-    object.startTime = juce::jlimit (0.0f, 1.0f - droppedSpan, x - droppedSpan * 0.5f);
-    object.endTime = object.startTime + droppedSpan;
+    const auto margin = (1.0f - droppedSpanLimit) * 0.5f;
+    withPictureProportions (object, margin, 1.0f - margin, x, scale);
 
     addAndSelect (processor, state, object);
     return true;
+}
+
+void withPictureProportions (ArtObject& picture, float start, float end, float centre, const FrequencyScale& scale)
+{
+    const auto r = objectRectNorm (picture, scale);
+    const auto room = juce::jmax (0.001f, end - start);
+    const auto wanted = r.getHeight() * shapeAspect (ShapePreset::original, picture) / ArtDocument::displayAspect;
+    const auto span = std::isfinite (wanted) && wanted > 0.0f ? juce::jmin (room, wanted) : room;
+
+    picture.startTime = juce::jlimit (start, end - span, centre - span * 0.5f);
+    picture.endTime = picture.startTime + span;
+}
+
+void setSelectedShape (ArtFreqProcessor& processor, EditorState& state, ShapePreset preset)
+{
+    const auto id = state.getSelected();
+    const auto* selected = processor.getDocument().find (id);
+
+    if (selected == nullptr || selected->type != ArtObject::Type::image)
+        return;
+
+    const auto scale = processor.getScale();
+    auto reshaped = *selected;
+    applyShapeAspect (reshaped, shapeAspect (preset, reshaped), scale);
+
+    if (juce::exactlyEqual (reshaped.startTime, selected->startTime) && juce::exactlyEqual (reshaped.endTime, selected->endTime)
+        && juce::exactlyEqual (reshaped.lowHz, selected->lowHz) && juce::exactlyEqual (reshaped.highHz, selected->highHz))
+        return;
+
+    processor.editDocument ([id, reshaped] (ArtDocument& document)
+    {
+        if (auto* object = document.find (id))
+        {
+            object->startTime = reshaped.startTime;
+            object->endTime = reshaped.endTime;
+            object->lowHz = reshaped.lowHz;
+            object->highHz = reshaped.highHz;
+        }
+    });
 }
 
 bool isPictureFile (const juce::File& file)
