@@ -169,16 +169,29 @@ juce::Rectangle<int> canvasClip (juce::Rectangle<float> area)
     return bounded.getSmallestIntegerContainer().getIntersection ({ 0, 0, Canvas::width, Canvas::height });
 }
 
+/** How far a turned object's drawing may reach outside its turned box, in canvas pixels: the
+    outline style's stroke (half of 7 % of the box's height, see renderTextInto), which the turn
+    can bring nearer the edge than the letters' inset, and a pixel of anti-aliasing. */
+float turnedReach (juce::Rectangle<float> area) noexcept
+{
+    return std::max (3.0f, area.getHeight() * 0.07f) * 0.5f + 2.0f;
+}
+
 void drawText (const ArtObject& object, juce::Rectangle<float> area, float intensity, Canvas& out)
 {
-    const auto clip = canvasClip (area);
+    const auto degrees = ArtDocument::normaliseRotation (object.rotation);
+    const auto turned = ! juce::exactlyEqual (degrees, 0.0f);
+    const auto clip = canvasClip (turned ? area.transformedBy (rotationTransform (area, degrees)).expanded (turnedReach (area)) : area);
 
     if (clip.isEmpty() || object.text.trim().isEmpty())
         return;
 
+    // In the mask's pixels (the clip's top-left at 0, 0). Canvas pixels are a square grid over
+    // the canvas, like normalised coordinates, so the turn takes displayAspect as it is.
+    const auto local = area.translated (static_cast<float> (-clip.getX()), static_cast<float> (-clip.getY()));
     juce::Image mask (juce::Image::SingleChannel, clip.getWidth(), clip.getHeight(), true, juce::SoftwareImageType());
-    renderTextInto (mask, area.translated (static_cast<float> (-clip.getX()), static_cast<float> (-clip.getY())),
-                    object.text, object.fontIndex, object.textStyle);
+    renderTextInto (mask, local, object.text, object.fontIndex, object.textStyle,
+                    turned ? rotationTransform (local, degrees) : juce::AffineTransform());
 
     const juce::Image::BitmapData data (mask, juce::Image::BitmapData::readOnly);
     const auto scale = intensity / 255.0f;
@@ -256,7 +269,230 @@ void drawImage (const ProcessedImage& image, juce::Rectangle<float> area, float 
     }
 }
 
+/** A turned picture: the processed picture is first resampled to the grid it covers once
+    turned (as many cells along each of its sides as canvas pixels those sides span), area-
+    averaged when shrinking and bilinear when enlarging, as drawImage does; then each canvas
+    pixel's centre is taken back into the box and the grid read there bilinearly, with nothing
+    outside the box, so the edges are anti-aliased. */
+void drawTurnedImage (const ProcessedImage& image, juce::Rectangle<float> area, const juce::AffineTransform& turn,
+                      float intensity, Canvas& out)
+{
+    const auto clip = canvasClip (area.transformedBy (turn).expanded (1.0f));
+
+    if (clip.isEmpty() || ! image.isValid() || area.getWidth() <= 0.0f || area.getHeight() <= 0.0f)
+        return;
+
+    // How many canvas pixels each side of the box spans once turned.
+    const auto origin = area.getTopLeft().transformedBy (turn);
+    const auto spanU = area.getTopRight().transformedBy (turn).getDistanceFrom (origin);
+    const auto spanV = area.getBottomLeft().transformedBy (turn).getDistanceFrom (origin);
+
+    // Bounded (an object may reach far off the canvas): 16 million cells at the most.
+    constexpr double maxCells = 16.0e6;
+    auto cellsU = std::clamp (std::ceil (static_cast<double> (spanU)), 1.0, 8192.0);
+    auto cellsV = std::clamp (std::ceil (static_cast<double> (spanV)), 1.0, 8192.0);
+
+    if (cellsU * cellsV > maxCells)
+    {
+        const auto shrink = std::sqrt (maxCells / (cellsU * cellsV));
+        cellsU = std::max (1.0, std::floor (cellsU * shrink));
+        cellsV = std::max (1.0, std::floor (cellsV * shrink));
+    }
+
+    const auto nu = static_cast<int> (cellsU), nv = static_cast<int> (cellsV);
+    const auto columns = makeTaps (image.width, 0.0, nu, 0, nu);
+    const auto rows = makeTaps (image.height, 0.0, nv, 0, nv);
+
+    if (rows.highestSource < rows.lowestSource || columns.highestSource < columns.lowestSource)
+        return;
+
+    // The grid: a horizontal pass over the source rows the vertical pass needs, then that.
+    const auto firstRow = rows.lowestSource;
+    const auto numRows = rows.highestSource - rows.lowestSource + 1;
+    std::vector<float> stretched (static_cast<size_t> (numRows) * static_cast<size_t> (nu));
+
+    for (int r = 0; r < numRows; ++r)
+    {
+        const auto* src = image.values.data() + static_cast<size_t> (firstRow + r) * static_cast<size_t> (image.width);
+        auto* dst = stretched.data() + static_cast<size_t> (r) * static_cast<size_t> (nu);
+
+        for (int x = 0; x < nu; ++x)
+        {
+            float sum = 0.0f;
+
+            for (auto t = columns.start[static_cast<size_t> (x)]; t < columns.start[static_cast<size_t> (x + 1)]; ++t)
+                sum += src[columns.index[static_cast<size_t> (t)]] * columns.weight[static_cast<size_t> (t)];
+
+            dst[x] = sum;
+        }
+    }
+
+    std::vector<float> grid (static_cast<size_t> (nu) * static_cast<size_t> (nv), 0.0f);
+
+    for (int y = 0; y < nv; ++y)
+    {
+        auto* dst = grid.data() + static_cast<size_t> (y) * static_cast<size_t> (nu);
+
+        for (auto t = rows.start[static_cast<size_t> (y)]; t < rows.start[static_cast<size_t> (y + 1)]; ++t)
+        {
+            const auto* src = stretched.data() + static_cast<size_t> (rows.index[static_cast<size_t> (t)] - firstRow) * static_cast<size_t> (nu);
+            const auto w = rows.weight[static_cast<size_t> (t)];
+
+            for (int x = 0; x < nu; ++x)
+                dst[x] += src[x] * w;
+        }
+    }
+
+    // Canvas pixel centre -> grid cell coordinates (cell centres at whole numbers).
+    const auto back = turn.inverted()
+                          .translated (-area.getX(), -area.getY())
+                          .scaled (static_cast<float> (nu) / area.getWidth(), static_cast<float> (nv) / area.getHeight())
+                          .translated (-0.5f, -0.5f);
+
+    const auto cell = [&grid, nu, nv] (int x, int y) noexcept
+    {
+        return x >= 0 && y >= 0 && x < nu && y < nv ? grid[static_cast<size_t> (y) * static_cast<size_t> (nu) + static_cast<size_t> (x)] : 0.0f;
+    };
+
+    for (int y = clip.getY(); y < clip.getBottom(); ++y)
+    {
+        auto* dst = out.values.data() + static_cast<size_t> (y) * Canvas::width;
+
+        for (int x = clip.getX(); x < clip.getRight(); ++x)
+        {
+            auto gx = static_cast<float> (x) + 0.5f, gy = static_cast<float> (y) + 0.5f;
+            back.transformPoint (gx, gy);
+
+            if (! (gx > -1.0f && gy > -1.0f && gx < static_cast<float> (nu) && gy < static_cast<float> (nv)))
+                continue;
+
+            const auto x0 = static_cast<int> (std::floor (gx)), y0 = static_cast<int> (std::floor (gy));
+            const auto fx = gx - static_cast<float> (x0), fy = gy - static_cast<float> (y0);
+            const auto value = (cell (x0, y0) * (1.0f - fx) + cell (x0 + 1, y0) * fx) * (1.0f - fy)
+                             + (cell (x0, y0 + 1) * (1.0f - fx) + cell (x0 + 1, y0 + 1) * fx) * fy;
+
+            if (value > 0.0f)
+                dst[x] = std::max (dst[x], juce::jlimit (0.0f, 1.0f, value * intensity));
+        }
+    }
+}
+
 } // namespace
+
+juce::AffineTransform rotationTransform (juce::Rectangle<float> box, float degrees, float xScale) noexcept
+{
+    degrees = ArtDocument::normaliseRotation (degrees);
+
+    if (juce::exactlyEqual (degrees, 0.0f) || ! (xScale > 0.0f) || ! std::isfinite (xScale))
+        return {};
+
+    const auto centre = box.getCentre();
+    return juce::AffineTransform::translation (-centre.x, -centre.y)
+               .scaled (xScale, 1.0f)
+               .rotated (juce::degreesToRadians (degrees))
+               .scaled (1.0f / xScale, 1.0f)
+               .translated (centre.x, centre.y);
+}
+
+std::array<juce::Point<float>, 4> objectCornersNorm (const ArtObject& object, const FrequencyScale& scale) noexcept
+{
+    const auto r = objectRectNorm (object, scale);
+    const auto turn = rotationTransform (r, object.rotation);
+    return { r.getTopLeft().transformedBy (turn), r.getTopRight().transformedBy (turn),
+             r.getBottomRight().transformedBy (turn), r.getBottomLeft().transformedBy (turn) };
+}
+
+juce::Rectangle<float> objectBoundsNorm (const ArtObject& object, const FrequencyScale& scale) noexcept
+{
+    const auto r = objectRectNorm (object, scale);
+
+    if (juce::exactlyEqual (ArtDocument::normaliseRotation (object.rotation), 0.0f))
+        return r;
+
+    const auto corners = objectCornersNorm (object, scale);
+    return juce::Rectangle<float>::findAreaContainingPoints (corners.data(), static_cast<int> (corners.size()));
+}
+
+float displayAspectOf (const ArtObject& object, const FrequencyScale& scale) noexcept
+{
+    const auto r = objectRectNorm (object, scale);
+    return r.getHeight() > 0.0f ? r.getWidth() * ArtDocument::displayAspect / r.getHeight() : 1.0f;
+}
+
+float shapeAspect (ShapePreset preset, const ArtObject& object) noexcept
+{
+    switch (preset)
+    {
+        case ShapePreset::original:
+            return object.image.isValid() && object.image.getHeight() > 0
+                       ? static_cast<float> (object.image.getWidth()) / static_cast<float> (object.image.getHeight())
+                       : 1.0f;
+        case ShapePreset::square:        return 1.0f;
+        case ShapePreset::fourByThree:   return 4.0f / 3.0f;
+        case ShapePreset::threeByFour:   return 3.0f / 4.0f;
+        case ShapePreset::sixteenByNine: return 16.0f / 9.0f;
+        case ShapePreset::nineBySixteen: return 9.0f / 16.0f;
+    }
+
+    return 1.0f;
+}
+
+void applyShapeAspect (ArtObject& object, float aspect, const FrequencyScale& scale) noexcept
+{
+    if (! (aspect > 0.0f) || ! std::isfinite (aspect))
+        return;
+
+    // In display units: the canvas is displayAspect wide and 1 tall.
+    constexpr auto canvasWidth = static_cast<double> (ArtDocument::displayAspect);
+    const auto r = objectRectNorm (object, scale);
+    const auto area = std::max (1.0e-8, static_cast<double> (r.getWidth()) * canvasWidth * static_cast<double> (r.getHeight()));
+    auto width = std::sqrt (area * aspect);
+    auto height = std::sqrt (area / aspect);
+    auto cx = static_cast<double> (r.getCentreX()) * canvasWidth;
+    auto cy = static_cast<double> (r.getCentreY());
+
+    // No larger than the canvas, then no further than its edges from the centre (shrinking to
+    // half the size at the most: past that the centre moves in instead).
+    const auto fit = std::min ({ 1.0, canvasWidth / width, 1.0 / height });
+    width *= fit;
+    height *= fit;
+
+    const auto roomX = 2.0 * std::max (0.0, std::min (cx, canvasWidth - cx));
+    const auto roomY = 2.0 * std::max (0.0, std::min (cy, 1.0 - cy));
+    const auto shrink = std::clamp (std::min (roomX / width, roomY / height), 0.5, 1.0);
+    width *= shrink;
+    height *= shrink;
+
+    cx = std::clamp (cx, width * 0.5, canvasWidth - width * 0.5);
+    cy = std::clamp (cy, height * 0.5, 1.0 - height * 0.5);
+
+    const auto top = static_cast<float> (cy - height * 0.5);
+    const auto bottom = static_cast<float> (cy + height * 0.5);
+    const auto hz = normSpanToHz (top, bottom, scale);
+
+    object.startTime = static_cast<float> ((cx - width * 0.5) / canvasWidth);
+    object.endTime = static_cast<float> ((cx + width * 0.5) / canvasWidth);
+    object.lowHz = static_cast<float> (hz.low);
+    object.highHz = static_cast<float> (hz.high);
+}
+
+int matchingShapePreset (const ArtObject& object, const FrequencyScale& scale) noexcept
+{
+    const auto aspect = displayAspectOf (object, scale);
+
+    for (int i = 0; i < numShapePresets; ++i)
+    {
+        const auto preset = static_cast<ShapePreset> (i);
+
+        if (preset == ShapePreset::original && ! object.image.isValid())
+            continue;
+
+        if (std::abs (aspect / shapeAspect (preset, object) - 1.0f) <= 0.02f)
+            return i;
+    }
+
+    return -1;
+}
 
 juce::Rectangle<float> objectRectNorm (const ArtObject& object, const FrequencyScale& scale) noexcept
 {
@@ -310,13 +546,24 @@ void Compositor::render (const ArtDocument& document, const FrequencyScale& scal
 
         const auto area = pixelRect (object, scale);
 
-        if (canvasClip (area).isEmpty())
+        const auto upright = juce::exactlyEqual (ArtDocument::normaliseRotation (object.rotation), 0.0f);
+
+        if (canvasClip (upright ? area : area.transformedBy (rotationTransform (area, object.rotation)).expanded (turnedReach (area))).isEmpty())
             continue;
 
         if (object.type == ArtObject::Type::text)
+        {
             drawText (object, area, intensity, out);
+        }
         else if (object.image.isValid())
-            drawImage (processed (object), area, intensity, out);
+        {
+            const auto degrees = ArtDocument::normaliseRotation (object.rotation);
+
+            if (juce::exactlyEqual (degrees, 0.0f))
+                drawImage (processed (object), area, intensity, out);
+            else
+                drawTurnedImage (processed (object), area, rotationTransform (area, degrees), intensity, out);
+        }
     }
 
     // Work for pictures that are gone (or whose mode or clean-up changed) is dropped right away:

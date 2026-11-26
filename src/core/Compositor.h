@@ -5,6 +5,7 @@
 #include "Document.h"
 #include "FrequencyScale.h"
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <vector>
@@ -32,6 +33,54 @@ struct Canvas
     Parts outside 0..1 are off the visible range (and are not drawn). */
 juce::Rectangle<float> objectRectNorm (const ArtObject& object, const FrequencyScale& scale) noexcept;
 
+/** How a rotated object's content is turned: by `degrees` (clockwise on screen) about the
+    centre of `box`, in display space. `xScale` is how much wider than tall one unit of the
+    coordinates `box` is in is on screen, relative to its height: ArtDocument::displayAspect for
+    normalised canvas coordinates and for canvas pixels (both are square grids over the canvas);
+    displayAspect * height / width for a view `width` x `height` pixels big. So the turn is a
+    true rotation on a canvas shown displayAspect wide (ArtFreq's), whatever the coordinates.
+    The identity for 0 degrees. */
+juce::AffineTransform rotationTransform (juce::Rectangle<float> box, float degrees,
+                                         float xScale = ArtDocument::displayAspect) noexcept;
+
+/** The corners of an object's box once turned, in normalised coordinates (as objectRectNorm):
+    top-left, top-right, bottom-right, bottom-left of the unrotated box. */
+std::array<juce::Point<float>, 4> objectCornersNorm (const ArtObject& object, const FrequencyScale& scale) noexcept;
+
+/** The smallest upright rectangle around an object's turned box (objectRectNorm for an
+    upright object), in normalised coordinates: what the object covers on the canvas. */
+juce::Rectangle<float> objectBoundsNorm (const ArtObject& object, const FrequencyScale& scale) noexcept;
+
+/** A box's shape as seen on screen: its width over its height in display space
+    (ArtDocument::displayAspect), of the unrotated box. */
+float displayAspectOf (const ArtObject& object, const FrequencyScale& scale) noexcept;
+
+/** Shapes a picture's box can be given at once (the inspector's Shape). */
+enum class ShapePreset
+{
+    original = 0,   // the picture's own proportions (its pixels' width / height)
+    square,         // 1:1
+    fourByThree,    // 4:3
+    threeByFour,    // 3:4
+    sixteenByNine,  // 16:9
+    nineBySixteen   // 9:16
+};
+
+constexpr int numShapePresets = 6;
+
+/** The display aspect (width / height on screen) a preset asks for: for Original the picture's
+    (1 for an object without one). */
+float shapeAspect (ShapePreset preset, const ArtObject& object) noexcept;
+
+/** Reshapes an object's box to a display aspect, about its centre, keeping its area on screen
+    (the geometric mean of its sides). It stays on the canvas (time 0..1, the scale's range):
+    shrunk about the centre if it would cross an edge (to no less than half its size, after
+    which its centre moves in). The rotation is kept. */
+void applyShapeAspect (ArtObject& object, float aspect, const FrequencyScale& scale) noexcept;
+
+/** The preset the object's box has (within 2 %), Original first; -1 if none. */
+int matchingShapePreset (const ArtObject& object, const FrequencyScale& scale) noexcept;
+
 /** The inverse of objectRectNorm for the frequency part: the Hz range a normalised vertical span
     (top < bottom, y = 0 at the top) covers on the scale. */
 HzRange normSpanToHz (float top, float bottom, const FrequencyScale& scale) noexcept;
@@ -55,6 +104,11 @@ public:
               text:  renderTextInto (stretched to fill the rectangle)
               image: processImage (mode, cleanup), stretched to fill the rectangle (area-averaged
                      when shrinking, bilinear when enlarging);
+            a rotated object is fitted to its rectangle the same way and then turned about the
+            rectangle's centre (rotationTransform): text as a turned path, a picture resampled
+            first to the grid it covers once turned (area-averaged or bilinear, as above), then
+            read bilinearly at each canvas pixel, its edges anti-aliased. An upright object is
+            drawn exactly as before objects could be rotated;
         combined by taking the maximum. Objects partly off the visible range are clipped.
         Hidden objects (and a hidden paint layer) are left out.
 

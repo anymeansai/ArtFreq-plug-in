@@ -34,6 +34,7 @@ namespace ids
     const juce::Identifier highHz ("highHz");
     const juce::Identifier intensity ("intensity");
     const juce::Identifier visible ("visible");
+    const juce::Identifier rotation ("rotation");
     const juce::Identifier text ("text");
     const juce::Identifier fontIndex ("fontIndex");
     const juce::Identifier textStyle ("textStyle");
@@ -314,6 +315,25 @@ ArtDocument ArtDocument::createDefault()
     return document;
 }
 
+float ArtDocument::normaliseRotation (float degrees) noexcept
+{
+    if (! std::isfinite (degrees))
+        return 0.0f;
+
+    if (degrees >= -180.0f && degrees <= 180.0f)
+        return degrees;
+
+    // Into (-180, 180]: 540 is 180, -190 is 170.
+    auto turned = std::fmod (degrees, 360.0f);
+
+    if (turned > 180.0f)
+        turned -= 360.0f;
+    else if (turned <= -180.0f)
+        turned += 360.0f;
+
+    return turned;
+}
+
 bool ArtDocument::isEmpty() const noexcept
 {
     return objects.empty() && ! hasPaint();
@@ -504,6 +524,10 @@ juce::ValueTree ArtDocument::toValueTree() const
         child.setProperty (ids::intensity, object.intensity, nullptr);
         child.setProperty (ids::visible, object.visible, nullptr);
 
+        // (Upright objects are saved as they were before objects could be rotated.)
+        if (const auto turn = normaliseRotation (object.rotation); ! juce::exactlyEqual (turn, 0.0f))
+            child.setProperty (ids::rotation, turn, nullptr);
+
         if (object.type == ArtObject::Type::text)
         {
             child.setProperty (ids::text, object.text, nullptr);
@@ -616,6 +640,7 @@ ArtDocument ArtDocument::fromValueTree (const juce::ValueTree& tree)
         object.highHz = high;
         object.intensity = juce::jlimit (0.0f, 1.0f, readFloat (child, ids::intensity, 1.0f));
         object.visible = readBool (child, ids::visible, true);
+        object.rotation = normaliseRotation (readFloat (child, ids::rotation, 0.0f));  // older drawings: upright
 
         if (object.type == ArtObject::Type::text)
         {

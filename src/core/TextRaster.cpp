@@ -322,7 +322,8 @@ juce::Path makeTextPath (const juce::String& text, int fontIndex)
 }
 
 void renderTextInto (juce::Image& target, juce::Rectangle<float> area,
-                     const juce::String& text, int fontIndex, TextStyle style)
+                     const juce::String& text, int fontIndex, TextStyle style,
+                     const juce::AffineTransform& turn)
 {
     if (! target.isValid() || target.getFormat() != juce::Image::SingleChannel)
     {
@@ -349,6 +350,11 @@ void renderTextInto (juce::Image& target, juce::Rectangle<float> area,
                              .scaled (inner.getWidth() / pathBounds.getWidth(), inner.getHeight() / pathBounds.getHeight())
                              .translated (inner.getX(), inner.getY()));
 
+    const auto turned = ! turn.isIdentity();
+
+    if (turned)
+        path.applyTransform (turn);
+
     const auto outline = style == TextStyle::outline;
 
     // Outline: a stroke of 7 % of the box height centred on the letters' outlines, of which only
@@ -358,8 +364,17 @@ void renderTextInto (juce::Image& target, juce::Rectangle<float> area,
     const auto strokeWidth = std::max (3.0f, area.getHeight() * 0.07f);
 
     // Only the part of the target the drawing can reach is rendered, never outside the box.
-    const auto reach = outline ? inner.expanded (strokeWidth * 0.5f + 1.0f) : inner.expanded (1.0f);
-    const auto box = area.getSmallestIntegerContainer();
+    // (A turned box's reach is the bounding box of the turned rectangle.)
+    auto reach = outline ? inner.expanded (strokeWidth * 0.5f + 1.0f) : inner.expanded (1.0f);
+    auto box = area.getSmallestIntegerContainer();
+
+    if (turned)
+    {
+        // The stroke is drawn after the turn, so it reaches as far round the turned letters.
+        reach = inner.transformedBy (turn).expanded (outline ? strokeWidth * 0.5f + 1.0f : 1.0f);
+        box = reach.getSmallestIntegerContainer();
+    }
+
     const auto clip = reach.getSmallestIntegerContainer().getIntersection (box).getIntersection (target.getBounds());
 
     if (clip.isEmpty())

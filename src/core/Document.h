@@ -46,6 +46,11 @@ struct ArtObject
 
     float intensity = 1.0f;  // 0..1, multiplies the object's values
 
+    // Turned this many degrees, clockwise as seen on screen, -180..180 (0 = upright). The
+    // placement above stays the unrotated box: the content is drawn turned about the box's
+    // centre in display space (see ArtDocument::displayAspect), and clipped by the canvas.
+    float rotation = 0.0f;
+
     // A hidden object stays in the drawing (and is saved with it) but is silent: the compositor
     // leaves it out, and the canvas neither draws nor picks it.
     bool visible = true;
@@ -82,6 +87,21 @@ class ArtDocument
 public:
     static constexpr int paintWidth = 1024;
     static constexpr int paintHeight = 512;
+
+    /** How wide the canvas is shown against how tall (width / height), the same for both
+        plug-ins and every window size: ArtFreq's drawing area, 764 x 462 logical pixels (its
+        window scales uniformly, so this holds at every size). Rotations and picture shapes are
+        worked out in this display space (x times displayAspect, y as it is), so a rotated
+        object looks rotated, not sheared, and a square picture looks square, in ArtFreq.
+        ArtFreq FX shows the same drawing on a wider canvas (652 x 300, 2.17; 652 x 268, 2.43,
+        while the Sound strip is there), so there everything is stretched sideways by 31 % (47 %)
+        compared with ArtFreq, rotated objects included: a drawing is the same in both, its
+        look on screen follows the window it is shown in. */
+    static constexpr float displayAspect = 764.0f / 462.0f;
+
+    /** An angle in degrees brought into -180..180 by whole turns (angles already in that range
+        are kept as they are; anything not finite is 0). */
+    static float normaliseRotation (float degrees) noexcept;
 
     ArtDocument();  // empty paint layer, no objects
 
@@ -126,11 +146,13 @@ public:
                       paintScale, paintMinHz, paintMaxHz (with the paint; a document without
                       them was painted on the default Log 20 Hz - 20 kHz scale), paintVisible
           children "Object", back to front: id, type, startTime, endTime, lowHz, highHz,
-                             intensity, visible, text, fontIndex, textStyle, imageMode, cleanup,
-                             image (base64 PNG), fileName
+                             intensity, visible, rotation (degrees; written only when it is not
+                             0), text, fontIndex, textStyle, imageMode, cleanup, image (base64
+                             PNG), fileName
         fromValueTree tolerates missing or out-of-range values (it clamps them and drops
         objects it cannot use) and returns an empty document for an invalid tree. Documents
-        saved before layers could be hidden have no visibility: everything in them is shown. */
+        saved before layers could be hidden have no visibility: everything in them is shown;
+        documents saved before objects could be rotated have no rotation: nothing in them is. */
     juce::ValueTree toValueTree() const;
     static ArtDocument fromValueTree (const juce::ValueTree& tree);
 
