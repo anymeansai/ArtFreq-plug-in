@@ -1620,9 +1620,10 @@ void checkNoOverlap (juce::Component& parent, const juce::String& state)
 }
 
 /** ArtFreq FX's window holds together in the state it is in: the bars, the strips that are
-    there and the canvas tile the window without overlapping, the drawer stays over the canvas,
-    inside every bar, strip and the drawer nothing overlaps, the line in the bottom bar fits, and
-    nothing that is shown is disabled. */
+    there and the canvas tile the window without overlapping (the canvas fitted in its room at
+    the plug-in's display aspect: the room's height, or beside the drawer the width beside it),
+    the drawer stays over the canvas or beside it, inside every bar, strip and the drawer nothing
+    overlaps, the line in the bottom bar fits, and nothing that is shown is disabled. */
 void checkEffectLayout (artfreq::ArtFreqEditor& editor, const juce::String& state)
 {
     using namespace artfreq;
@@ -1644,31 +1645,61 @@ void checkEffectLayout (artfreq::ArtFreqEditor& editor, const juce::String& stat
         return;
     }
 
-    // From top to bottom, without a gap or an overlap. (The Brush strip lies over the canvas's
-    // foot: see below.)
+    // From top to bottom, without a gap or an overlap; the canvas (or the live view, which lies
+    // exactly where it does) in the room the bars and the Sound strip leave it. (The Brush strip
+    // lies over the canvas's foot: see below.)
     auto* view = canvas->isVisible() ? canvas : live;
     auto y = 0;
     juce::StringArray problems;
 
-    for (auto* part : { top, sound, view, static_cast<juce::Component*> (bottom) })
+    for (auto* part : { top, sound })
     {
         if (! part->isVisible())
             continue;
 
-        // (The canvas keeps a few pixels of air around it.)
-        const auto air = part == view || y == view->getBottom() ? 16 : 0;
-
-        if (part->getY() < y || part->getY() > y + air || part->getX() < 0 || part->getRight() > content->getWidth())
+        if (part->getY() != y || part->getX() < 0 || part->getRight() > content->getWidth())
             problems.add (nameOf (*part) + " at " + part->getBounds().toString());
 
         y = part->getBottom();
     }
+
+    if (bottom->getY() < y || bottom->getX() < 0 || bottom->getRight() > content->getWidth())
+        problems.add (nameOf (*bottom) + " at " + bottom->getBounds().toString());
+
+    // The room: between the strip (or the top bar) and the bottom bar, the window's width, or
+    // beside the drawer while the canvas lies beside it. The canvas fits it at the plug-in's
+    // aspect: as tall as it (but for a few pixels of air) or as wide, centred the other way.
+    auto room = juce::Rectangle<int> (0, y, content->getWidth(), bottom->getY() - y);
+    const auto besideDrawer = drawer->isVisible() && (view->getRight() <= drawer->getX() || view->getX() >= drawer->getRight());
+
+    if (besideDrawer)
+        room = drawer->getX() <= 0 ? room.withLeft (drawer->getRight()) : room.withRight (drawer->getX());
+
+    constexpr int air = 16;
+    const auto fillsHeight = view->getY() - room.getY() <= air && room.getBottom() - view->getBottom() <= air;
+    const auto fillsWidth = view->getX() - room.getX() <= air && room.getRight() - view->getRight() <= air;
+    const auto centred = std::abs ((view->getX() - room.getX()) - (room.getRight() - view->getRight())) <= air
+                      && std::abs ((view->getY() - room.getY()) - (room.getBottom() - view->getBottom())) <= air;
+
+    if (! room.contains (view->getBounds()) || ! (fillsHeight || fillsWidth) || ! centred)
+        problems.add (nameOf (*view) + " at " + view->getBounds().toString() + " in " + room.toString());
 
     check (problems.isEmpty() && bottom->getBottom() == content->getHeight() && view->getHeight() >= 200,
            "ArtFreq FX, " + state + ": the bars, the strips and the canvas share the window"
                + (problems.isEmpty() ? juce::String() : " (" + problems.joinIntoString ("; ") + ")"));
 
     auto* canvasView = dynamic_cast<ui::CanvasView*> (canvas);
+
+    // The drawing keeps ArtFreq FX's display aspect, whatever room it has (never stretched), so
+    // a turned object is a turned rectangle and a square picture square.
+    if (auto* processor = dynamic_cast<ArtFreqProcessor*> (editor.getAudioProcessor()); processor != nullptr && canvasView != nullptr)
+    {
+        const auto drawing = canvasView->getDrawingArea();
+        check (std::abs (drawing.getWidth() - drawing.getHeight() * processor->getDisplayAspect()) <= 1.0f
+                   && live->getBounds() == canvas->getBounds(),
+               "ArtFreq FX, " + state + ": the drawing keeps the display aspect (" + juce::String (drawing.getWidth(), 1) + " x "
+                   + juce::String (drawing.getHeight(), 1) + "), the live view with it");
+    }
 
     // The Brush strip over the canvas's time axis, from edge to edge, on the bottom bar, clear of
     // the drawing (so a tool never resizes the canvas).
@@ -2104,7 +2135,7 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
         editor->selectObject (defaultText);
         pump (60);
         checkSoon ([&] { return editor->isDrawerOpen() && canvas->getWidth() < canvasWidth - 200 && canvas->getRight() <= drawer->getX(); },
-                   "the default drawing's \"ArtFreq\" (4 - 96 %) selected: the canvas lies beside the drawer, not under it");
+                   "the default drawing's \"ArtFreq\" (4 - 96 %) selected: the canvas lies beside the drawer, not under it, smaller at the same shape");
         checkEffectLayout (*editor, "the default text selected");
         save ("wide-selected", pixelScale);
 
@@ -2152,12 +2183,15 @@ void checkEffect (const juce::File& outputDir, float pixelScale)
     };
 
     const auto canvasHeightInCarve = canvas->getHeight();
+    const auto canvasWidthInCarve = canvas->getWidth();
 
     clickMode (0.38f);
     check (processor.getEffectMode() == EffectMode::carveDraw && mode->getSelectedIndex() == 1, "clicking Carve + Draw chooses it");
     check (shown ("depth") && sound->isVisible() && shown ("level") && shown ("density") && shown ("contrast") && shown ("lows"),
            "Carve + Draw: Depth, and the Sound strip with Level, Density, Contrast and Lows");
-    check (canvas->getHeight() == canvasHeightInCarve - sound->getHeight(), "... the canvas makes room for the strip");
+    check (canvas->getHeight() == canvasHeightInCarve - sound->getHeight() && canvas->getWidth() < canvasWidthInCarve - 40
+               && std::abs (canvas->getBounds().getCentreX() - content->getWidth() / 2) <= 8,
+           "... the canvas makes room for the strip, keeping its shape: less wide, centred (" + canvas->getBounds().toString() + ")");
     check (bottom->getShownHint() == "Draws once when you press play", "... and the bottom bar says \"Draws once when you press play\"");
     checkEffectLayout (*editor, "Carve + Draw");
     save ("carve-draw", pixelScale);
