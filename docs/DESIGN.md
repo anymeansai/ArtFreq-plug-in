@@ -25,15 +25,24 @@ code is also built as **ArtFreq FX**, an audio effect that carves the drawing in
    degrees clockwise on screen, -180..180, saved only when it is not 0, so documents from before
    load upright and upright objects save as before): its placement stays the unrotated box, and
    its content is fitted to that box as always and then turned about the box's centre **in
-   display space**: x scaled by `ArtDocument::displayAspect`, turned, scaled back
-   (`rotationTransform`). displayAspect is ArtFreq's drawing area at its default size, 764 x 462
-   logical pixels (1.654); the window scales uniformly, so it is the instrument's at every size,
-   and one constant for both plug-ins keeps a drawing identical in both and independent of the
-   window. ArtFreq FX shows the canvas at other proportions (652 x 300, 2.17; 652 x 268, 2.43 with
-   the Sound strip; about 1.4 when the canvas moves beside the drawer), so there a turned box is a
-   parallelogram on screen and a 1:1 picture is stretched by the same factor as everything else on
-   that canvas (31 % / 47 % wider, 15 % narrower). Picture shapes (the inspector's Shape) are
-   display aspects in the same space.
+   display space**: x scaled by the plug-in's display aspect, turned, scaled back
+   (`rotationTransform`). Each plug-in has its own (`ArtDocument::displayAspectFor`, which the
+   processor hands its compositor and the canvas, inspector and actions take from the processor):
+   the shape of its canvas's drawing area in its main state, ArtFreq's 764 x 462 logical pixels
+   (1.654), ArtFreq FX's 652 x 300 (2.173, Carve and Stencil). Both windows scale uniformly, and
+   each editor lays its canvas out with `CanvasView::fittedBounds`: the drawing as large as its
+   room allows **at that aspect**, centred, the window's background round it, never stretched to
+   the room's shape. ArtFreq's room has that shape in every state (the inspector, the layer list,
+   the panels and the live view leave it alone); ArtFreq FX's is less tall under the Sound strip
+   (the drawing 582 x 268, centred across the window) and narrower beside the drawer (404 x 186,
+   centred beside it). So in each plug-in, in every state and at every window size, a turned box
+   is a turned rectangle on screen, a 1:1 picture square and 16:9 16:9, Shift keeps the
+   proportions seen, and the rotate handle follows the mouse exactly. Picture shapes (the
+   inspector's Shape) and a new picture's proportions are display aspects in the same space. The
+   aspect belongs to the plug-in, not to the drawing (nothing new is saved): the same project
+   state opened in the other plug-in draws an upright drawing identically, but turns a rotated
+   object (and shapes a picture's "1:1") for that plug-in's canvas, so it comes out a little
+   different there.
 3. **The compositor** (`core/Compositor.h`) flattens the document into a 1024 x 1024 canvas of
    loudness values 0..1 (max of all shown layers). A turned text is its path, fitted to the box
    and then turned (the outline style stroked after the turn); a turned picture is resampled to
@@ -767,8 +776,10 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
       it (never to under the mouse). The layer list stays where it is while it is used.
     - **An object too wide for either side** (more than about two thirds of the canvas: a new
       text, which runs from 4 to 96 % of the length, Fill length, a new window's "ArtFreq") gets
-      its settings beside the canvas instead of over it: the canvas moves aside, narrower, on the
-      side away from the click, so all of the object and its handles stay in view (on the right
+      its settings beside the canvas instead of over it: the canvas moves aside, smaller at its
+      own aspect (404 x 186 at 100 %, centred in the room beside the drawer; stretching it to the
+      room's 1.35 would slant every turned object and squash every square), on the side away from
+      the click, so all of the object and its handles stay in view (on the right
       the drawer covered 35 % of the canvas: the end of the text being typed, and the handles
       that resize it, were under it until it was closed). Not while the canvas is pressed (a
       drag would lose the object under the mouse): on the release. The canvas stays beside the
@@ -776,7 +787,9 @@ therefore registered twice: **ArtFreq** (Instrument, Generator; unchanged) and *
       they are (Fill length) moves it aside too; it comes back with the list, another object or
       the drawer closing. Narrower objects keep the drawer over the canvas: the drawing does not
       move for them. The snapshot tool checks, in every state with an object's settings open,
-      that the object and its handles are clear of the drawer.
+      that the object and its handles are clear of the drawer. (Letting the drawer lie over a
+      full-size canvas instead was tried and dropped: on the right it hides a third of such an
+      object, its handles and rotate knob included; the smaller canvas shows all of it.)
     - Closing: the close button puts it away and keeps the selection (a click on the selected
       object brings its settings back); Esc or a click on empty canvas deselects, and the
       settings go with the selection; with nothing selected, Esc or the Layers button closes
@@ -1446,8 +1459,15 @@ upright; upright objects drawn bit for bit as before rotation, against hashes of
 at that commit on Linux x86-64; a bar turned 90 degrees standing where it should, text and
 picture; the plan, ArtFreq FX's masks, the fast and the measured previews following it; the
 shapes' aspect, centre, area and canvas edges; the Shape menu, a dropped picture's proportions,
-ArtFreq's canvas aspect being displayAspect; and, in both plug-ins through the canvas, a turned
-object picked by its turned box, the rotate handle with and without Shift and as one undo step,
+each plug-in's display aspect: its compositor turning a square into a square diamond on its
+own canvas (and not on the other's), the fitted canvas, each editor's drawing area at its aspect
+within a pixel in every state (ArtFreq: the inspector, the layer list, the panels, the live view,
+75 to 200 %; ArtFreq FX: each mode, the drawer closed, on either side and with the canvas beside
+it, the layer list, the brush, the live view, 75 and 200 %), 1:1 and 16:9 measured on screen;
+and, in both plug-ins through the canvas, a turned object picked by its turned box, a turned box
+with right angles on screen at any angle (in ArtFreq FX also beside the drawer under the Sound
+strip), the rotate handle dragged to on-screen angles (within a degree) and with Shift and as one
+undo step,
 [ and ], a turned object's resize keeping the opposite corner, Shift keeping the proportions on a
 corner and an edge and letting go of Shift, Shift still moving on one axis, the Rotation bar);
 plan
