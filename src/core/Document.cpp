@@ -630,7 +630,7 @@ ArtDocument ArtDocument::fromValueTree (const juce::ValueTree& tree)
             if (! object.image.isValid())
                 continue;  // a picture without its pixels is of no use
 
-            object.imageMode = static_cast<ImageMode> (readInt (child, ids::imageMode, 0, 0, 3));
+            object.imageMode = static_cast<ImageMode> (readInt (child, ids::imageMode, 0, 0, numImageModes - 1));
             object.cleanup = juce::jlimit (0.0f, 0.9f, readFloat (child, ids::cleanup, object.cleanup));
             object.fileName = child[ids::fileName].toString().substring (0, maxFileNameLength);
         }

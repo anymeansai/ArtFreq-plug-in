@@ -141,4 +141,22 @@ juce::Typeface::Ptr artTypeface (int index)
     return face (artFont (index).face);
 }
 
+juce::Typeface::Ptr emojiTypeface()
+{
+    // Loaded on first use (a text with a character its art font lacks), not with the UI's faces:
+    // most drawings never need it.
+    static const auto typeface = juce::Typeface::createSystemTypefaceFor (ArtFreqAssets::NotoEmojiBold_ttf,
+                                                                          static_cast<size_t> (ArtFreqAssets::NotoEmojiBold_ttfSize));
+    return typeface;
+}
+
+juce::Font emoji (float height)
+{
+    // Its own glyphs or none: a fallback to the system's emoji would differ per machine (and a
+    // colour font has no outlines to draw).
+    const auto typeface = emojiTypeface();
+    auto options = typeface != nullptr ? juce::FontOptions (typeface) : juce::FontOptions();
+    return juce::Font (options.withPointHeight (juce::jmax (0.1f, height)).withFallbackEnabled (false));
+}
+
 } // namespace artfreq::fonts

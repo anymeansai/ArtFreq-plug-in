@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace artfreq::ui
 {
@@ -36,7 +37,10 @@ namespace
 
     constexpr juce::uint32 wheelGestureMs = 1000;   // wheel steps closer together are one undo step
 
-    const juce::StringArray imageModeNames { "Auto", "Original", "Negative", "Outline" };
+    // In the order of ImageMode. The short labels are for ArtFreq FX's drawer, where five words
+    // do not fit side by side.
+    const juce::StringArray imageModeNames { "Auto", "Original", "Negative", "Outline", "B&W" };
+    const juce::StringArray imageModeShortNames { "Auto", "Orig", "Neg", "Outline", "B&W" };
 
     juce::String percent (double value) { return juce::String (juce::roundToInt (value)) + "%"; }
 
@@ -64,6 +68,28 @@ namespace
             if (mods.isCommandDown() && (code == 'z' || code == 'Z' || code == 'y' || code == 'Y'))
                 return false;  // up to the editor: the document's undo
 
+            // An emoji typed on Windows (its emoji panel) arrives as two key presses, the halves
+            // of a UTF-16 surrogate pair: they go in as the one character they are, not as two
+            // that no font can draw.
+            const auto typed = static_cast<juce::uint32> (key.getTextCharacter());
+
+            if (typed >= 0xd800 && typed <= 0xdbff)
+            {
+                highSurrogate = typed;
+                return true;
+            }
+
+            const auto leading = std::exchange (highSurrogate, 0u);
+
+            if (typed >= 0xdc00 && typed <= 0xdfff)
+            {
+                if (leading != 0 && ! isReadOnly())
+                    insertTextAtCaret (juce::String::charToString (static_cast<juce::juce_wchar> (0x10000 + ((leading - 0xd800) << 10)
+                                                                                                    + (typed - 0xdc00))));
+
+                return true;
+            }
+
             if (key.isKeyCode (juce::KeyPress::returnKey) && ! mods.isCommandDown() && ! mods.isCtrlDown())
             {
                 if (mods.isShiftDown() || mods.isAltDown())
@@ -84,6 +110,9 @@ namespace
             if (onFocusGained != nullptr)
                 onFocusGained();
         }
+
+    private:
+        juce::uint32 highSurrogate = 0;   // the first half of a character typed in two
     };
 
     /** A bar that edits the selected object. Each mouse-wheel step reaches the slider's listeners
@@ -110,6 +139,17 @@ namespace
     {
     public:
         LowsControl() : SegmentedControl (params::lowEndNames()) {}
+    };
+
+    /** A picture's Mode: a segmented control that explains its choices in a tooltip. */
+    class ModeControl final : public SegmentedControl,
+                              public juce::SettableTooltipClient
+    {
+    public:
+        ModeControl() : SegmentedControl (imageModeNames)
+        {
+            setShortLabels (imageModeShortNames);
+        }
     };
 
     /** "< Layers" in an object's title row: back to the list of layers. */
@@ -212,8 +252,7 @@ struct Inspector::Impl
           addTextButton ("Add text", icons::text(), "Add text"),
           addImageButton ("Add image", icons::image(), "Add image..."),
           styleControl ({ "Solid", "Outline" }),
-          bandControl ({ "Low", "Mid", "High", "Full" }),
-          modeControl (imageModeNames)
+          bandControl ({ "Low", "Mid", "High", "Full" })
     {
         // ---- the layer list (nothing selected, or back from an object's settings) ----
         addTextButton.setTooltip ("Add a text object (in the mid band, or another band if that is taken)");
@@ -309,6 +348,10 @@ struct Inspector::Impl
 
         // ---- image ----
         modeControl.setTitle ("Mode");
+        modeControl.setTooltip ("Mode: what in the picture is loud. Auto: the subject, not its background. "
+                                "Original: the bright parts. Negative: the dark parts. Outline: only the edges. "
+                                "B&W: black and white, every part loud or silent with no greys in between, "
+                                "which reads crisply where a photo's midtones blur.");
         modeControl.onChange = [this] (int index)
         {
             if (! updating && index >= 0)
@@ -651,7 +694,7 @@ struct Inspector::Impl
             if (object.image.isValid())
             {
                 // What Auto picks, shown beside the Mode caption (the segment itself stays "Auto",
-                // so the four options read evenly): a shape on transparency is drawn by its alpha,
+                // so the options read evenly): a shape on transparency is drawn by its alpha,
                 // a light background is inverted, anything else is kept.
                 autoHint = hasMeaningfulTransparency (object.image) ? "Auto uses Transparency"
                          : resolveAutoMode (object.image) == ImageMode::negative ? "Auto uses Negative"
@@ -1189,7 +1232,8 @@ struct Inspector::Impl
     juce::Slider sizeSlider, softnessSlider, strengthSlider;
     InspectorTextField textField;
     juce::ComboBox fontBox;
-    SegmentedControl styleControl, bandControl, modeControl;
+    SegmentedControl styleControl, bandControl;
+    ModeControl modeControl;
     juce::TextButton fillButton, replaceButton;
     ObjectSlider intensitySlider, cleanupSlider;
     InspectorDeleteButton deleteButton;

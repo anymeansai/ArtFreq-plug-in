@@ -1,6 +1,7 @@
 #include "ImageProcessing.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace artfreq
@@ -192,6 +193,71 @@ void cleanUp (std::vector<float>& values, float cleanup)
 
     for (auto& v : values)
         v = std::max (0.0f, (v - c) * scale);
+}
+
+/** Black and white: every value becomes 0 or 1, split at the threshold Otsu's method finds in
+    the histogram (256 levels) of the pixels that can be seen (alpha above 0; all of them when
+    the picture's alpha is what is drawn). That threshold is the one that separates the values
+    into two groups as far apart, and each as tight, as possible; where several do equally well
+    (a gap in the histogram), the middle one. A picture of a single level has nothing to split:
+    it is loud if that level is at least half, silent otherwise, and so is one nobody can see. */
+void splitInTwo (std::vector<float>& values, const std::vector<float>& alpha, bool alphaIsDrawn)
+{
+    constexpr int numLevels = 256;
+    const auto levelOf = [] (float v) { return juce::jlimit (0, numLevels - 1, juce::roundToInt (v * static_cast<float> (numLevels - 1))); };
+
+    std::array<double, numLevels> histogram {};
+    auto total = 0.0, weighted = 0.0;
+
+    for (size_t i = 0; i < values.size(); ++i)
+    {
+        if (alphaIsDrawn || alpha[i] > 0.0f)
+        {
+            const auto level = levelOf (values[i]);
+            histogram[static_cast<size_t> (level)] += 1.0;
+            total += 1.0;
+            weighted += static_cast<double> (level);
+        }
+    }
+
+    // Levels above `split` are loud. With nothing to tell apart: the upper half.
+    auto split = (numLevels - 1) / 2;
+
+    if (total > 0.0)
+    {
+        auto best = 0.0;
+        auto firstBest = -1, lastBest = -1;
+        auto below = 0.0, belowWeighted = 0.0;
+
+        for (int level = 0; level < numLevels - 1; ++level)
+        {
+            below += histogram[static_cast<size_t> (level)];
+            belowWeighted += histogram[static_cast<size_t> (level)] * static_cast<double> (level);
+            const auto above = total - below;
+
+            if (below <= 0.0 || above <= 0.0)
+                continue;  // everything on one side: not a split
+
+            const auto difference = belowWeighted / below - (weighted - belowWeighted) / above;
+            const auto separation = below * above * difference * difference;   // the between-class variance
+
+            if (separation > best * (1.0 + 1.0e-9))
+            {
+                best = separation;
+                firstBest = lastBest = level;
+            }
+            else if (separation >= best * (1.0 - 1.0e-9) && lastBest == level - 1)
+            {
+                lastBest = level;  // the same again, with no pixels in between
+            }
+        }
+
+        if (firstBest >= 0)
+            split = (firstBest + lastBest) / 2;
+    }
+
+    for (auto& v : values)
+        v = levelOf (v) > split ? 1.0f : 0.0f;
 }
 
 /** Area-average weights for shrinking n source samples into m (m <= n): each destination
@@ -391,6 +457,18 @@ ProcessedImage processImage (const juce::Image& image, ImageMode mode, float cle
             result.values = sobel (autoValues (pixels, autoChoiceFor (pixels)), pixels.width, pixels.height);
             result.resolvedMode = ImageMode::outline;
             break;
+
+        case ImageMode::blackAndWhite:
+        {
+            // What Auto draws (levels and clean-up included), then split in two below.
+            const auto choice = autoChoiceFor (pixels);
+            result.values = autoValues (pixels, choice);
+            result.resolvedMode = ImageMode::blackAndWhite;
+            autoLevels (result.values);
+            cleanUp (result.values, cleanup);
+            splitInTwo (result.values, pixels.alpha, choice.drawAlpha);
+            return result;
+        }
 
         case ImageMode::automatic:
         default:

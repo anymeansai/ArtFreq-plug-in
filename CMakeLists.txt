@@ -46,6 +46,9 @@ FetchContent_MakeAvailable(JUCE)
 file(GLOB_RECURSE ARTFREQ_CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp")
 file(GLOB_RECURSE ARTFREQ_DSP_SOURCES  CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/dsp/*.cpp")
 file(GLOB_RECURSE ARTFREQ_UI_SOURCES   CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/ui/*.cpp")
+# The fonts: Inter and DM Mono for the UI, the art fonts for text in the drawing, and Noto Emoji
+# Bold for the emoji in that text (monochrome outlines, the same on every system; made from the
+# npm package @fontsource/noto-emoji by tools/make_noto_emoji.py). Their licences are beside them.
 file(GLOB         ARTFREQ_FONT_ASSETS  CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/*.ttf")
 
 set(ARTFREQ_PLUGIN_SOURCES
@@ -332,6 +335,25 @@ if(ARTFREQ_BUILD_TOOLS)
         PRIVATE
             ArtFreqAssets
             ${ARTFREQ_JUCE_MODULES}
+        PUBLIC
+            ArtFreqBuildFlags)
+
+    # The sheet lab: side-by-side pictures of what the drawing code makes (a text with emoji in
+    # several art fonts, a picture in its modes), for a person to judge (tools/SheetLab.cpp).
+    # Built only when asked for (--target ArtFreqSheetLab).
+    juce_add_console_app(ArtFreqSheetLab PRODUCT_NAME "ArtFreqSheetLab")
+    set_target_properties(ArtFreqSheetLab PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    target_sources(ArtFreqSheetLab PRIVATE
+        tools/SheetLab.cpp
+        ${ARTFREQ_CORE_SOURCES})
+    target_include_directories(ArtFreqSheetLab PRIVATE src)
+    target_compile_definitions(ArtFreqSheetLab PRIVATE
+        ${ARTFREQ_COMMON_DEFINITIONS}
+        JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(ArtFreqSheetLab
+        PRIVATE
+            ArtFreqAssets
+            juce::juce_gui_basics
         PUBLIC
             ArtFreqBuildFlags)
 

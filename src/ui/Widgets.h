@@ -24,6 +24,16 @@ public:
     /** Changes the label of one option without changing the selection (e.g. "Auto (Negative)"). */
     void setOptionLabel (int index, const juce::String& label);
 
+    /** Shorter labels, one per option, drawn instead when the options would touch each other
+        even at the smallest type size (a narrow panel). An empty array: always the options. */
+    void setShortLabels (const juce::StringArray& labels);
+
+    /** The labels as drawn at this width: the options, or the short labels. */
+    const juce::StringArray& getShownLabels() const;
+
+    /** True if every label drawn has its padding at the type size used: none is squeezed. */
+    bool labelsFit() const;
+
     void setSelectedIndex (int index, juce::NotificationType notification = juce::sendNotificationSync);
     int getSelectedIndex() const noexcept { return selected; }
 
@@ -38,7 +48,7 @@ public:
 private:
     int indexAt (juce::Point<float> position) const;
 
-    juce::StringArray options;
+    juce::StringArray options, shortLabels;
     int selected = -1;
     int hovered = -1;
 };

@@ -62,6 +62,17 @@ namespace
 
         return 11.0f;
     }
+
+    /** Whether the labels have their padding at `size`. */
+    bool segmentsFit (const juce::StringArray& options, float width, float size)
+    {
+        auto total = 0.0f;
+
+        for (const auto& option : options)
+            total += stringWidth (segmentFont (size, true), option) + minSegmentPadding;
+
+        return total <= width;
+    }
 } // namespace
 
 //==============================================================================
@@ -89,6 +100,25 @@ void SegmentedControl::setOptionLabel (int index, const juce::String& label)
         options.set (index, label);
         repaint();
     }
+}
+
+void SegmentedControl::setShortLabels (const juce::StringArray& labels)
+{
+    shortLabels = labels;
+    repaint();
+}
+
+const juce::StringArray& SegmentedControl::getShownLabels() const
+{
+    const auto width = static_cast<float> (getWidth()) - 4.0f;
+    return shortLabels.size() == options.size() && ! segmentsFit (options, width, 11.0f) ? shortLabels : options;
+}
+
+bool SegmentedControl::labelsFit() const
+{
+    const auto width = static_cast<float> (getWidth()) - 4.0f;
+    const auto& labels = getShownLabels();
+    return segmentsFit (labels, width, segmentTextSize (labels, width, getHeight()));
 }
 
 void SegmentedControl::setSelectedIndex (int index, juce::NotificationType notification)
@@ -146,7 +176,7 @@ namespace
 
 int SegmentedControl::indexAt (juce::Point<float> position) const
 {
-    const auto rects = segmentRects (options, getLocalBounds().toFloat().reduced (2.0f), getHeight());
+    const auto rects = segmentRects (getShownLabels(), getLocalBounds().toFloat().reduced (2.0f), getHeight());
 
     for (size_t i = 0; i < rects.size(); ++i)
         if (position.x >= rects[i].getX() && position.x < rects[i].getRight())
@@ -165,8 +195,9 @@ void SegmentedControl::paint (juce::Graphics& g)
     g.setColour (theme::line);
     g.drawRoundedRectangle (outer.reduced (0.5f), theme::controlCorner, 1.0f);
 
-    const auto rects = segmentRects (options, outer.reduced (2.0f), getHeight());
-    const auto textSize = segmentTextSize (options, outer.getWidth() - 4.0f, getHeight());
+    const auto& labels = getShownLabels();
+    const auto rects = segmentRects (labels, outer.reduced (2.0f), getHeight());
+    const auto textSize = segmentTextSize (labels, outer.getWidth() - 4.0f, getHeight());
     const auto innerCorner = theme::controlCorner - 2.0f;
 
     for (size_t i = 0; i < rects.size(); ++i)
@@ -206,7 +237,7 @@ void SegmentedControl::paint (juce::Graphics& g)
 
         g.setFont (segmentFont (textSize, isSelected));
         g.setColour (! enabled ? theme::textFaint : isSelected || isHovered ? theme::text : theme::textDim);
-        g.drawText (options[index], r, juce::Justification::centred, true);
+        g.drawText (labels[index], r, juce::Justification::centred, true);
     }
 }
 
