@@ -506,6 +506,7 @@ struct Inspector::Impl
             {
                 ++typingSession;  // another object: another undo step
                 lastWrittenText = shownObject != nullptr ? shownObject->text : juce::String();
+                textFieldShowsAnotherObject = true;
             }
 
             // What has the keyboard focus in here may be about to go: the list, when an object's
@@ -643,8 +644,11 @@ struct Inspector::Impl
         setTitleRow ("Text", hzRange (object.lowHz, object.highHz));
 
         // Only an outside change (undo, redo) replaces the field's text, and the caret stays
-        // where it was: typing never round-trips through here.
-        if (textField.getText() != object.text)
+        // where it was: typing never round-trips through here. The field tells of a change
+        // later (a posted message), so the text it has may be newer than the drawing's: while
+        // the drawing still has what was written last, the field is ahead, not behind, and a
+        // character just typed must not be wiped out by the drawing's older text.
+        if (textField.getText() != object.text && (textFieldShowsAnotherObject || object.text != lastWrittenText))
         {
             const auto caret = textField.getCaretPosition();
             textField.setText (object.text, juce::dontSendNotification);
@@ -655,6 +659,8 @@ struct Inspector::Impl
 
             lastWrittenText = object.text;
         }
+
+        textFieldShowsAnotherObject = false;
 
         fontBox.setSelectedId (juce::jlimit (0, fonts::numArtFonts() - 1, object.fontIndex) + 1, juce::dontSendNotification);
         styleControl.setSelectedIndex (static_cast<int> (object.textStyle), juce::dontSendNotification);
@@ -1202,6 +1208,7 @@ struct Inspector::Impl
     int typingSession = 0;
     int editCounter = 0;
     juce::String lastWrittenText;
+    bool textFieldShowsAnotherObject = true;   // until updateText has put the selected one's text in
     juce::String sliderKey;
 
     // The open mouse-wheel gesture (see setUpObjectSlider): its undo key, bar, object and time.
