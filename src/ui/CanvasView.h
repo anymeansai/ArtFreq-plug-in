@@ -8,6 +8,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
+
 namespace artfreq::ui
 {
 
@@ -26,12 +28,21 @@ public:
     /** The area the drawing occupies (without the axes), in this component's coordinates. */
     juce::Rectangle<float> getDrawingArea() const;
 
-    /** Where an object lies on the canvas with its selection handles, in this component's
+    /** Where an object lies on the canvas with its selection handles (the bounding box of its
+        box as it is turned, and the selected object's rotate handle), in this component's
         coordinates (empty if there is no such object). */
     juce::Rectangle<float> getObjectBounds (const juce::Uuid& id) const;
 
-    /** How far the selection handles reach outside an object's rectangle. */
+    /** For the snapshot tool and tests: where an object's rotate handle (its knob) and its eight
+        resize handles (clockwise from the top-left corner, as the object is turned) are, in
+        this component's coordinates. */
+    juce::Point<float> getRotateHandle (const juce::Uuid& id) const;
+    std::array<juce::Point<float>, 8> getHandleCentres (const juce::Uuid& id) const;
+
+    /** How far the selection handles reach outside an object's rectangle, and the rotate
+        handle outside its turned box (its stem and knob, at the most). */
     static constexpr float handleReach = 4.5f;
+    static constexpr float rotateHandleReach = 16.0f + 7.0f;
 
     void paint (juce::Graphics&) override;
     void resized() override;

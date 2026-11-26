@@ -14,6 +14,7 @@
 #include "ShellHeader.h"
 #include "ShellPanels.h"
 #include "ShellToolbar.h"
+#include "core/Compositor.h"
 
 #include <cmath>
 #include <optional>
@@ -965,9 +966,20 @@ namespace
                 return {};
 
             const auto drawing = ui::axes::plotArea (fullCanvasBounds(), ui::CanvasView::axisWidth, ui::CanvasView::axisHeight).toFloat();
-            const auto reach = ui::CanvasView::handleReach;
-            return { drawing.getX() + object->startTime * drawing.getWidth() - reach,
-                     drawing.getX() + object->endTime * drawing.getWidth() + reach };
+
+            if (juce::exactlyEqual (ArtDocument::normaliseRotation (object->rotation), 0.0f))
+            {
+                const auto reach = ui::CanvasView::handleReach;
+                return { drawing.getX() + object->startTime * drawing.getWidth() - reach,
+                         drawing.getX() + object->endTime * drawing.getWidth() + reach };
+            }
+
+            // A turned object: its turned box, and room for its rotate handle, which can point
+            // sideways.
+            const auto box = objectBoundsNorm (*object, processor.getScale());
+            const auto reach = ui::CanvasView::rotateHandleReach;
+            return { drawing.getX() + box.getX() * drawing.getWidth() - reach,
+                     drawing.getX() + box.getRight() * drawing.getWidth() + reach };
         }
 
         /** Whether the drawer on that side would lie over any of the selected object (or its

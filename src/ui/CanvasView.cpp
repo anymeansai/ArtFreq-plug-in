@@ -25,6 +25,12 @@ namespace
     // Logical pixels
     constexpr float handleSize = 7.0f;
     constexpr float handleHitRadius = 6.0f;
+    constexpr float rotateStem = 16.0f;        // the rotate handle: a knob this far out from the top edge
+    constexpr float rotateKnobRadius = 4.5f;
+    constexpr float rotateHitRadius = 7.0f;
+    static_assert (CanvasView::rotateHandleReach >= rotateStem + rotateHitRadius, "the rotate handle's reach");
+    constexpr float rotateSnapDegrees = 15.0f; // Shift while turning
+    constexpr float rotateKeyDegrees = 15.0f;  // [ and ] (Shift: 1 degree)
     constexpr float objectHitSlop = 3.0f;      // thin objects are still easy to click
     constexpr float dragThreshold = 3.0f;      // a click that moves less than this is not a drag
     constexpr float minObjectPixels = 10.0f;   // resizing stops at this size
@@ -91,6 +97,42 @@ namespace
             case bottomEdge:             return juce::MouseCursor::UpDownResizeCursor;
             default:                     return juce::MouseCursor::NormalCursor;
         }
+    }
+
+    /** The resize cursor for a handle of a turned object: the handle's direction from the
+        object's centre (its edges in the object's own frame), turned, to the nearest of the four
+        resize cursors' directions. */
+    juce::MouseCursor cursorForTurnedEdges (int edges, float degrees)
+    {
+        const auto dx = (edges & rightEdge) != 0 ? 1.0f : (edges & leftEdge) != 0 ? -1.0f : 0.0f;
+        const auto dy = (edges & bottomEdge) != 0 ? 1.0f : (edges & topEdge) != 0 ? -1.0f : 0.0f;
+        auto angle = juce::radiansToDegrees (std::atan2 (dy, dx)) + degrees;   // clockwise, y down
+        angle = std::fmod (std::fmod (angle, 180.0f) + 180.0f, 180.0f);          // a line: 0..180
+
+        if (angle < 22.5f || angle >= 157.5f) return juce::MouseCursor::LeftRightResizeCursor;
+        if (angle < 67.5f)                    return juce::MouseCursor::TopLeftCornerResizeCursor;    // down-right
+        if (angle < 112.5f)                   return juce::MouseCursor::UpDownResizeCursor;
+        return juce::MouseCursor::TopRightCornerResizeCursor;                                          // down-left
+    }
+
+    juce::Path polygonOf (const std::array<juce::Point<float>, 4>& corners)
+    {
+        juce::Path path;
+        path.startNewSubPath (corners[0]);
+
+        for (size_t i = 1; i < corners.size(); ++i)
+            path.lineTo (corners[i]);
+
+        path.closeSubPath();
+        return path;
+    }
+
+    void drawDashedPolygon (juce::Graphics& g, const std::array<juce::Point<float>, 4>& corners, float dash)
+    {
+        const float pattern[] { dash, dash };
+        juce::Path dashed;
+        juce::PathStrokeType (1.0f).createDashedStroke (dashed, polygonOf (corners), pattern, 2);
+        g.fillPath (dashed);
     }
 
     void drawDashedRectangle (juce::Graphics& g, juce::Rectangle<float> r, float dash)
@@ -161,6 +203,123 @@ struct CanvasView::Impl
                    { r.getRight(), r.getBottom() }, { cx, r.getBottom() }, { r.getX(), r.getBottom() }, { r.getX(), cy } } };
     }
 
+    // ---- rotated objects -------------------------------------------------------------------
+    // An object's placement is its unrotated box; on screen it is turned about the box's
+    // centre in display space (rotationTransform). Everything the mouse touches (the outline,
+    // the handles, what a click picks) is the turned box.
+
+    static bool isUpright (const ArtObject& object) noexcept
+    {
+        return juce::exactlyEqual (ArtDocument::normaliseRotation (object.rotation), 0.0f);
+    }
+
+    /** How much wider than tall a pixel of this view is in display space (see rotationTransform). */
+    float screenXScale() const
+    {
+        const auto a = area();
+        return ArtDocument::displayAspect * juce::jmax (1.0f, a.getHeight()) / juce::jmax (1.0f, a.getWidth());
+    }
+
+    /** The turn of an object's box on screen (the identity for an upright one). */
+    juce::AffineTransform screenTurn (const ArtObject& object) const
+    {
+        return rotationTransform (screenRectOf (object), object.rotation, screenXScale());
+    }
+
+    std::array<juce::Point<float>, 4> screenCorners (const ArtObject& object) const
+    {
+        const auto r = screenRectOf (object);
+        const auto t = screenTurn (object);
+        return { r.getTopLeft().transformedBy (t), r.getTopRight().transformedBy (t),
+                 r.getBottomRight().transformedBy (t), r.getBottomLeft().transformedBy (t) };
+    }
+
+    /** The smallest upright rectangle around an object's turned box on screen. */
+    juce::Rectangle<float> screenBoundsOf (const ArtObject& object) const
+    {
+        if (isUpright (object))
+            return screenRectOf (object);
+
+        const auto corners = screenCorners (object);
+        return juce::Rectangle<float>::findAreaContainingPoints (corners.data(), static_cast<int> (corners.size()));
+    }
+
+    /** Whether a point is on an object: inside its turned box, or within objectHitSlop of it. */
+    bool isOnObject (const ArtObject& object, juce::Point<float> p) const
+    {
+        if (isUpright (object))
+            return screenRectOf (object).expanded (objectHitSlop).contains (p);
+
+        return screenRectOf (object).expanded (objectHitSlop).contains (p.transformedBy (screenTurn (object).inverted()));
+    }
+
+    std::array<juce::Point<float>, 8> turnedHandleCentres (const ArtObject& object) const
+    {
+        auto centres = handleCentres (screenRectOf (object));
+
+        if (! isUpright (object))
+            for (auto& c : centres)
+                c = c.transformedBy (screenTurn (object));
+
+        return centres;
+    }
+
+    /** The rotate handle: where its stem starts (the middle of an edge) and its knob's centre.
+        Above the top edge (as the object is turned), unless that is off the view: then below
+        the bottom edge, or else just inside the top edge. */
+    struct RotateHandle
+    {
+        juce::Point<float> stem, knob;
+    };
+
+    RotateHandle rotateHandleOf (const ArtObject& object) const
+    {
+        const auto r = screenRectOf (object);
+        const auto t = screenTurn (object);
+        const auto centre = r.getCentre();
+        const auto top = juce::Point<float> (r.getCentreX(), r.getY()).transformedBy (t);
+        const auto bottom = juce::Point<float> (r.getCentreX(), r.getBottom()).transformedBy (t);
+        const auto up = top - centre;
+        const auto length = up.getDistanceFromOrigin();
+        const auto direction = length > 0.5f ? up / length : juce::Point<float> (0.0f, -1.0f);
+        const auto room = owner.getLocalBounds().toFloat().reduced (rotateKnobRadius + 1.0f);
+
+        for (const auto& handle : { RotateHandle { top, top + direction * rotateStem },
+                                    RotateHandle { bottom, bottom - direction * rotateStem } })
+            if (room.contains (handle.knob))
+                return handle;
+
+        return { top, top - direction * rotateStem };
+    }
+
+    /** Whether a point is on the selected object's rotate handle (the Select tool only). */
+    bool isOnRotateHandle (juce::Point<float> p) const
+    {
+        if (state.getTool() != Tool::select)
+            return false;
+
+        const auto* object = selectedObject();
+        return object != nullptr && rotateHandleOf (*object).knob.getDistanceFrom (p) <= rotateHitRadius;
+    }
+
+    /** The angle (degrees, clockwise from straight up) from the dragged box's centre to a point,
+        in display space. */
+    float angleFromCentre (juce::Point<float> p) const
+    {
+        const auto n = toNorm (p);
+        const auto c = dragStartRect.getCentre();
+        const auto dx = (n.x - c.x) * ArtDocument::displayAspect;
+        const auto dy = n.y - c.y;
+        return juce::radiansToDegrees (std::atan2 (dx, -dy));
+    }
+
+    /** The cursor over a handle of the selected object. */
+    juce::MouseCursor cursorForHandle (const ArtObject& object, int handle) const
+    {
+        const auto edges = handleEdges[static_cast<size_t> (handle)];
+        return isUpright (object) ? cursorForEdges (edges) : cursorForTurnedEdges (edges, object.rotation);
+    }
+
     int currentLengthIndex() const
     {
         return lengthParameter != nullptr ? juce::roundToInt (lengthParameter->load()) : params::defaultLengthIndex;
@@ -180,7 +339,7 @@ struct CanvasView::Impl
         const auto& objects = processor.getDocument().objects;
 
         for (auto it = objects.rbegin(); it != objects.rend(); ++it)
-            if (it->visible && screenRectOf (*it).expanded (objectHitSlop).contains (p))
+            if (it->visible && isOnObject (*it, p))
                 return &*it;
 
         return nullptr;
@@ -192,7 +351,7 @@ struct CanvasView::Impl
     const ArtObject* objectToGrab (juce::Point<float> p) const
     {
         if (const auto* selected = selectedObject(); selected != nullptr && state.getTool() == Tool::select
-                                                     && screenRectOf (*selected).expanded (objectHitSlop).contains (p))
+                                                     && isOnObject (*selected, p))
             return selected;
 
         return objectAt (p);
@@ -208,7 +367,7 @@ struct CanvasView::Impl
         std::vector<const ArtObject*> stack;
 
         for (auto it = objects.rbegin(); it != objects.rend(); ++it)
-            if ((it->visible || it->id == selectedId) && screenRectOf (*it).expanded (objectHitSlop).contains (p))
+            if ((it->visible || it->id == selectedId) && isOnObject (*it, p))
                 stack.push_back (&*it);
 
         if (stack.empty())
@@ -230,7 +389,7 @@ struct CanvasView::Impl
 
         if (const auto* object = selectedObject())
         {
-            const auto centres = handleCentres (screenRectOf (*object));
+            const auto centres = turnedHandleCentres (*object);
 
             // Corners first: where a small object's handles overlap, corners are more useful.
             for (int i : { 0, 2, 4, 6, 1, 3, 5, 7 })
@@ -278,25 +437,47 @@ struct CanvasView::Impl
         dragStartTime = object.startTime;
         dragEndTime = object.endTime;
         dragStartHz = { static_cast<double> (object.lowHz), static_cast<double> (object.highHz) };
+        dragStartRotation = ArtDocument::normaliseRotation (object.rotation);
+        dragStartBounds = objectBoundsNorm (object, scale);
     }
 
-    /** Where the dragged rectangle may go: the visible canvas, or as far out as it already was. */
+    bool dragStartUpright() const noexcept { return juce::exactlyEqual (dragStartRotation, 0.0f); }
+
+    /** Where the dragged rectangle may go: the visible canvas, or as far out as it already was
+        (a turned object: its turned box). */
     juce::Rectangle<float> dragBounds() const
     {
-        return juce::Rectangle<float> (0.0f, 0.0f, 1.0f, 1.0f).getUnion (dragStartRect);
+        return juce::Rectangle<float> (0.0f, 0.0f, 1.0f, 1.0f).getUnion (dragStartUpright() ? dragStartRect : dragStartBounds);
     }
 
     juce::Rectangle<float> movedRect (juce::Point<float> deltaNorm) const
     {
         const auto bounds = dragBounds();
+
+        if (! dragStartUpright())
+        {
+            // The turned box stays in bounds; the placement moves with it.
+            auto box = dragStartBounds.translated (deltaNorm.x, deltaNorm.y);
+            box.setPosition (clampTo (box.getX(), bounds.getX(), bounds.getRight() - box.getWidth()),
+                             clampTo (box.getY(), bounds.getY(), bounds.getBottom() - box.getHeight()));
+            return dragStartRect.translated (box.getX() - dragStartBounds.getX(), box.getY() - dragStartBounds.getY());
+        }
+
         auto r = dragStartRect.translated (deltaNorm.x, deltaNorm.y);
         r.setPosition (clampTo (r.getX(), bounds.getX(), bounds.getRight() - r.getWidth()),
                        clampTo (r.getY(), bounds.getY(), bounds.getBottom() - r.getHeight()));
         return r;
     }
 
-    juce::Rectangle<float> resizedRect (juce::Point<float> deltaNorm) const
+    /** The placement for a resize by a mouse movement (normalised). Shift (`keepShape`) keeps
+        the box's proportions: a corner scales it from the opposite corner, following the axis
+        the mouse moved along more; an edge scales it about the middle of the opposite edge,
+        both sides following. */
+    juce::Rectangle<float> resizedRect (juce::Point<float> deltaNorm, bool keepShape = false) const
     {
+        if (keepShape || ! dragStartUpright())
+            return resizedInOwnFrame (deltaNorm, keepShape);
+
         const auto a = area();
         const auto bounds = dragBounds();
         const auto minWidth = minObjectPixels / juce::jmax (1.0f, a.getWidth());
@@ -311,6 +492,155 @@ struct CanvasView::Impl
         if ((dragEdges & bottomEdge) != 0) bottom = clampTo (bottom + deltaNorm.y, top + minHeight, bounds.getBottom());
 
         return { left, top, right - left, bottom - top };
+    }
+
+    /** A resize in the box's own frame, in display units (x times displayAspect), so a turned
+        box's edges move along its own sides: the mouse's movement is turned back into that
+        frame, the edges are moved there, and the box's new centre is turned out again, so the
+        opposite edge or corner stays where it is on screen. Also an upright box's resize with
+        Shift (keeping its shape), which then stays inside the canvas (or as far out as it was)
+        by scaling less. */
+    juce::Rectangle<float> resizedInOwnFrame (juce::Point<float> deltaNorm, bool keepShape) const
+    {
+        constexpr auto aspect = ArtDocument::displayAspect;
+        const auto a = area();
+        const auto radians = juce::degreesToRadians (dragStartRotation);
+        const auto cosine = std::cos (radians), sine = std::sin (radians);
+
+        // The mouse's movement in the box's frame.
+        const auto dx = deltaNorm.x * aspect, dy = deltaNorm.y;
+        const auto du = dx * cosine + dy * sine;
+        const auto dv = -dx * sine + dy * cosine;
+
+        const auto width = juce::jmax (1.0e-6f, dragStartRect.getWidth() * aspect);
+        const auto height = juce::jmax (1.0e-6f, dragStartRect.getHeight());
+        const auto minWidth = minObjectPixels / juce::jmax (1.0f, a.getWidth()) * aspect;
+        const auto minHeight = minObjectPixels / juce::jmax (1.0f, a.getHeight());
+        const auto horizontal = (dragEdges & (leftEdge | rightEdge)) != 0;
+        const auto vertical = (dragEdges & (topEdge | bottomEdge)) != 0;
+        const auto minScale = juce::jmax (minWidth / width, minHeight / height);
+
+        // Free: each dragged edge follows the mouse. Keeping the shape: a scale of the box.
+        auto scaleBy = 1.0f;
+
+        if (keepShape)
+        {
+            const auto widthScale = (width + ((dragEdges & leftEdge) != 0 ? -du : du)) / width;
+            const auto heightScale = (height + ((dragEdges & topEdge) != 0 ? -dv : dv)) / height;
+            scaleBy = horizontal && vertical ? (std::abs (du) >= std::abs (dv) ? widthScale : heightScale)
+                    : horizontal ? widthScale : heightScale;
+            scaleBy = juce::jmax (minScale, scaleBy);
+        }
+
+        // The box for a scale (keeping the shape) in the box's frame, centred on 0, 0 at the start.
+        const auto frameFor = [&] (float s)
+        {
+            auto left = -width * 0.5f, right = width * 0.5f, top = -height * 0.5f, bottom = height * 0.5f;
+
+            if (! keepShape)
+            {
+                if ((dragEdges & leftEdge) != 0)   left = juce::jmin (left + du, right - minWidth);
+                if ((dragEdges & rightEdge) != 0)  right = juce::jmax (right + du, left + minWidth);
+                if ((dragEdges & topEdge) != 0)    top = juce::jmin (top + dv, bottom - minHeight);
+                if ((dragEdges & bottomEdge) != 0) bottom = juce::jmax (bottom + dv, top + minHeight);
+                return juce::Rectangle<float> (left, top, right - left, bottom - top);
+            }
+
+            // The edges dragged move; the opposite ones stay; an edge's own sides scale about its
+            // middle (an edge handle: both sides follow).
+            if (horizontal)
+            {
+                if ((dragEdges & leftEdge) != 0) left = right - width * s;
+                else                             right = left + width * s;
+            }
+            else
+            {
+                left = -width * s * 0.5f;
+                right = width * s * 0.5f;
+            }
+
+            if (vertical)
+            {
+                if ((dragEdges & topEdge) != 0) top = bottom - height * s;
+                else                            bottom = top + height * s;
+            }
+            else
+            {
+                top = -height * s * 0.5f;
+                bottom = height * s * 0.5f;
+            }
+
+            return juce::Rectangle<float> (left, top, right - left, bottom - top);
+        };
+
+        // Back onto the canvas: the frame's centre turned out from the start box's centre.
+        const auto toCanvas = [&] (juce::Rectangle<float> frame)
+        {
+            const auto cu = frame.getCentreX(), cv = frame.getCentreY();
+            const auto centre = dragStartRect.getCentre();
+            const auto cx = centre.x + (cu * cosine - cv * sine) / aspect;
+            const auto cy = centre.y + (cu * sine + cv * cosine);
+            return juce::Rectangle<float> (frame.getWidth() / aspect, frame.getHeight()).withCentre ({ cx, cy });
+        };
+
+        if (dragStartUpright())
+        {
+            // Keeping the shape of an upright box. The edges that stay keep their exact values.
+            const auto uprightRect = [&] (juce::Rectangle<float> frame)
+            {
+                const auto& start = dragStartRect;
+                const auto w = frame.getWidth() / aspect, h = frame.getHeight();
+                const auto left = ! horizontal ? start.getCentreX() - w * 0.5f
+                                : (dragEdges & leftEdge) != 0 ? start.getRight() - w : start.getX();
+                const auto top = ! vertical ? start.getCentreY() - h * 0.5f
+                               : (dragEdges & topEdge) != 0 ? start.getBottom() - h : start.getY();
+                return juce::Rectangle<float> (left, top, w, h);
+            };
+
+            // As large as fits in bounds (scaling is monotonic about the point that stays, so
+            // halving the step finds it).
+            const auto bounds = dragBounds().expanded (1.0e-6f);
+            auto r = uprightRect (frameFor (scaleBy));
+
+            if (! bounds.contains (r))
+            {
+                auto low = minScale, high = scaleBy;
+
+                for (int i = 0; i < 24; ++i)
+                {
+                    const auto middle = (low + high) * 0.5f;
+
+                    if (bounds.contains (uprightRect (frameFor (middle))))
+                        low = middle;
+                    else
+                        high = middle;
+                }
+
+                r = uprightRect (frameFor (low));
+            }
+
+            return r;
+        }
+
+        auto r = toCanvas (frameFor (scaleBy));
+
+        // A turned box: its centre stays on the canvas (or as far out as it was).
+        const auto bounds = dragBounds();
+        return r.withCentre ({ juce::jlimit (bounds.getX(), bounds.getRight(), r.getCentreX()),
+                               juce::jlimit (bounds.getY(), bounds.getBottom(), r.getCentreY()) });
+    }
+
+    /** Writes a new rotation for the dragged (or nudged) object. */
+    void applyRotation (float degrees, const juce::String& key)
+    {
+        const auto id = dragObject;
+        const auto turn = ArtDocument::normaliseRotation (degrees);
+
+        processor.editDocument ([id, turn] (ArtDocument& document)
+        {
+            if (auto* object = document.find (id))
+                object->rotation = turn;
+        }, key);
     }
 
     // ---- brush -----------------------------------------------------------------------------
@@ -481,7 +811,14 @@ struct CanvasView::Impl
         if (const auto handle = handleAt (p); handle >= 0)
         {
             setHovered ({});
-            owner.setMouseCursor (cursorForEdges (handleEdges[static_cast<size_t> (handle)]));
+            owner.setMouseCursor (cursorForHandle (*selectedObject(), handle));
+            return;
+        }
+
+        if (isOnRotateHandle (p))
+        {
+            setHovered ({});
+            owner.setMouseCursor (juce::MouseCursor::UpDownLeftRightResizeCursor);
             return;
         }
 
@@ -1089,36 +1426,50 @@ struct CanvasView::Impl
             if (object.id == selectedId || ! object.visible)
                 continue;
 
-            const auto r = screenRectOf (object);
             const auto isHovered = object.id == hovered && state.getTool() == Tool::select;
             g.setColour (juce::Colours::white.withAlpha (isHovered ? 0.55f : 0.22f));
-            drawDashedRectangle (g, r, 4.0f);
+
+            if (isUpright (object))
+                drawDashedRectangle (g, screenRectOf (object), 4.0f);
+            else
+                drawDashedPolygon (g, screenCorners (object), 4.0f);
         }
 
         if (const auto* object = selectedObject())
         {
             const auto r = screenRectOf (*object);
+            const auto upright = isUpright (*object);
 
             if (object->visible)
             {
                 g.setColour (theme::accent);
-                g.drawRect (juce::Rectangle<float> (std::floor (r.getX()), std::floor (r.getY()),
-                                                    std::floor (r.getRight()) - std::floor (r.getX()),
-                                                    std::floor (r.getBottom()) - std::floor (r.getY())), 1.0f);
+
+                if (upright)
+                    g.drawRect (juce::Rectangle<float> (std::floor (r.getX()), std::floor (r.getY()),
+                                                        std::floor (r.getRight()) - std::floor (r.getX()),
+                                                        std::floor (r.getBottom()) - std::floor (r.getY())), 1.0f);
+                else
+                    g.strokePath (polygonOf (screenCorners (*object)), juce::PathStrokeType (1.0f));
             }
             else
             {
                 // A hidden object (picked in the layer list) is silent and not drawn: a faint
                 // dashed outline and a tag say where it is, so it can still be moved.
                 g.setColour (theme::accent.withAlpha (0.6f));
-                drawDashedRectangle (g, r, 3.0f);
 
-                if (dragMode != DragMode::move && dragMode != DragMode::resize)
-                    paintHiddenTag (g, r);
+                if (upright)
+                    drawDashedRectangle (g, r, 3.0f);
+                else
+                    drawDashedPolygon (g, screenCorners (*object), 3.0f);
+
+                if (dragMode != DragMode::move && dragMode != DragMode::resize && dragMode != DragMode::rotate)
+                    paintHiddenTag (g, screenBoundsOf (*object));
             }
 
             if (dragMode == DragMode::move || dragMode == DragMode::resize)
-                paintPlacementTag (g, *object, r);
+                paintPlacementTag (g, *object, screenBoundsOf (*object));
+            else if (dragMode == DragMode::rotate)
+                paintRotationTag (g, *object, screenBoundsOf (*object));
         }
     }
 
@@ -1183,6 +1534,30 @@ struct CanvasView::Impl
         g.drawText (text, tag, juce::Justification::centred, false);
     }
 
+    /** While turning: the angle. */
+    void paintRotationTag (juce::Graphics& g, const ArtObject& object, juce::Rectangle<float> r)
+    {
+        const auto text = juce::String (juce::roundToInt (ArtDocument::normaliseRotation (object.rotation)))
+                        + juce::String (juce::CharPointer_UTF8 ("\xc2\xb0"));
+        const auto font = fonts::mono (11.0f);
+        const auto width = juce::GlyphArrangement::getStringWidth (font, text) + 12.0f;
+        const auto a = area();
+        auto tag = juce::Rectangle<float> (r.getCentreX() - width * 0.5f, r.getBottom() + 8.0f, width, 18.0f);
+
+        if (tag.getBottom() > a.getBottom() - 2.0f)
+            tag.setY (r.getCentreY() - 9.0f);  // no room below: in the middle
+
+        tag.setX (clampTo (tag.getX(), a.getX() + 2.0f, a.getRight() - width - 2.0f));
+
+        g.setColour (theme::panel.withAlpha (0.92f));
+        g.fillRoundedRectangle (tag, 4.0f);
+        g.setColour (theme::accent.withAlpha (0.8f));
+        g.drawRoundedRectangle (tag.reduced (0.5f), 4.0f, 1.0f);
+        g.setColour (theme::text);
+        g.setFont (font);
+        g.drawText (text, tag, juce::Justification::centred, false);
+    }
+
     void paintSelectionHandles (juce::Graphics& g)
     {
         if (state.getTool() != Tool::select)
@@ -1190,7 +1565,17 @@ struct CanvasView::Impl
 
         if (const auto* object = selectedObject())
         {
-            for (const auto c : handleCentres (screenRectOf (*object)))
+            // The rotate handle: a knob on a short stem off the top edge.
+            const auto handle = rotateHandleOf (*object);
+            g.setColour (theme::accent);
+            g.drawLine ({ handle.stem, handle.knob }, 1.0f);
+            const auto knob = juce::Rectangle<float> (rotateKnobRadius * 2.0f, rotateKnobRadius * 2.0f).withCentre (handle.knob);
+            g.setColour (theme::text);
+            g.fillEllipse (knob);
+            g.setColour (theme::accent);
+            g.drawEllipse (knob, 1.0f);
+
+            for (const auto c : turnedHandleCentres (*object))
             {
                 const auto h = juce::Rectangle<float> (handleSize, handleSize)
                                    .withCentre ({ std::floor (c.x) + 0.5f, std::floor (c.y) + 0.5f });
@@ -1370,8 +1755,10 @@ struct CanvasView::Impl
         none,
         pendingMove,    // pressed on an object; becomes a move once the mouse has moved a little
         pendingResize,  // ... on a handle
+        pendingRotate,  // ... on the rotate handle
         move,
         resize,
+        rotate,
         paint
     };
 
@@ -1380,6 +1767,9 @@ struct CanvasView::Impl
     juce::Rectangle<float> dragStartRect;   // normalised
     float dragStartTime = 0.0f, dragEndTime = 1.0f;
     HzRange dragStartHz;
+    float dragStartRotation = 0.0f;         // degrees
+    juce::Rectangle<float> dragStartBounds; // normalised: the turned box's bounding box
+    float dragStartAngle = 0.0f;            // rotating: the mouse's angle round the centre at the start
     juce::Point<float> dragStartMouse;
     int dragEdges = 0;
     juce::String dragKey;
@@ -1401,6 +1791,11 @@ struct CanvasView::Impl
     juce::Uuid lastClickSelection = juce::Uuid::null();
     bool cycleOnRelease = false;
     bool typeOnRelease = false;   // a double-click on text: its text box gets the focus on the release
+
+    // [ and ] turns: presses closer together than nudgeSessionGap are one undo step.
+    double lastTurnKeyTime = -1.0e9;
+    int turnKeySession = 0;
+    juce::Uuid turnKeyObject = juce::Uuid::null();
 
     // Arrow-key nudges: one undo step per gesture (see keyPressed).
     double lastNudgeTime = -1.0e9;
@@ -1444,7 +1839,30 @@ juce::Rectangle<float> CanvasView::getDrawingArea() const
 juce::Rectangle<float> CanvasView::getObjectBounds (const juce::Uuid& id) const
 {
     const auto* object = impl->processor.getDocument().find (id);
-    return object != nullptr ? impl->screenRectOf (*object).expanded (handleReach) : juce::Rectangle<float>();
+
+    if (object == nullptr)
+        return {};
+
+    auto bounds = impl->screenBoundsOf (*object).expanded (handleReach);
+
+    // The selected object's rotate handle too (it is drawn only with the Select tool).
+    if (id == impl->state.getSelected() && impl->state.getTool() == Tool::select)
+        bounds = bounds.getUnion (juce::Rectangle<float> (rotateHitRadius * 2.0f, rotateHitRadius * 2.0f)
+                                      .withCentre (impl->rotateHandleOf (*object).knob));
+
+    return bounds;
+}
+
+juce::Point<float> CanvasView::getRotateHandle (const juce::Uuid& id) const
+{
+    const auto* object = impl->processor.getDocument().find (id);
+    return object != nullptr ? impl->rotateHandleOf (*object).knob : juce::Point<float>();
+}
+
+std::array<juce::Point<float>, 8> CanvasView::getHandleCentres (const juce::Uuid& id) const
+{
+    const auto* object = impl->processor.getDocument().find (id);
+    return object != nullptr ? impl->turnedHandleCentres (*object) : std::array<juce::Point<float>, 8> {};
 }
 
 void CanvasView::paint (juce::Graphics& g)
@@ -1524,6 +1942,14 @@ void CanvasView::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    if (d.isOnRotateHandle (e.position))
+    {
+        d.rememberDragStart (*d.selectedObject());
+        d.dragStartAngle = d.angleFromCentre (e.position);
+        d.dragMode = Impl::DragMode::pendingRotate;
+        return;
+    }
+
     // Alt (Option) - click picks the next object down under the mouse, so one hidden behind
     // another can be reached; so does a second click on the same spot (on its release, so a
     // press and drag still moves the selection).
@@ -1566,23 +1992,43 @@ void CanvasView::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
-    if (d.dragMode == Impl::DragMode::pendingMove || d.dragMode == Impl::DragMode::pendingResize)
+    if (d.dragMode == Impl::DragMode::pendingMove || d.dragMode == Impl::DragMode::pendingResize
+        || d.dragMode == Impl::DragMode::pendingRotate)
     {
         if (e.position.getDistanceFrom (d.dragStartMouse) < dragThreshold)
             return;
 
-        d.dragMode = d.dragMode == Impl::DragMode::pendingMove ? Impl::DragMode::move : Impl::DragMode::resize;
+        d.dragMode = d.dragMode == Impl::DragMode::pendingMove ? Impl::DragMode::move
+                   : d.dragMode == Impl::DragMode::pendingResize ? Impl::DragMode::resize
+                                                                 : Impl::DragMode::rotate;
         d.dragKey = "canvas-drag-" + juce::String (++d.editCounter);
-        setMouseCursor (d.dragMode == Impl::DragMode::move ? juce::MouseCursor::DraggingHandCursor
-                                                           : cursorForEdges (d.dragEdges));
+
+        if (const auto* object = d.processor.getDocument().find (d.dragObject))
+            setMouseCursor (d.dragMode == Impl::DragMode::move ? juce::MouseCursor::DraggingHandCursor
+                          : d.dragMode == Impl::DragMode::rotate ? juce::MouseCursor::UpDownLeftRightResizeCursor
+                                                                 : (Impl::isUpright (*object) ? cursorForEdges (d.dragEdges)
+                                                                                              : cursorForTurnedEdges (d.dragEdges, object->rotation)));
     }
 
-    if (d.dragMode != Impl::DragMode::move && d.dragMode != Impl::DragMode::resize)
+    if (d.dragMode != Impl::DragMode::move && d.dragMode != Impl::DragMode::resize && d.dragMode != Impl::DragMode::rotate)
         return;
 
     if (d.processor.getDocument().find (d.dragObject) == nullptr)
     {
         d.dragMode = Impl::DragMode::none;  // undone or deleted meanwhile
+        return;
+    }
+
+    // Turning: by the angle the mouse has gone round the box's centre (in display space), so
+    // grabbing the handle a little off its middle does not jump; Shift snaps to 15 degrees.
+    if (d.dragMode == Impl::DragMode::rotate)
+    {
+        auto degrees = ArtDocument::normaliseRotation (d.dragStartRotation + d.angleFromCentre (e.position) - d.dragStartAngle);
+
+        if (e.mods.isShiftDown())
+            degrees = ArtDocument::normaliseRotation (std::round (degrees / rotateSnapDegrees) * rotateSnapDegrees);
+
+        d.applyRotation (degrees, d.dragKey);
         return;
     }
 
@@ -1599,7 +2045,8 @@ void CanvasView::mouseDrag (const juce::MouseEvent& e)
     }
 
     const auto deltaNorm = juce::Point<float> (delta.x / juce::jmax (1.0f, a.getWidth()), delta.y / juce::jmax (1.0f, a.getHeight()));
-    const auto r = d.dragMode == Impl::DragMode::move ? d.movedRect (deltaNorm) : d.resizedRect (deltaNorm);
+    // Shift while resizing keeps the proportions (letting go of it frees them again).
+    const auto r = d.dragMode == Impl::DragMode::move ? d.movedRect (deltaNorm) : d.resizedRect (deltaNorm, e.mods.isShiftDown());
     d.applyPlacement (r, d.dragKey);
 }
 
@@ -1607,7 +2054,7 @@ void CanvasView::mouseUp (const juce::MouseEvent& e)
 {
     auto& d = *impl;
     const auto wasEditing = d.dragMode == Impl::DragMode::move || d.dragMode == Impl::DragMode::resize
-                         || d.dragMode == Impl::DragMode::paint;
+                         || d.dragMode == Impl::DragMode::rotate || d.dragMode == Impl::DragMode::paint;
     const auto clickedObject = d.dragMode == Impl::DragMode::pendingMove;   // pressed on one, never moved
     d.dragMode = Impl::DragMode::none;
 
@@ -1655,6 +2102,31 @@ bool CanvasView::keyPressed (const juce::KeyPress& key)
     if (code == juce::KeyPress::escapeKey && d.state.hasSelection())
     {
         d.state.setSelected (juce::Uuid::null());
+        return true;
+    }
+
+    // [ and ] turn the selection 15 degrees anticlockwise and clockwise (Shift: 1 degree, the
+    // keys then typing { and } on most layouts).
+    const auto character = key.getTextCharacter();
+    const auto turn = character == '[' || character == '{' ? -1 : character == ']' || character == '}' ? 1 : 0;
+
+    if (turn != 0)
+    {
+        const auto* object = d.selectedObject();
+
+        if (object == nullptr || d.dragMode != Impl::DragMode::none)
+            return object != nullptr;
+
+        const auto now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+
+        if (object->id != d.turnKeyObject || now - d.lastTurnKeyTime > nudgeSessionGap)
+            ++d.turnKeySession;
+
+        d.turnKeyObject = object->id;
+        d.lastTurnKeyTime = now;
+        d.dragObject = object->id;
+        d.applyRotation (object->rotation + static_cast<float> (turn) * (mods.isShiftDown() ? 1.0f : rotateKeyDegrees),
+                         "canvas-turn-" + juce::String (d.turnKeySession));
         return true;
     }
 
