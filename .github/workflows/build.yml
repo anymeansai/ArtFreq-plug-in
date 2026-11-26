@@ -726,6 +726,11 @@ jobs:
 
           Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects (in Logic Pro: AU Instruments > AnyMeans, and Audio Units > AnyMeans in an audio track's or the output's effect slots). Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
 
+          **New in 0.10**
+          - **Rotate** text and pictures, in ArtFreq and ArtFreq FX: drag the round handle above the selected object (Shift: 15 degree steps), use Rotation in its settings (double-click: back to 0), or press [ and ] (Shift: 1 degree).
+          - **Shift-drag a corner** to keep an object's proportions while resizing it (Shift on an edge scales both sides).
+          - **Shape** for pictures: Original, 1:1, 4:3, 3:4, 16:9 or 9:16 in one click. New pictures keep their own proportions.
+
           **New in 0.9**
           - **Emoji in text**, in ArtFreq and ArtFreq FX: type or paste them next to your words. A spectrogram has no colour, so they are drawn as black-and-white outlines from a bundled emoji font (Noto Emoji), the same on every computer and in every font and style.
           - **B&W**, a new Mode for pictures: black and white, every part of the picture loud or silent with no greys in between, at a threshold picked for each picture. Photos read crisply where their midtones used to blur.
