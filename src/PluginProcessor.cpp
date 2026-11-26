@@ -118,7 +118,8 @@ ArtFreqProcessor::ArtFreqProcessor (Variant variantToUse)
                                                                         ? anymeans::license::artFreqEffectLicensing()
                                                                         : anymeans::license::artFreqInstrumentLicensing())),
       parameters (*this, nullptr, "ArtFreqParameters", params::createLayout (variantToUse == Variant::effect)),
-      history (40)
+      history (40),
+      compositor (ArtDocument::displayAspectFor (variantToUse == Variant::effect))
 {
     levelParam       = parameters.getRawParameterValue (params::id::level);
     lengthParam      = parameters.getRawParameterValue (params::id::length);

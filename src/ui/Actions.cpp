@@ -211,9 +211,10 @@ void chooseImage (ArtFreqProcessor& processor, EditorState& state, juce::Compone
             {
                 // A box with the old picture's own proportions gets the new one's.
                 const auto scale = processor.getScale();
-                const auto hadOwnShape = matchingShapePreset (*selected, scale) == static_cast<int> (ShapePreset::original);
+                const auto aspect = processor.getDisplayAspect();
+                const auto hadOwnShape = matchingShapePreset (*selected, scale, aspect) == static_cast<int> (ShapePreset::original);
 
-                processor.editDocument ([id, image, name = file.getFileName(), hadOwnShape, scale] (ArtDocument& document)
+                processor.editDocument ([id, image, name = file.getFileName(), hadOwnShape, scale, aspect] (ArtDocument& document)
                 {
                     if (auto* object = document.find (id))
                     {
@@ -221,7 +222,7 @@ void chooseImage (ArtFreqProcessor& processor, EditorState& state, juce::Compone
                         object->fileName = name;
 
                         if (hadOwnShape)
-                            applyShapeAspect (*object, shapeAspect (ShapePreset::original, *object), scale);
+                            applyShapeAspect (*object, shapeAspect (ShapePreset::original, *object), scale, aspect);
                     }
                 });
                 return;
@@ -232,7 +233,7 @@ void chooseImage (ArtFreqProcessor& processor, EditorState& state, juce::Compone
         object.fileName = file.getFileName();
         placeNewObject (object, processor);
         withPictureProportions (object, object.startTime, object.endTime, (object.startTime + object.endTime) * 0.5f,
-                                processor.getScale());
+                                processor.getScale(), processor.getDisplayAspect());
         addAndSelect (processor, state, object);
     });
 }
@@ -253,17 +254,18 @@ bool addImageFile (ArtFreqProcessor& processor, EditorState& state, const juce::
     auto object = ArtDocument::makeImageObject (image, static_cast<float> (band.low), static_cast<float> (band.high));
     object.fileName = file.getFileName();
     const auto margin = (1.0f - droppedSpanLimit) * 0.5f;
-    withPictureProportions (object, margin, 1.0f - margin, x, scale);
+    withPictureProportions (object, margin, 1.0f - margin, x, scale, processor.getDisplayAspect());
 
     addAndSelect (processor, state, object);
     return true;
 }
 
-void withPictureProportions (ArtObject& picture, float start, float end, float centre, const FrequencyScale& scale)
+void withPictureProportions (ArtObject& picture, float start, float end, float centre, const FrequencyScale& scale,
+                             float displayAspect)
 {
     const auto r = objectRectNorm (picture, scale);
     const auto room = juce::jmax (0.001f, end - start);
-    const auto wanted = r.getHeight() * shapeAspect (ShapePreset::original, picture) / ArtDocument::displayAspect;
+    const auto wanted = r.getHeight() * shapeAspect (ShapePreset::original, picture) / displayAspect;
     const auto span = std::isfinite (wanted) && wanted > 0.0f ? juce::jmin (room, wanted) : room;
 
     picture.startTime = juce::jlimit (start, end - span, centre - span * 0.5f);
@@ -280,7 +282,7 @@ void setSelectedShape (ArtFreqProcessor& processor, EditorState& state, ShapePre
 
     const auto scale = processor.getScale();
     auto reshaped = *selected;
-    applyShapeAspect (reshaped, shapeAspect (preset, reshaped), scale);
+    applyShapeAspect (reshaped, shapeAspect (preset, reshaped), scale, processor.getDisplayAspect());
 
     if (juce::exactlyEqual (reshaped.startTime, selected->startTime) && juce::exactlyEqual (reshaped.endTime, selected->endTime)
         && juce::exactlyEqual (reshaped.lowHz, selected->lowHz) && juce::exactlyEqual (reshaped.highHz, selected->highHz))

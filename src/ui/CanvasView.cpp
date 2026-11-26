@@ -213,11 +213,17 @@ struct CanvasView::Impl
         return juce::exactlyEqual (ArtDocument::normaliseRotation (object.rotation), 0.0f);
     }
 
-    /** How much wider than tall a pixel of this view is in display space (see rotationTransform). */
+    /** How wide the plug-in shows its canvas against how tall: the display space rotations and
+        shapes are worked out in (ArtDocument::displayAspectFor). The editor fits this view at
+        that aspect, so it is also the drawing area's own. */
+    float displayAspect() const noexcept { return processor.getDisplayAspect(); }
+
+    /** How much wider than tall a pixel of this view is in display space (see rotationTransform):
+        1 while the drawing area has the plug-in's aspect, as the editor lays it out. */
     float screenXScale() const
     {
         const auto a = area();
-        return ArtDocument::displayAspect * juce::jmax (1.0f, a.getHeight()) / juce::jmax (1.0f, a.getWidth());
+        return displayAspect() * juce::jmax (1.0f, a.getHeight()) / juce::jmax (1.0f, a.getWidth());
     }
 
     /** The turn of an object's box on screen (the identity for an upright one). */
@@ -308,7 +314,7 @@ struct CanvasView::Impl
     {
         const auto n = toNorm (p);
         const auto c = dragStartRect.getCentre();
-        const auto dx = (n.x - c.x) * ArtDocument::displayAspect;
+        const auto dx = (n.x - c.x) * displayAspect();
         const auto dy = n.y - c.y;
         return juce::radiansToDegrees (std::atan2 (dx, -dy));
     }
@@ -438,7 +444,7 @@ struct CanvasView::Impl
         dragEndTime = object.endTime;
         dragStartHz = { static_cast<double> (object.lowHz), static_cast<double> (object.highHz) };
         dragStartRotation = ArtDocument::normaliseRotation (object.rotation);
-        dragStartBounds = objectBoundsNorm (object, scale);
+        dragStartBounds = objectBoundsNorm (object, scale, displayAspect());
     }
 
     bool dragStartUpright() const noexcept { return juce::exactlyEqual (dragStartRotation, 0.0f); }
@@ -494,7 +500,7 @@ struct CanvasView::Impl
         return { left, top, right - left, bottom - top };
     }
 
-    /** A resize in the box's own frame, in display units (x times displayAspect), so a turned
+    /** A resize in the box's own frame, in display units (x times displayAspect()), so a turned
         box's edges move along its own sides: the mouse's movement is turned back into that
         frame, the edges are moved there, and the box's new centre is turned out again, so the
         opposite edge or corner stays where it is on screen. Also an upright box's resize with
@@ -502,7 +508,7 @@ struct CanvasView::Impl
         by scaling less. */
     juce::Rectangle<float> resizedInOwnFrame (juce::Point<float> deltaNorm, bool keepShape) const
     {
-        constexpr auto aspect = ArtDocument::displayAspect;
+        const auto aspect = displayAspect();
         const auto a = area();
         const auto radians = juce::degreesToRadians (dragStartRotation);
         const auto cosine = std::cos (radians), sine = std::sin (radians);
@@ -1836,6 +1842,30 @@ CanvasView::~CanvasView()
 juce::Rectangle<float> CanvasView::getDrawingArea() const
 {
     return axes::plotArea (getLocalBounds(), axisWidth, axisHeight).toFloat();
+}
+
+juce::Rectangle<int> CanvasView::fittedBounds (juce::Rectangle<int> room, float aspect) noexcept
+{
+    const auto drawing = axes::plotArea (room, axisWidth, axisHeight);
+
+    if (drawing.getWidth() <= 0 || drawing.getHeight() <= 0 || ! (aspect > 0.0f) || ! std::isfinite (aspect))
+        return room;
+
+    // The height first, then the width from it (so the width is the height's to within half a
+    // pixel), one row less if that width is more than the room has.
+    auto height = juce::jmin (drawing.getHeight(), juce::roundToInt (static_cast<float> (drawing.getWidth()) / aspect));
+    auto width = juce::roundToInt (static_cast<float> (height) * aspect);
+
+    if (width > drawing.getWidth())
+    {
+        height = juce::jmax (1, height - 1);
+        width = juce::jmin (drawing.getWidth(), juce::roundToInt (static_cast<float> (height) * aspect));
+    }
+
+    const auto fullWidth = width + room.getWidth() - drawing.getWidth();
+    const auto fullHeight = height + room.getHeight() - drawing.getHeight();
+    return { room.getX() + (room.getWidth() - fullWidth) / 2, room.getY() + (room.getHeight() - fullHeight) / 2,
+             fullWidth, fullHeight };
 }
 
 juce::Rectangle<float> CanvasView::getObjectBounds (const juce::Uuid& id) const

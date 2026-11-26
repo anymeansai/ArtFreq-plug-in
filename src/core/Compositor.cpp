@@ -177,21 +177,21 @@ float turnedReach (juce::Rectangle<float> area) noexcept
     return std::max (3.0f, area.getHeight() * 0.07f) * 0.5f + 2.0f;
 }
 
-void drawText (const ArtObject& object, juce::Rectangle<float> area, float intensity, Canvas& out)
+void drawText (const ArtObject& object, juce::Rectangle<float> area, float intensity, float aspect, Canvas& out)
 {
     const auto degrees = ArtDocument::normaliseRotation (object.rotation);
     const auto turned = ! juce::exactlyEqual (degrees, 0.0f);
-    const auto clip = canvasClip (turned ? area.transformedBy (rotationTransform (area, degrees)).expanded (turnedReach (area)) : area);
+    const auto clip = canvasClip (turned ? area.transformedBy (rotationTransform (area, degrees, aspect)).expanded (turnedReach (area)) : area);
 
     if (clip.isEmpty() || object.text.trim().isEmpty())
         return;
 
     // In the mask's pixels (the clip's top-left at 0, 0). Canvas pixels are a square grid over
-    // the canvas, like normalised coordinates, so the turn takes displayAspect as it is.
+    // the canvas, like normalised coordinates, so the turn takes the display aspect as it is.
     const auto local = area.translated (static_cast<float> (-clip.getX()), static_cast<float> (-clip.getY()));
     juce::Image mask (juce::Image::SingleChannel, clip.getWidth(), clip.getHeight(), true, juce::SoftwareImageType());
     renderTextInto (mask, local, object.text, object.fontIndex, object.textStyle,
-                    turned ? rotationTransform (local, degrees) : juce::AffineTransform());
+                    turned ? rotationTransform (local, degrees, aspect) : juce::AffineTransform());
 
     const juce::Image::BitmapData data (mask, juce::Image::BitmapData::readOnly);
     const auto scale = intensity / 255.0f;
@@ -394,29 +394,30 @@ juce::AffineTransform rotationTransform (juce::Rectangle<float> box, float degre
                .translated (centre.x, centre.y);
 }
 
-std::array<juce::Point<float>, 4> objectCornersNorm (const ArtObject& object, const FrequencyScale& scale) noexcept
+std::array<juce::Point<float>, 4> objectCornersNorm (const ArtObject& object, const FrequencyScale& scale,
+                                                     float displayAspect) noexcept
 {
     const auto r = objectRectNorm (object, scale);
-    const auto turn = rotationTransform (r, object.rotation);
+    const auto turn = rotationTransform (r, object.rotation, displayAspect);
     return { r.getTopLeft().transformedBy (turn), r.getTopRight().transformedBy (turn),
              r.getBottomRight().transformedBy (turn), r.getBottomLeft().transformedBy (turn) };
 }
 
-juce::Rectangle<float> objectBoundsNorm (const ArtObject& object, const FrequencyScale& scale) noexcept
+juce::Rectangle<float> objectBoundsNorm (const ArtObject& object, const FrequencyScale& scale, float displayAspect) noexcept
 {
     const auto r = objectRectNorm (object, scale);
 
     if (juce::exactlyEqual (ArtDocument::normaliseRotation (object.rotation), 0.0f))
         return r;
 
-    const auto corners = objectCornersNorm (object, scale);
+    const auto corners = objectCornersNorm (object, scale, displayAspect);
     return juce::Rectangle<float>::findAreaContainingPoints (corners.data(), static_cast<int> (corners.size()));
 }
 
-float displayAspectOf (const ArtObject& object, const FrequencyScale& scale) noexcept
+float displayAspectOf (const ArtObject& object, const FrequencyScale& scale, float displayAspect) noexcept
 {
     const auto r = objectRectNorm (object, scale);
-    return r.getHeight() > 0.0f ? r.getWidth() * ArtDocument::displayAspect / r.getHeight() : 1.0f;
+    return r.getHeight() > 0.0f ? r.getWidth() * displayAspect / r.getHeight() : 1.0f;
 }
 
 float shapeAspect (ShapePreset preset, const ArtObject& object) noexcept
@@ -437,13 +438,13 @@ float shapeAspect (ShapePreset preset, const ArtObject& object) noexcept
     return 1.0f;
 }
 
-void applyShapeAspect (ArtObject& object, float aspect, const FrequencyScale& scale) noexcept
+void applyShapeAspect (ArtObject& object, float aspect, const FrequencyScale& scale, float displayAspect) noexcept
 {
-    if (! (aspect > 0.0f) || ! std::isfinite (aspect))
+    if (! (aspect > 0.0f) || ! std::isfinite (aspect) || ! (displayAspect > 0.0f) || ! std::isfinite (displayAspect))
         return;
 
     // In display units: the canvas is displayAspect wide and 1 tall.
-    constexpr auto canvasWidth = static_cast<double> (ArtDocument::displayAspect);
+    const auto canvasWidth = static_cast<double> (displayAspect);
     const auto r = objectRectNorm (object, scale);
     const auto area = std::max (1.0e-8, static_cast<double> (r.getWidth()) * canvasWidth * static_cast<double> (r.getHeight()));
     auto width = std::sqrt (area * aspect);
@@ -476,9 +477,9 @@ void applyShapeAspect (ArtObject& object, float aspect, const FrequencyScale& sc
     object.highHz = static_cast<float> (hz.high);
 }
 
-int matchingShapePreset (const ArtObject& object, const FrequencyScale& scale) noexcept
+int matchingShapePreset (const ArtObject& object, const FrequencyScale& scale, float displayAspect) noexcept
 {
-    const auto aspect = displayAspectOf (object, scale);
+    const auto aspect = displayAspectOf (object, scale, displayAspect);
 
     for (int i = 0; i < numShapePresets; ++i)
     {
@@ -548,12 +549,12 @@ void Compositor::render (const ArtDocument& document, const FrequencyScale& scal
 
         const auto upright = juce::exactlyEqual (ArtDocument::normaliseRotation (object.rotation), 0.0f);
 
-        if (canvasClip (upright ? area : area.transformedBy (rotationTransform (area, object.rotation)).expanded (turnedReach (area))).isEmpty())
+        if (canvasClip (upright ? area : area.transformedBy (rotationTransform (area, object.rotation, aspect)).expanded (turnedReach (area))).isEmpty())
             continue;
 
         if (object.type == ArtObject::Type::text)
         {
-            drawText (object, area, intensity, out);
+            drawText (object, area, intensity, aspect, out);
         }
         else if (object.image.isValid())
         {
@@ -562,7 +563,7 @@ void Compositor::render (const ArtDocument& document, const FrequencyScale& scal
             if (juce::exactlyEqual (degrees, 0.0f))
                 drawImage (processed (object), area, intensity, out);
             else
-                drawTurnedImage (processed (object), area, rotationTransform (area, degrees), intensity, out);
+                drawTurnedImage (processed (object), area, rotationTransform (area, degrees, aspect), intensity, out);
         }
     }
 

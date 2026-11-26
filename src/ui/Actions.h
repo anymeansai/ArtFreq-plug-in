@@ -36,10 +36,11 @@ bool addImageFile (ArtFreqProcessor& processor, EditorState& state, const juce::
                    juce::Point<float> normPosition);
 
 /** A new picture's place in a band: the band's height kept, the time span made as long as the
-    picture's own proportions ask (ShapePreset::original) but no longer than [start, end],
-    centred on `centre` and kept inside [start, end]. So a new picture is not stretched, and
-    still sits exactly on its band. */
-void withPictureProportions (ArtObject& picture, float start, float end, float centre, const FrequencyScale& scale);
+    picture's own proportions ask (ShapePreset::original) on a canvas shown `displayAspect`
+    wide (the plug-in's) but no longer than [start, end], centred on `centre` and kept inside
+    [start, end]. So a new picture is not stretched, and still sits exactly on its band. */
+void withPictureProportions (ArtObject& picture, float start, float end, float centre, const FrequencyScale& scale,
+                             float displayAspect);
 
 /** Where a new object goes (startTime, endTime, lowHz, highHz in an ArtObject): the first of
     the mid, high and low bands across the length (4 % to 96 %), then the halves of each, that

@@ -35,25 +35,29 @@ juce::Rectangle<float> objectRectNorm (const ArtObject& object, const FrequencyS
 
 /** How a rotated object's content is turned: by `degrees` (clockwise on screen) about the
     centre of `box`, in display space. `xScale` is how much wider than tall one unit of the
-    coordinates `box` is in is on screen, relative to its height: ArtDocument::displayAspect for
-    normalised canvas coordinates and for canvas pixels (both are square grids over the canvas);
-    displayAspect * height / width for a view `width` x `height` pixels big. So the turn is a
-    true rotation on a canvas shown displayAspect wide (ArtFreq's), whatever the coordinates.
-    The identity for 0 degrees. */
-juce::AffineTransform rotationTransform (juce::Rectangle<float> box, float degrees,
-                                         float xScale = ArtDocument::displayAspect) noexcept;
+    coordinates `box` is in is on screen, relative to its height: the plug-in's display aspect
+    (ArtDocument::displayAspectFor) for normalised canvas coordinates and for canvas pixels
+    (both are square grids over the canvas); that aspect * height / width for a view `width` x
+    `height` pixels big (1 for a view shown at the plug-in's aspect). So the turn is a true
+    rotation on a canvas shown at that aspect, whatever the coordinates. The identity for 0
+    degrees.
+
+    The functions below that take a `displayAspect` take the plug-in's (see
+    ArtDocument::displayAspectFor): the shape of the canvas the object is seen on. */
+juce::AffineTransform rotationTransform (juce::Rectangle<float> box, float degrees, float xScale) noexcept;
 
 /** The corners of an object's box once turned, in normalised coordinates (as objectRectNorm):
     top-left, top-right, bottom-right, bottom-left of the unrotated box. */
-std::array<juce::Point<float>, 4> objectCornersNorm (const ArtObject& object, const FrequencyScale& scale) noexcept;
+std::array<juce::Point<float>, 4> objectCornersNorm (const ArtObject& object, const FrequencyScale& scale,
+                                                     float displayAspect) noexcept;
 
 /** The smallest upright rectangle around an object's turned box (objectRectNorm for an
     upright object), in normalised coordinates: what the object covers on the canvas. */
-juce::Rectangle<float> objectBoundsNorm (const ArtObject& object, const FrequencyScale& scale) noexcept;
+juce::Rectangle<float> objectBoundsNorm (const ArtObject& object, const FrequencyScale& scale, float displayAspect) noexcept;
 
-/** A box's shape as seen on screen: its width over its height in display space
-    (ArtDocument::displayAspect), of the unrotated box. */
-float displayAspectOf (const ArtObject& object, const FrequencyScale& scale) noexcept;
+/** A box's shape as seen on screen: its width over its height in display space, of the
+    unrotated box. */
+float displayAspectOf (const ArtObject& object, const FrequencyScale& scale, float displayAspect) noexcept;
 
 /** Shapes a picture's box can be given at once (the inspector's Shape). */
 enum class ShapePreset
@@ -72,14 +76,14 @@ constexpr int numShapePresets = 6;
     (1 for an object without one). */
 float shapeAspect (ShapePreset preset, const ArtObject& object) noexcept;
 
-/** Reshapes an object's box to a display aspect, about its centre, keeping its area on screen
-    (the geometric mean of its sides). It stays on the canvas (time 0..1, the scale's range):
-    shrunk about the centre if it would cross an edge (to no less than half its size, after
-    which its centre moves in). The rotation is kept. */
-void applyShapeAspect (ArtObject& object, float aspect, const FrequencyScale& scale) noexcept;
+/** Reshapes an object's box to `aspect` (its width / height on screen), about its centre,
+    keeping its area on screen (the geometric mean of its sides). It stays on the canvas (time
+    0..1, the scale's range): shrunk about the centre if it would cross an edge (to no less
+    than half its size, after which its centre moves in). The rotation is kept. */
+void applyShapeAspect (ArtObject& object, float aspect, const FrequencyScale& scale, float displayAspect) noexcept;
 
 /** The preset the object's box has (within 2 %), Original first; -1 if none. */
-int matchingShapePreset (const ArtObject& object, const FrequencyScale& scale) noexcept;
+int matchingShapePreset (const ArtObject& object, const FrequencyScale& scale, float displayAspect) noexcept;
 
 /** The inverse of objectRectNorm for the frequency part: the Hz range a normalised vertical span
     (top < bottom, y = 0 at the top) covers on the scale. */
@@ -96,6 +100,14 @@ double canvasToPaintY (double canvasY, const FrequencyScale& scale, const Freque
 class Compositor
 {
 public:
+    /** Turns rotated objects for a canvas shown `displayAspect` wide (the plug-in's, see
+        ArtDocument::displayAspectFor; ArtFreq's unless told otherwise). Upright objects do not
+        depend on it. */
+    explicit Compositor (float displayAspect = ArtDocument::instrumentDisplayAspect) noexcept
+        : aspect (displayAspect) {}
+
+    float getDisplayAspect() const noexcept { return aspect; }
+
     /** Draws everything into `out` (which is cleared first):
           - the paint layer (1024 x 512), mapped by frequency from its paintScale to `scale`
             (bilinear where stretched, the loudest paint row where squeezed; nothing outside
@@ -105,10 +117,11 @@ public:
               image: processImage (mode, cleanup), stretched to fill the rectangle (area-averaged
                      when shrinking, bilinear when enlarging);
             a rotated object is fitted to its rectangle the same way and then turned about the
-            rectangle's centre (rotationTransform): text as a turned path, a picture resampled
-            first to the grid it covers once turned (area-averaged or bilinear, as above), then
-            read bilinearly at each canvas pixel, its edges anti-aliased. An upright object is
-            drawn exactly as before objects could be rotated;
+            rectangle's centre (rotationTransform, at this compositor's display aspect): text as
+            a turned path, a picture resampled first to the grid it covers once turned
+            (area-averaged or bilinear, as above), then read bilinearly at each canvas pixel,
+            its edges anti-aliased. An upright object is drawn exactly as before objects could
+            be rotated;
         combined by taking the maximum. Objects partly off the visible range are clipped.
         Hidden objects (and a hidden paint layer) are left out.
 
@@ -146,6 +159,7 @@ private:
     static CacheKey keyFor (const ArtObject& object);
     const ProcessedImage& processed (const ArtObject& object);
 
+    float aspect;
     std::map<CacheKey, CacheEntry> cache;
 };
 

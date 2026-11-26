@@ -353,11 +353,13 @@ namespace
             const auto main = getMainArea();
             inspector.setBounds (main.withLeft (layout::inspectorLeft + 1));
 
-            const auto view = main.withRight (layout::inspectorLeft)
-                                  .withTrimmedLeft (layout::canvasLeft)
-                                  .withTrimmedTop (layout::canvasTop)
-                                  .withTrimmedRight (layout::canvasRight)
-                                  .withTrimmedBottom (layout::canvasBottom);
+            // The drawing at ArtFreq's display aspect (which is this room's own, so it fills it).
+            const auto view = ui::CanvasView::fittedBounds (main.withRight (layout::inspectorLeft)
+                                                                .withTrimmedLeft (layout::canvasLeft)
+                                                                .withTrimmedTop (layout::canvasTop)
+                                                                .withTrimmedRight (layout::canvasRight)
+                                                                .withTrimmedBottom (layout::canvasBottom),
+                                                            processor.getDisplayAspect());
             canvas.setBounds (view);
             liveView.setBounds (view);
 
@@ -794,20 +796,23 @@ namespace
             if (soundStrip->isVisible())
                 effectMain.removeFromTop (layout::fx::stripHeight);
 
-            auto view = effectMain.withTrimmedLeft (layout::effectCanvasLeft)
-                                  .withTrimmedTop (layout::effectCanvasTop)
-                                  .withTrimmedRight (layout::effectCanvasRight)
-                                  .withTrimmedBottom (layout::effectCanvasBottom);
+            auto room = canvasRoom();
 
             // An object too wide for the room beside the drawer: the canvas moves aside (see
             // placeDrawer), so all of it stays in view, handles included.
             if (canvasBeside)
             {
                 const auto drawer = drawerBounds (drawerOnLeft);
-                view = drawerOnLeft ? view.withLeft (drawer.getRight() + layout::effectCanvasLeft)
-                                    : view.withRight (drawer.getX() - layout::effectCanvasRight);
+                room = drawerOnLeft ? room.withLeft (drawer.getRight() + layout::effectCanvasLeft)
+                                    : room.withRight (drawer.getX() - layout::effectCanvasRight);
             }
 
+            // In its room the drawing keeps ArtFreq FX's display aspect (that of Carve's whole
+            // room), smaller where the room is another shape: under the Sound strip it is less
+            // wide, beside the drawer less tall, centred, never stretched. So a turned object
+            // is a turned rectangle and a square picture square in every state. The live view
+            // lies exactly where the canvas does.
+            const auto view = ui::CanvasView::fittedBounds (room, processor.getDisplayAspect());
             canvas.setBounds (view);
             liveView.setBounds (view);
             layoutDrawer();
@@ -851,13 +856,19 @@ namespace
                           : room.withLeft (room.getRight() - layout::drawerWidth);
         }
 
-        /** Where the canvas would be with the window's whole width. */
-        juce::Rectangle<int> fullCanvasBounds() const
+        /** The room the canvas has with the window's whole width (it is fitted inside). */
+        juce::Rectangle<int> canvasRoom() const
         {
             return effectMain.withTrimmedLeft (layout::effectCanvasLeft)
                              .withTrimmedTop (layout::effectCanvasTop)
                              .withTrimmedRight (layout::effectCanvasRight)
                              .withTrimmedBottom (layout::effectCanvasBottom);
+        }
+
+        /** Where the canvas is with the window's whole width (not beside the drawer). */
+        juce::Rectangle<int> fullCanvasBounds() const
+        {
+            return ui::CanvasView::fittedBounds (canvasRoom(), processor.getDisplayAspect());
         }
 
         void layoutDrawer()
@@ -976,7 +987,7 @@ namespace
 
             // A turned object: its turned box, and room for its rotate handle, which can point
             // sideways.
-            const auto box = objectBoundsNorm (*object, processor.getScale());
+            const auto box = objectBoundsNorm (*object, processor.getScale(), processor.getDisplayAspect());
             const auto reach = ui::CanvasView::rotateHandleReach;
             return { drawing.getX() + box.getX() * drawing.getWidth() - reach,
                      drawing.getX() + box.getRight() * drawing.getWidth() + reach };

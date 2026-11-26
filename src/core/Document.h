@@ -48,7 +48,8 @@ struct ArtObject
 
     // Turned this many degrees, clockwise as seen on screen, -180..180 (0 = upright). The
     // placement above stays the unrotated box: the content is drawn turned about the box's
-    // centre in display space (see ArtDocument::displayAspect), and clipped by the canvas.
+    // centre in the plug-in's display space (see ArtDocument::displayAspectFor), and clipped by
+    // the canvas.
     float rotation = 0.0f;
 
     // A hidden object stays in the drawing (and is saved with it) but is silent: the compositor
@@ -88,16 +89,24 @@ public:
     static constexpr int paintWidth = 1024;
     static constexpr int paintHeight = 512;
 
-    /** How wide the canvas is shown against how tall (width / height), the same for both
-        plug-ins and every window size: ArtFreq's drawing area, 764 x 462 logical pixels (its
-        window scales uniformly, so this holds at every size). Rotations and picture shapes are
-        worked out in this display space (x times displayAspect, y as it is), so a rotated
-        object looks rotated, not sheared, and a square picture looks square, in ArtFreq.
-        ArtFreq FX shows the same drawing on a wider canvas (652 x 300, 2.17; 652 x 268, 2.43,
-        while the Sound strip is there), so there everything is stretched sideways by 31 % (47 %)
-        compared with ArtFreq, rotated objects included: a drawing is the same in both, its
-        look on screen follows the window it is shown in. */
-    static constexpr float displayAspect = 764.0f / 462.0f;
+    /** How wide each plug-in shows its canvas against how tall (width / height): the drawing
+        area of its canvas view. ArtFreq's is 764 x 462 logical pixels; ArtFreq FX's, in Carve
+        and Stencil, 652 x 300. Both windows scale uniformly, and each plug-in fits its canvas
+        at its own aspect into whatever room it has (ArtFreq FX's beside its drawer, or under
+        the Sound strip, is smaller, never stretched), so this holds in every state and at every
+        window size. Rotations and picture shapes are worked out in this display space (x times
+        the aspect, y as it is), so a rotated object looks rotated, not sheared, and a square
+        picture looks square, in each plug-in. The aspect belongs to the plug-in, not to the
+        drawing: the same drawing opened in the other plug-in turns its rotated objects (and
+        shapes its pictures) for that plug-in's canvas, so they come out a little different
+        there (an upright drawing is the same in both). */
+    static constexpr float instrumentDisplayAspect = 764.0f / 462.0f;
+    static constexpr float effectDisplayAspect = 652.0f / 300.0f;
+
+    static constexpr float displayAspectFor (bool effect) noexcept
+    {
+        return effect ? effectDisplayAspect : instrumentDisplayAspect;
+    }
 
     /** An angle in degrees brought into -180..180 by whole turns (angles already in that range
         are kept as they are; anything not finite is 0). */

@@ -726,7 +726,7 @@ struct Inspector::Impl
         setSliderValue (cleanupSlider, static_cast<double> (object.cleanup) * 100.0);
 
         // The shape the box has now, if it is one of the presets.
-        const auto shape = matchingShapePreset (object, processor.getScale());
+        const auto shape = matchingShapePreset (object, processor.getScale(), processor.getDisplayAspect());
         shapeBox.setSelectedId (shape >= 0 ? freeShapeId + 1 + shape : freeShapeId, juce::dontSendNotification);
         updateShared (object);
     }

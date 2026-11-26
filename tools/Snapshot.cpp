@@ -1923,7 +1923,7 @@ void checkRotationAndShape (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProc
     {
         const auto a = canvas->getDrawingArea();
         const auto toScreen = [&a] (juce::Point<float> n) { return juce::Point<float> (a.getX() + n.x * a.getWidth(), a.getY() + n.y * a.getHeight()); };
-        const auto corners = objectCornersNorm (*turned, scale);
+        const auto corners = objectCornersNorm (*turned, scale, processor.getDisplayAspect());
         const auto handles = canvas->getHandleCentres (textId);
         auto onCorners = true;
 
@@ -1939,6 +1939,17 @@ void checkRotationAndShape (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProc
         check (knob.getDistanceFrom (topMiddle) > 12.0f && knob.getDistanceFrom (centre) > topMiddle.getDistanceFrom (centre)
                    && knob.x > topMiddle.x,
                "... and its rotate handle stands out from the turned top edge, leaning with it");
+
+        // On screen the turned box is a rectangle (not a parallelogram), turned by 25 degrees:
+        // the plug-in shows its canvas at the aspect the turn is worked out for.
+        const auto top = handles[2] - handles[0], side = handles[6] - handles[0];
+        const auto cosine = (top.x * side.x + top.y * side.y) / juce::jmax (1.0f, top.getDistanceFromOrigin() * side.getDistanceFromOrigin());
+        const auto onScreenDegrees = juce::radiansToDegrees (std::atan2 (top.y, top.x));
+        const auto drawing = canvas->getDrawingArea();
+        check (std::abs (cosine) < 0.01f && std::abs (onScreenDegrees - 25.0f) < 1.0f
+                   && std::abs (drawing.getWidth() / drawing.getHeight() - processor.getDisplayAspect()) * drawing.getHeight() < 1.0f,
+               "... a right-angled box on screen, turned 25 degrees (cos " + juce::String (cosine, 4) + ", "
+                   + juce::String (onScreenDegrees, 2) + " degrees)");
     }
 
     layout ("a turned text selected");
@@ -1955,9 +1966,17 @@ void checkRotationAndShape (artfreq::ArtFreqEditor& editor, artfreq::ArtFreqProc
         shape->setSelectedId (3, juce::sendNotificationSync);   // 1:1
         pump (60);
         const auto* square = processor.getDocument().find (imageId);
-        check (square != nullptr && std::abs (displayAspectOf (*square, scale) - 1.0f) < 0.01f
+        check (square != nullptr && std::abs (displayAspectOf (*square, scale, processor.getDisplayAspect()) - 1.0f) < 0.01f
                    && juce::approximatelyEqual (square->rotation, -12.0f),
                "Shape 1:1 makes the picture square on screen, still turned");
+
+        // Measured on screen: its turned corners (the corner handles) make a square.
+        const auto handles = canvas->getHandleCentres (imageId);
+        const auto top = handles[2] - handles[0], side = handles[6] - handles[0];
+        const auto cosine = (top.x * side.x + top.y * side.y) / juce::jmax (1.0f, top.getDistanceFromOrigin() * side.getDistanceFromOrigin());
+        check (std::abs (top.getDistanceFromOrigin() - side.getDistanceFromOrigin()) < 1.0f && std::abs (cosine) < 0.01f,
+               "... and it is a square on the canvas (" + juce::String (top.getDistanceFromOrigin(), 1) + " x "
+                   + juce::String (side.getDistanceFromOrigin(), 1) + " px)");
         checkSoon ([&] { return shape->getText() == "1:1"; }, "... and the Shape menu shows 1:1");
     }
     else

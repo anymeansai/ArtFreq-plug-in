@@ -28,6 +28,13 @@ public:
     /** The area the drawing occupies (without the axes), in this component's coordinates. */
     juce::Rectangle<float> getDrawingArea() const;
 
+    /** Bounds for this view inside `room` whose drawing area is `aspect` wide against its height
+        (the plug-in's display aspect, to within half a pixel): the drawing as large as the room
+        allows, with the axes and margins round it, centred in the room. The editor lays the
+        canvas out with it, so the drawing keeps its shape whatever room it is given (beside a
+        drawer, under a strip): rotations and picture shapes are worked out for that shape. */
+    static juce::Rectangle<int> fittedBounds (juce::Rectangle<int> room, float aspect) noexcept;
+
     /** Where an object lies on the canvas with its selection handles (the bounding box of its
         box as it is turned, and the selected object's rotate handle), in this component's
         coordinates (empty if there is no such object). */

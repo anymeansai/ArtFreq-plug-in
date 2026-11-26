@@ -59,6 +59,10 @@ public:
     Variant getVariant() const noexcept { return variant; }
     bool isEffect() const noexcept { return variant == Variant::effect; }
 
+    /** How wide this plug-in shows its canvas against how tall (ArtDocument::displayAspectFor):
+        what rotations and picture shapes are worked out for, here and in its compositor. */
+    float getDisplayAspect() const noexcept { return ArtDocument::displayAspectFor (isEffect()); }
+
     // ---- juce::AudioProcessor -------------------------------------------------------------
     void prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock) override;
     void releaseResources() override;
