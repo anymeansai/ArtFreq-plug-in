@@ -726,6 +726,9 @@ jobs:
 
           Then rescan plug-ins in your DAW: ArtFreq is listed under instruments, ArtFreq FX under audio effects (in Logic Pro: AU Instruments > AnyMeans, and Audio Units > AnyMeans in an audio track's or the output's effect slots). Put ArtFreq on an instrument track, or ArtFreq FX on an audio track or the master, open a spectrogram after it (MiniMeters: Spectrogram, log scale, 20 Hz to 20 kHz) and press play. The first time, the plug-in's window asks for the key from your purchase email (once per computer; an ArtFreq Pro key activates both plug-ins).
 
+          **New in 0.10.1**
+          - ArtFreq FX shows rotated objects and picture shapes true to shape: a rotated box keeps its right angles and a 1:1 picture is square, in every mode. Its canvas is never stretched any more: with the Sound strip or an object's settings open it shrinks evenly instead.
+
           **New in 0.10**
           - **Rotate** text and pictures, in ArtFreq and ArtFreq FX: drag the round handle above the selected object (Shift: 15 degree steps), use Rotation in its settings (double-click: back to 0), or press [ and ] (Shift: 1 degree).
           - **Shift-drag a corner** to keep an object's proportions while resizing it (Shift on an edge scales both sides).
